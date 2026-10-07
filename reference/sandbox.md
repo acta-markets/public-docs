@@ -4,12 +4,13 @@
 
 | Service | Devnet | Mainnet |
 |---------|--------|---------|
-| Maker WebSocket | `wss://devnet-api.acta.markets/maker` | `wss://beta-api.acta.markets/maker` |
+| Maker quote WebSocket | `wss://devnet-api.acta.markets/maker` | `wss://beta-api.acta.markets/maker` |
+| Maker data WebSocket | `wss://devnet-api.acta.markets/maker/data` | `wss://beta-api.acta.markets/maker/data` |
 | Taker WebSocket | `wss://devnet-api.acta.markets/taker` | `wss://beta-api.acta.markets/taker` |
 | HTTP API | `https://devnet-api.acta.markets` | `https://beta-api.acta.markets` |
 | Solana cluster | Devnet (`https://api.devnet.solana.com`) | Mainnet-beta (`https://api.mainnet-beta.solana.com`) |
 
-Both environments use the same message envelope and encodings. See `ws-common.md`. The getting-started walkthrough below uses **Devnet** (free test tokens); Mainnet uses real SOL/USDC and live markets — the registration flow and protocol are identical, see [Differences from production](#differences-from-production).
+Both environments use the same message envelope and encodings. See [WS common conventions](ws-common.md). The getting-started walkthrough below uses **Devnet** (free test tokens); Mainnet uses real SOL/USDC and live markets — the registration flow and protocol are identical, see [Differences from production](#differences-from-production).
 
 ## Getting started
 
@@ -73,6 +74,7 @@ Deposit quote token (devnet USDC) into the maker PDA via the `DepositPremium` on
 
 ```
 wss://devnet-api.acta.markets/maker
+wss://devnet-api.acta.markets/maker/data
 ```
 
 Authentication uses the same Ed25519 challenge-response as production.
@@ -86,21 +88,23 @@ Authentication uses the same Ed25519 challenge-response as production.
 | Caps | Test values; may differ from production |
 | Indicative pricing | Supported |
 | Sponsored tx signing | Supported |
-| Oracle | Oracle-setter reads devnet Pyth/Hermes feeds and writes Acta oracle accounts; feeds may be stale or unavailable outside market hours |
-| HTTP API | Public read endpoints available under `/api/v1` (`/markets`, `/makers`, `/rfqs`, `/orders`, `/stats`) |
+| Oracle | Backend reads its configured Pyth/Hermes feeds; settlement publication writes Acta oracle accounts. Oracle readiness is checked independently of Solana cluster selection |
+| HTTP API | Public read endpoints available under `/api/v1` (`/markets`, `/makers`, `/vaults`, `/stats`); participant RFQs/orders require an authenticated session |
 
 ## Differences from production
 
 | Aspect | Devnet | Production |
 |--------|--------|------------|
 | Token mints | Devnet test mints (contact team) | Mainnet SPL tokens |
-| Oracle feeds | Devnet Pyth (may be stale) | Mainnet Pyth (real-time) |
+| Oracle feeds | Backend-configured feed IDs and oracle mapping | Backend-configured feed IDs and oracle mapping |
 | Settlement | Same logic, test tokens | Real assets |
 | Markets | Created on request | Dynamic |
 | SOL | Free via airdrop | Real SOL required |
 
 > The on-chain program logic is the same on devnet and production.
 > Differences are external: mints, oracles, and environment config.
+
+Browsers obtain current reference prices from the selected backend through [`GetTokenMarketsInfo`](taker-api.md#tokenmarketsinfo). They do not need Pyth credentials. Solana devnet selection does not itself choose a different Hermes endpoint or guarantee feed freshness.
 
 ## Program addresses
 
@@ -114,7 +118,7 @@ Authentication uses the same Ed25519 challenge-response as production.
 |-----|-------|
 | Maker account | `["maker", maker_owner_pubkey]` |
 
-PDA derivation follows on-chain program logic. See `maker-api.md` and `maker-quickstart.md`.
+PDA derivation follows on-chain program logic. See the [Maker API reference](maker-api.md) and [Maker quickstart](../quickstart/maker-quickstart.md).
 
 ## Support
 

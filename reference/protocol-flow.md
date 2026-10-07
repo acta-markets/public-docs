@@ -23,7 +23,7 @@ There is no order book. The taker drives a sealed auction, makers stream signed 
 - The taker sends `RfqRequest` (market, position type, strike, quantity). The backend broadcasts it to eligible makers.
 - Makers reply with signed `Quote`s. Each quote is a `(strike, price, valid_until)` against the fixed request — makers cannot quote partial size or change the side.
 - The taker selects the winner by sending `AcceptQuote { maker, order_id }`. Whatever `order_id` the taker names wins. The server's "best price" (`QuoteBestStatus` / `QuoteOutbid`) is advisory only and never selects the winner.
-- Winner-take-all: one quote is locked for the full RFQ quantity. No partial fills, no multiple winners. Quotes reserve nothing until a fill consumes caps and open interest.
+- Winner-take-all: one quote is locked for the full RFQ quantity. No partial fills, no multiple winners. Every live quote reserves full capacity against caps (open interest, notional, position count) for its validity window; the reservation is released on cancel, expiry, or rejection, and converts into position exposure on fill. See [caps.md](caps.md#how-quotes-consume-capacity).
 - One quote per `(maker, strike)`: a maker's new quote on the same strike replaces the prior one. A maker may quote several distinct strikes.
 - The advisory "best" ranking (used only for `QuoteBestStatus` / `best_price`) is: higher premium wins, ties broken by earlier `received_at`, then by smaller `order_id`.
 
@@ -44,7 +44,7 @@ market traded
 
 ### 1. Market
 
-A market carries: underlying mint, quote mint, expiry timestamp, option side (covered call or cash-secured put), strike, oracle setup. It is tradeable until `market.expiry_ts`. After expiry, oracle finalization is required before any settlement or liquidation.
+A market carries underlying mint, quote mint, expiry timestamp, put/call side and oracle setup. Strikes belong to its orders/positions, not the market identity. Backend tradability also applies the configured pre-expiry cutoff, disable state and finalization state; market expiry alone is not an admission check. After expiry, oracle finalization is required before any settlement or liquidation.
 
 ### 2. RFQ
 
@@ -60,18 +60,21 @@ The taker sends `AcceptQuote { maker, order_id }`. The backend returns a sponsor
 
 ## Timing and deadlines
 
-Defaults below; all are configurable.
+Defaults below are rendered from the server's config defaults by a test in `rfq-server-config`; all are configurable.
 
+<!-- generated:rfq-timing-defaults -->
 | Parameter | Default | Meaning |
 | --- | --- | --- |
 | RFQ window | taker-chosen | `expires_at = created_at + request.timeout`. The auction deadline. |
-| `settlement_buffer` | 300 s | The trailing window reserved for settlement confirmation. A quote's effective trading cutoff is `valid_until - 300s`; quotes with `valid_until < now + 310s` are rejected. |
-| `quote_refresh_margin` | 30 s | At `effective_expiry - 30s` the server fires `QuoteRefreshRequested` and freezes the quote (unacceptable until re-quoted). |
-| `signature_timeout` | 30 s | Max time the taker has to sign the sponsored tx after `AcceptQuote`. The signature deadline is the minimum of `now + 30s`, the quote's effective expiry, and the RFQ's `expires_at`. |
-| `submitted_watchdog_timeout` | 120 s | If the keeper does not confirm a submitted order within this window, it is failed/reverted. |
+| `settlement_buffer` | 90 s | The trailing window reserved for settlement confirmation. A quote's effective trading cutoff is `valid_until - settlement_buffer`; quotes whose `valid_until` is closer than `settlement_buffer + quote_refresh_lead` are rejected. |
+| `quote_refresh_lead` | 10 s | At `effective_expiry - quote_refresh_lead` the server fires `QuoteRefreshRequested` and freezes the quote (unacceptable until re-quoted). |
+| `signature_timeout` | 30 s | Max time the taker has to sign the sponsored tx after `AcceptQuote`. The signature deadline is the minimum of `now + signature_timeout`, the quote's effective expiry, and the RFQ's `expires_at`. |
+| `submitted_watchdog_timeout` | 120 s | The watchdog logs a stalled keeper or listener. The RFQ stays Enqueued until the trade confirms on-chain or the server knows the transaction was never sent. |
 | `closed_rfq_ttl` | 300 s | How long a closed RFQ is retained before purge. |
 | `max_quotes_per_rfq` | 50 | Cap on quotes per RFQ across all makers. |
-| `max_active_rfqs_per_taker` / `_total` | 10 / 1000 | Concurrency limits. |
+| `max_rfqs_per_taker / max_active_rfqs` | 50 / 1000 | Concurrency limits (`0` disables the corresponding limit). |
+| `max_active_rfqs_per_ip` | 50 | Unfinished RFQs per source IP, counted across wallets and reconnects (`0` disables it). A breach rejects `RfqRequest` with a resource-limit error. |
+<!-- /generated:rfq-timing-defaults -->
 
 `rfq.expires_at` is the auction deadline; `quote.valid_until` is the on-chain order validity. They are distinct clocks.
 
@@ -146,7 +149,12 @@ Settlement is physical: it moves tokens at the strike. After expiry the hot auth
 settlement_price = floor(underlying_price * PRICE_SCALE / quote_price)
 ```
 
-`UpdateOraclePrice` writes the backend-published scalar; it does **not** verify a Pyth price-update account. Settlement trusts the Acta oracle, not an on-chain Pyth proof.
+Price publication has two modes, selected by `GlobalConfig.settlement_attestor`:
+
+- **Direct** (no attestor configured): `UpdateOraclePrice` writes the backend-published scalar.
+- **Attested** (attestor configured): the hot authority must submit `UpdateOraclePriceAttested`, immediately preceded in the same transaction by an Ed25519 signature from the configured attestor key over a domain-separated message binding the program, config, oracle, price, expiry and a short validity window; the on-chain program verifies the binding. The published price is computed off-chain from Pyth Benchmarks history under a fixed canonical TWAP policy.
+
+Neither mode verifies a Pyth price-update account on-chain; settlement trusts the Acta oracle (plus, in attested mode, the independent second signature), not an on-chain Pyth proof.
 
 At-the-money counts as OTM.
 
@@ -182,9 +190,9 @@ Every position is fully collateralized at open in its own escrow. There is no le
 
 Custody is per-position. Taker collateral and the maker's settlement deposit each sit in escrow accounts owned by the position PDA; the maker's premium balance sits in the maker PDA. The protocol never holds principal risk; it custodies escrow and routes settlement. The counterparty is a specific maker, not a pool or the protocol: each position names one taker and one maker.
 
-The taker carries no credit risk. Collateral is locked at open, and the taker is made whole on every path: the maker funds the ITM settlement, or a permissionless liquidator fronts it.
+Taker collateral is locked at open. An ITM payout requires the maker to fund settlement or a liquidator to supply the settlement asset. The contract provides both paths; it does not guarantee when a willing, funded liquidator will execute the latter.
 
-The maker is exposed only by leaving an ITM position unfunded. The settlement leg is not pre-funded at open. If the option expires ITM and the maker never called `DepositFundsToPosition`, normal settlement fails and the position stays `open`; a liquidator then pays the taker the settlement asset, takes the taker's collateral, and closes the position as `liquidated`. The maker forfeits the premium already paid, and the protocol enforces no further debt. Maximum loss on either side is bounded by escrowed funds.
+The maker pays the premium at open and may fund the settlement leg later. The settlement leg is not pre-funded at open. If the option expires ITM and the maker never called `DepositFundsToPosition`, normal settlement fails and the position stays `open`; a liquidator then pays the taker the settlement asset, takes the taker's collateral, and closes the position as `liquidated`. The maker forfeits the premium already paid, and the protocol enforces no further debt. The contract does not create an additional claim against the maker for an unfunded settlement leg.
 
 Liquidation is post-expiry only: an ITM, unfunded position after finalization, not a price-threshold or maintenance call. It is permissionless but not automatic; the protocol exposes the path and does not run the liquidator. The taker is paid when the liquidation transaction lands.
 

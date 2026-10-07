@@ -81,7 +81,7 @@ The TS SDK provides helpers for these conversions: `quoteAmountToQuantity`,
 ## Time and clock skew
 
 `server_time_unix_ms` is present in:
-- `Welcome.server_time_unix_ms` (optional)
+- `Welcome.server_time_unix_ms` (required)
 - `Pong.server_time_unix_ms` (required)
 
 `Snapshot` does not include `server_time_unix_ms` in current protocol.
@@ -132,7 +132,11 @@ Makers do not need a `Wallet:` line. The server identifies the maker from `AuthC
 
 ### What to sign
 
-Sign the raw bytes of the challenge string (`challenge.as_bytes()` in UTF-8). No additional prefix, domain separator, or hashing before signing.
+Validate the entire challenge **before invoking the signer**. Require the exact text and blank lines above, a nonce of exactly 64 lowercase hex characters, a valid UTC timestamp in `YYYY-MM-DDTHH:MM:SSZ` format, and a final `\n` after that timestamp. Reject extra lines, alternate domains, missing final newlines and arbitrary 32-byte strings. A maker challenge must have no `Wallet:` line. A taker challenge must include that line and it must match the wallet being authenticated.
+
+After validation, sign the original UTF-8 bytes without normalization, additional prefix or hashing. The fixed text already supplies the authentication domain. Signing arbitrary endpoint text with the order key can authorize an order instead of authentication.
+
+Rust SDK 0.4.3 and TS SDK 0.1.6 validate authentication messages before invoking signers in their managed clients. Raw Rust clients use `validate_maker_auth_challenge`; raw TS clients use `validateAuthChallenge`, which checks the grammar of both server formats. This does not establish endpoint trust or prevent relay of a genuine server challenge. Rust 0.4.2 and TS 0.1.5 lack these checks.
 
 ### AuthChallenge (client -> server)
 
@@ -147,7 +151,7 @@ Sign the raw bytes of the challenge string (`challenge.as_bytes()` in UTF-8). No
 }
 ```
 
-**Maker**: `pubkey` is the `maker_owner` pubkey registered on-chain. Sign the challenge with `quote_signing`. The server looks up `maker_owner`, retrieves the registered `quote_signing` key, and verifies against it.
+**Maker**: `pubkey` is the `maker_owner` pubkey registered on-chain. Sign the challenge with the maker's registered signing key, which is also used for quotes. The server looks up `maker_owner` and verifies the authentication signature against that key.
 
 **Taker**: `pubkey` is the taker's wallet pubkey (same as the `Wallet:` value in the challenge). The signature is verified directly against this key.
 
@@ -184,7 +188,7 @@ Clients should send `Ping` every ~30s to avoid the 90s idle timeout.
 Unit variant, no `data` field. Server responds with `LogoutSuccess` and closes the connection.
 
 ```json
-{ "type": "LogoutSuccess" }
+{ "type": "LogoutSuccess", "data": {} }
 ```
 
 ## Fee model
@@ -213,7 +217,7 @@ The protocol charges a fee per trade, configured per quote mint in basis points 
 ```
 
 `expires_at` wire contract:
-- Wire type is `Option<i64>` — number (Unix seconds) when a session expiry is set, `null` otherwise. The key is always present.
+- Required JSON integer in Unix seconds, for makers and takers. This is the resume credential deadline, not the lifetime of the authenticated socket.
 - Used for session resume by both makers and takers.
 
 `maker_pda` wire contract:
@@ -255,6 +259,23 @@ occurred before routing):
 
 `data` is a tagged `ServerError` variant (`type` + optional nested `data`).
 
+Endpoint-policy violations use a typed error rather than closing the socket:
+
+```json
+{
+  "type": "Error",
+  "data": {
+    "type": "WrongEndpoint",
+    "data": {
+      "endpoint": "maker_data",
+      "allowed_endpoints": ["maker"]
+    }
+  }
+}
+```
+
+Endpoint values are `maker`, `maker_data`, and `taker`.
+
 ### RequestError — request-correlated errors
 
 Sent when the server can correlate the failure to a specific client request. The `request_id`
@@ -273,7 +294,7 @@ echoes the client's `request_id` from the originating message:
 The inner `error` has the same `ServerError` shape as `Error.data`.
 
 Prefer `RequestError` handlers over `Error` handlers wherever you pass `request_id` in requests.
-Both events fire `error` in the TypeScript SDK (see `web-client-ts-sdk.md`).
+Both events fire `error` in the TypeScript SDK (see [Web client SDK](../quickstart/web-client-ts-sdk.md)).
 
 ### Parsing rule (applies to both `Error.data` and `RequestError.data.error`)
 
@@ -325,6 +346,8 @@ Typed variant examples:
 
 This list grows over time; keep a fallback branch for unknown codes.
 
+JavaScript integrators must preserve integer precision: a wire `u64` can exceed `Number.MAX_SAFE_INTEGER`. TS SDK represents most WS amounts as `number`; it reports `unsafe_integer` for oversized amount literals but still dispatches the message. Do not use such rounded values for signing or accounting. Inbound nonces have separate lossless handling. For full-range raw JSON amounts, use lossless parsing and bigint arithmetic; `BigInt(JSON.parse(...).amount)` cannot repair precision already lost. This does not change the wire encoding or the `1e9` scale.
+
 ## Correlation semantics
 
 There's no single global correlation id. Correlation is per-request, via the `request_id` field on messages that have a defined response.
@@ -332,7 +355,7 @@ There's no single global correlation id. Correlation is per-request, via the `re
 - `Subscribe` / `Unsubscribe` carry a mandatory `request_id`. The server echoes it in `SubscribeAck` / `UnsubscribeAck`, and the `subscribed` / `unsubscribed` arrays contain only the diff for this call — not the full subscription list.
 - `GetSubscriptions` carries `request_id`; `Subscriptions` echoes it.
 - Query-style `Get*` operations require `request_id` and echo it in their responses.
-- On failure, the server emits `RequestError` (with `request_id`) when the request carried one, otherwise `Error` (no `request_id`) for connection-level failures.
+- Correlated failures use `RequestError { request_id, error }`; `Error` has no request ID. Not every handler follows the correlated path: `GetTokenMarketsInfo` can return an uncorrelated error or no response for an empty market set. See [its failure behavior](taker-api.md#tokenmarketsinfo).
 - Indicative pricing uses `request_id` on both `IndicativePricesRequest` (server → maker) and `IndicativePricesResponse` (maker → server).
 - Broadcasts (`RfqBroadcast`, `TradeExecuted`, `StatsUpdate`, etc.) don't carry `request_id`.
 
@@ -377,7 +400,7 @@ Use the same terms across all external docs:
 - `settled` — market finalized, assets distributed based on ITM/OTM outcome.
 - `liquidated` — an unfunded ITM position was closed by a liquidation transaction.
 
-Trade lifecycle and payoff: `protocol-flow.md`.
+Trade lifecycle and payoff: [Protocol flow](protocol-flow.md).
 
 ## Supported channels
 
@@ -394,12 +417,16 @@ Trade lifecycle and payoff: `protocol-flow.md`.
 
 Takers typically subscribe to `chain_events` (position outcomes) plus optionally `trades` / `stats` / `markets`. They do **not** need `rfqs` or `positions`.
 
+`TradeExecuted` is a best-effort live hint and may be lost, delayed, or repeated.
+Merge it with role-appropriate authoritative history by `trade.id`; never derive
+trade counts or irreversible actions from the number of received frames.
+
 ## Timeout hierarchy
 
 ```
 market.expiry_ts
   └─ rfq.expires_at                     # Auction window (no new quotes or accepts after this)
-       └─ quote_refresh_margin
+       └─ quote_refresh_lead
 
 quote.valid_until                        # Cryptographic expiry (on-chain enforcement)
   └─ effective_expiry                    # = valid_until - settlement_buffer (server-side trading cutoff)
@@ -412,27 +439,30 @@ rfq.signature_deadline
 
 `expires_at` is the auction deadline. `valid_until` is the on-chain order validity.
 
-- **`rfq.expires_at`** controls how long makers can submit quotes and the taker can accept. After this time the server closes the RFQ.
+- **`rfq.expires_at`** controls how long makers can submit quotes and the taker can accept. After this time new quoting/acceptance stops; an enqueued order remains unresolved until execution evidence arrives.
 - **`quote.valid_until`** is the cryptographic expiry the maker signs into the order. The on-chain program rejects settlement if `valid_until` has passed.
 
-`valid_until` is always larger than `expires_at` because settlement happens *after* the auction ends. A taker might accept a quote at second 59 of a 60-second auction. After that, the server builds a sponsored tx, the taker signs it, and the tx confirms on Solana. This can take up to 300 seconds. If `valid_until` equaled `expires_at`, the on-chain order would expire before the tx lands.
+Makers should normally choose `valid_until` beyond `expires_at` to cover settlement; this relationship is not a Core invariant. A taker might accept a quote at second 59 of a 60-second auction. After that, the server builds a sponsored tx, the taker signs it, and the tx confirms on Solana. This can take up to 90 seconds. If `valid_until` equaled `expires_at`, the on-chain order would expire before the tx lands.
 
 ### Recommended `valid_until` range
 
 ```
-min:  now + min_signature_expiry_seconds          (default 310s)
+min:  now + min_signature_expiry_seconds          (default 100s)
 max:  rfq.expires_at + settlement_buffer_seconds  (recommended upper bound)
+hard max: market.expiry_ts
 ```
 
-Setting `valid_until` above the recommended max is not rejected by the server,
-but provides no benefit: after `rfq.expires_at` the server will not allow
-accepts, so extra on-chain validity only increases the maker's exposure window
-without enabling any additional trades.
+Setting `valid_until` above the recommended max but no later than
+`market.expiry_ts` is accepted, but provides no benefit: after
+`rfq.expires_at` the server will not allow accepts, so extra on-chain validity
+only increases the maker's exposure window without enabling additional trades.
+Values later than `market.expiry_ts` are rejected with
+`QuoteRejected.reason = "market_expired"`.
 
-Example: RFQ with `expires_at = now + 60s`, settlement buffer 300s:
+Example: RFQ with `expires_at = now + 60s`, settlement buffer 90s:
 
 ```
-valid_until range: [now + 310s, now + 360s]
+valid_until range: [now + 100s, now + 150s]
 effective_expiry:  [now + 10s,  now + 60s]
 ```
 
@@ -441,8 +471,9 @@ and the on-chain order is valid long enough for settlement to land.
 
 ### Invariants
 
-- `quote.valid_until >= now + min_signature_expiry_seconds` (default 310s; server rejects shorter expiries)
-- `effective_expiry = quote.valid_until - settlement_buffer` (default 300s)
+- `quote.valid_until >= now + min_signature_expiry_seconds` (default 100s; server rejects shorter expiries)
+- `quote.valid_until <= market.expiry_ts` (hard server-side bound)
+- `effective_expiry = quote.valid_until - settlement_buffer` (default 90s)
 - `rfq.expires_at < market.expiry_ts` (recommended client-side validation)
 - `signature_deadline <= min(effective_expiry, rfq.expires_at)`
 
@@ -454,9 +485,11 @@ Use entity versions where available:
 - `rfq_version` for RFQ lifecycle progression
 - `order_version` for order lifecycle progression
 
-`order_version` is currently present on order lifecycle push events
-(`OrderSubmitted`, `OrderConfirmed`, `OrderFailed`) and not on `OrderStatusMessage`.
+`order_version` is present on order lifecycle pushes, not on `OrderStatus`. Lifecycle precedence uses ranks `accepted = 1`, `submitted = 2`, `failed = 3`, `confirmed = 4`. Confirmation can replace a locally recorded failure; a transition may skip a rank and replay keeps the same rank.
+
+`GetOrderStatus` instead returns `state: pending | confirmed { position_pda } | unknown`. `unknown` and timeouts do not prove nonexecution. Reconnect reads are not an atomic snapshot; keep unresolved obligations separately from transient RFQ/UI caches.
 
 On client side:
 - apply update only if `new_version > current_version`
 - ignore stale updates (`new_version < current_version`)
+- treat equal versions as idempotent replay

@@ -1,5 +1,8 @@
 # Acta Maker Wire Examples
 
+Payloads illustrate wire shapes. Replace abbreviated IDs, addresses, signatures and past timestamps with real values; request/session/RFQ IDs must be UUIDs and order IDs must decode to 32 bytes. These examples are not transactions to send unchanged.
+
+
 ## Complete Session
 
 ### 1) Hello
@@ -38,18 +41,18 @@
 {
   "type": "AuthRequest",
   "data": {
-    "challenge": "Acta RFQ Authentication\n\nSign this message to authenticate your wallet.\n\nNonce: a1b2c3d4e5f6...hex64\nIssued At: 2024-03-09T12:00:00Z"
+    "challenge": "Acta RFQ Authentication\n\nSign this message to authenticate your wallet.\n\nNonce: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nIssued At: 2024-03-09T12:00:00Z\n"
   }
 }
 ```
 
-Maker echoes the challenge, signs it, and sends `maker_owner` pubkey:
+Validate the complete [canonical challenge](../reference/ws-common.md#what-to-sign) before signing. Then echo it and send the `maker_owner` pubkey:
 
 ```json
 {
   "type": "AuthChallenge",
   "data": {
-    "challenge": "Acta RFQ Authentication\n\nSign this message to authenticate your wallet.\n\nNonce: a1b2c3d4e5f6...hex64\nIssued At: 2024-03-09T12:00:00Z",
+    "challenge": "Acta RFQ Authentication\n\nSign this message to authenticate your wallet.\n\nNonce: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nIssued At: 2024-03-09T12:00:00Z\n",
     "signature": "3q7uQqYc3...base58sig",
     "pubkey": "MakerOwnerPubkeyBase58"
   }
@@ -63,7 +66,7 @@ The server verifies the signature by `quote_signing` key.
   "type": "AuthSuccess",
   "data": {
     "session_id": "sess-123",
-    "expires_at": null,
+    "expires_at": 1710086400,
     "maker_pda": "MakerPdaBase58"
   }
 }
@@ -97,9 +100,10 @@ The server verifies the signature by `quote_signing` key.
 {
   "type": "Subscribe",
   "data": {
+    "request_id": "a1b2c3d4-e5f6-4890-abcd-ef1234567890",
     "channels": ["rfqs"],
-    "underlying_mints": null,
-    "quote_mints": null
+    "underlying_mints": [],
+    "quote_mints": []
   }
 }
 ```
@@ -128,14 +132,21 @@ The server verifies the signature by `quote_signing` key.
     "expires_at": 1710000050,
     "taker": "TakerPubkeyBase58",
     "order_options": [
-      { "strike": 150000000000 },
-      { "strike": 160000000000 }
-    ]
+      {
+        "strike": 150000000000
+      },
+      {
+        "strike": 160000000000
+      }
+    ],
+    "sent_at_unix_ms": 1710000000123
   }
 }
 ```
 
 ### 7) Quote -> QuoteAcknowledged -> QuoteSelected
+
+At example time `1710000000`, this quote has 140 seconds of on-chain validity and a trading cutoff at `1710000050` after the 90-second settlement buffer. Selection at `1710000010` gives the 30-second signature deadline shown below.
 
 ```json
 {
@@ -144,7 +155,7 @@ The server verifies the signature by `quote_signing` key.
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "strike": 160000000000,
     "price": 50000000,
-    "valid_until": 1710000310,
+    "valid_until": 1710000140,
     "nonce": 42,
     "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
     "signature": "4kZ7kZ...base58sig"
@@ -218,13 +229,15 @@ For successful fills, the winning maker receives `QuoteFilled` before `RfqClosed
 
 ### QuoteRefreshRequested
 
+If the quote remains active instead of being selected, refresh fires at `1710000040`: ten seconds before its trading cutoff. The minimum new validity is that time plus the 90-second buffer and 10-second refresh lead.
+
 ```json
 {
   "type": "QuoteRefreshRequested",
   "data": {
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "strike": 160000000000,
-    "min_valid_until": 1710000035,
+    "min_valid_until": 1710000140,
     "reason": "expiring_soon"
   }
 }
@@ -232,14 +245,26 @@ For successful fills, the winning maker receives `QuoteFilled` before `RfqClosed
 
 ### Reconcile after reconnect
 
+Send maker-private recovery reads on `/maker/data`:
+
 ```json
-{ "type": "GetMyQuotes", "data": { "request_id": "a1b2c3d4-0001", "active_only": true } }
+{ "type": "GetMyQuotes", "data": { "request_id": "a1b2c3d4-0001", "scope": "live" } }
 { "type": "GetMakerPositions", "data": { "request_id": "a1b2c3d4-0002" } }
 { "type": "GetMyTrades", "data": { "request_id": "a1b2c3d4-0003" } }
+{ "type": "GetMmSummary", "data": { "request_id": "a1b2c3d4-0005" } }
+```
+
+`GetSubscriptions` stays on the quote connection because it reports `/maker`
+subscription state:
+
+```json
 { "type": "GetSubscriptions", "data": { "request_id": "a1b2c3d4-0004" } }
 ```
 
-`GetMyQuotes` with `active_only=true` returns live quotes. With `active_only=false`, the backend also appends historical quotes from DB; use `limit` to cap the historical slice.
+`GetMyQuotes { scope: "live" }` returns the full, unpaged owner set, including retained and selected quotes; History is queried separately with `scope: "history"`. Keep unresolved orders across reconnect and query `GetOrderStatus`; missing rows do not prove nonexecution.
+Use `GetMmSummary` for dashboard bootstrap or recovery, not as a polling request. `GetMyTrades`
+defaults to `50` rows and caps at `200`; `GetMyQuotes { scope: "history" }` defaults to `200`
+historical rows and caps at `1000`.
 
 ### GetMyTrades (paginated)
 
@@ -265,6 +290,12 @@ Response:
         "id": "trade-uuid-1",
         "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
         "market_pda": "MarketPdaBase58",
+        "underlying_mint": "UnderlyingMintBase58",
+        "underlying_symbol": "SOL",
+        "underlying_decimals": 9,
+        "quote_mint": "QuoteMintBase58",
+        "quote_symbol": "USDC",
+        "quote_decimals": 6,
         "position_type": "covered_call",
         "taker": "TakerPubkeyBase58",
         "strike": 160000000000,
@@ -304,7 +335,7 @@ Next page (keyset pagination):
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "strike": 160000000000,
     "price": 55000000,
-    "valid_until": 1710000310,
+    "valid_until": 1710000140,
     "nonce": 43,
     "order_id": "0xb2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3",
     "signature": "5kA8bR...base58sig"
@@ -323,7 +354,7 @@ Next page (keyset pagination):
         "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
         "strike": 150000000000,
         "price": 45000000,
-        "valid_until": 1710000310,
+        "valid_until": 1710000140,
         "nonce": 44,
         "order_id": "0xaaaa2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
         "signature": "3mR9xY...base58sig"
@@ -332,7 +363,7 @@ Next page (keyset pagination):
         "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
         "strike": 160000000000,
         "price": 50000000,
-        "valid_until": 1710000310,
+        "valid_until": 1710000140,
         "nonce": 45,
         "order_id": "0xbbbb2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
         "signature": "7pQ2wK...base58sig"
@@ -350,7 +381,7 @@ Next page (keyset pagination):
   "data": {
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-    "reason": "cap_exceeded",
+    "reason": { "cap_exceeded": { "token_oi_cap_exceeded": { "underlying_mint": "So11111111111111111111111111111111111111112", "current": 1000000000000, "limit": 1000000000000 } } },
     "message": "token_oi_cap_exceeded"
   }
 }
@@ -369,7 +400,7 @@ Next page (keyset pagination):
 }
 ```
 
-`CancelAllQuotesAck` arrives immediately. `cancelled_count: 0` in the ack is normal — the server confirms receipt and processes cancellations asynchronously. Individual `QuoteCancelled` messages arrive shortly after with the actual `order_ids` removed per RFQ.
+`CancelAllQuotesAck` follows Core application. This example means no orders were removed, not merely that the command was queued. Selected/executing obligations may remain. The receipt is correlated by `request_id`; lifecycle `QuoteCancelled` messages do not replace it.
 
 ### QuoteBestStatus
 

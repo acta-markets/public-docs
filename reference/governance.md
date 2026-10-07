@@ -6,7 +6,7 @@ Acta separates cold governance from hot operations. The cold authority controls 
 
 ### Cold authority (`ACTA_ADMIN`)
 
-The cold authority is the hardcoded public key `CLSYf1AL9rXYjGbSjvexMRegriqpLR37kmLkcqvAgBnN`. In production this is intended to be a Squads v4 vault PDA. Acta authorization is a pure signer check: if the transaction signer equals `ACTA_ADMIN`, the cold action is authorized. Squads supplies that signer via its own M-of-N approval flow.
+The cold authority is the hardcoded public key `CLSYf1AL9rXYjGbSjvexMRegriqpLR37kmLkcqvAgBnN`. Squads v4 supplies the vault PDA's signature after its configured approvals. Acta verifies the `ACTA_ADMIN` signature; membership, approval thresholds and Squads execution delays are enforced by Squads.
 
 Cold authority operations:
 - initialize the global config
@@ -17,11 +17,12 @@ Cold authority operations:
 - lower the global timelock delay only through the timelock
 - rotate the hot wallet immediately
 - set, rotate, or clear the guardian immediately
+- set, rotate, or revoke the settlement attestor through the timelock
 - toggle pause immediately
-- queue and execute pending actions
+- queue pending actions
 - cancel pending actions
 
-The cold authority is also the program upgrade authority.
+The cold authority is separate from the program upgrade authority.
 
 ### Hot wallet (`GlobalConfig.hot_authority`)
 
@@ -30,7 +31,7 @@ The hot wallet is the online key used by backend services. It is stored in `Glob
 Hot wallet operations:
 - create, finalize, and close markets
 - create and close concrete oracle accounts from already-approved oracle sources
-- publish a post-expiry scalar settlement price to an oracle account (`UpdateOraclePrice` checks the live `hot_authority`; the cold authority is break-glass)
+- publish a post-expiry scalar settlement price to an oracle account. `UpdateOraclePrice` checks the live `hot_authority`, and works for the hot wallet only while no settlement attestor is configured: once `GlobalConfig.settlement_attestor` is set, direct hot publication is rejected on-chain (`SettlementAttestationRequired`, 1090) and settlement requires `UpdateOraclePriceAttested` with an Ed25519 attestation from that key — a 2-of-2 of hot key and attestor key. The cold authority retains a break-glass direct path
 - co-sign `OpenPosition`
 - withdraw collected protocol fees
 
@@ -44,7 +45,7 @@ Guardian operations:
 - cancel any queued pending action before execution
 - engage the emergency pause (releasing it / unpause is cold-only)
 
-The guardian cannot queue or execute pending actions, rotate itself, rotate the hot wallet, unpause, or perform hot/cold configuration changes. A guardian is a single trusted key: if compromised it can only grief (veto-spam queued actions, re-engage the pause) and the cold authority recovers by rotating it with `SetGuardian` (immediate).
+The guardian cannot queue pending actions, rotate itself, rotate the hot wallet, unpause, or authorize hot/cold configuration changes. A guardian is a single trusted key: if compromised it can only grief (veto-spam queued actions, re-engage the pause) and the cold authority recovers by rotating it with `SetGuardian` (immediate).
 
 ### Permissionless exits
 
@@ -54,14 +55,14 @@ Settlement and liquidation are permissionless. Any signer may settle an expired 
 
 | Action | Authority | Timing |
 |--------|-----------|--------|
-| Program upgrade | Cold upgrade authority | Outside Acta timelock |
+| Program upgrade | Separate program-upgrade authority | Its configured Squads approvals and delay |
 | Initialize global config | Cold | Immediate |
 | Rotate hot wallet | Cold | Immediate |
 | Set / rotate / clear guardian (`SetGuardian`, op 27) | Cold | Immediate |
 | Engage emergency pause (`SetPause`, op 28) | Cold or guardian | Immediate |
 | Release emergency pause / unpause (`SetPause`, op 28) | Cold | Immediate |
 | Queue pending action (`QueuePendingAction`, op 23) | Cold | Immediate queue |
-| Execute pending action (`ExecutePendingAction`, op 25) | Cold | After delay |
+| Execute pending action (`ExecutePendingAction`, op 25) | Any signer | After the cold-approved action's delay |
 | Cancel pending action (`CancelPendingAction`, op 24) | Cold or guardian | Before execute |
 | Raise / keep timelock delay (`UpdateActionTimelock`, op 26) | Cold | Immediate |
 | Lower timelock delay (`UpdateActionTimelock`, op 26) | Cold | Timelocked by current delay |
@@ -70,7 +71,10 @@ Settlement and liquidation are permissionless. Any signer may settle an expired 
 | Create / update oracle source | Cold | Timelocked |
 | Create / finalize / close market | Hot wallet | Immediate |
 | Create / close concrete oracle | Hot wallet | Immediate |
-| Publish settlement price | Hot wallet (live) or cold | Immediate after expiry |
+| Publish settlement price (`UpdateOraclePrice`, op 16) | Hot wallet (only while no attestor is set) or cold | Immediate after expiry |
+| Publish attested settlement price (`UpdateOraclePriceAttested`, op 31) | Hot wallet + attestor Ed25519 proof (2-of-2) | After expiry, attestor set |
+| Set / rotate settlement attestor (`SetSettlementAttestor`, op 29) | Cold | Timelocked |
+| Revoke settlement attestor (`RevokeSettlementAttestor`, op 30) | Cold | Timelocked |
 | Withdraw protocol fees | Hot wallet | Immediate |
 | Open position | Hot wallet + taker tx signer + maker Ed25519 quote | Immediate |
 | Settle position | Permissionless | After market finalization |
@@ -78,9 +82,13 @@ Settlement and liquidation are permissionless. Any signer may settle an expired 
 
 ## Timelock
 
-Acta uses one global delay: `GlobalConfig.timelock_secs`. It starts at `0`, should be raised after deployment, and is capped at 7 days. There are no per-kind delay slots and no `GlobalConfig.timelock_secs[0..N]` array.
+Acta uses one global delay for timelocked actions: `GlobalConfig.timelock_secs`, from `0` to 604,800 seconds (7 days). Its initial value is `0`. Zero permits immediate execution of a queued action; cold authorization and the instruction commitment still apply.
 
 The timelock uses a generic store-and-replay model. Queue stores a commitment to the exact wrapped instruction; execute replays the same wrapped instruction after `execute_at`.
+
+Cold authorizes the action when queueing it. Once its delay has elapsed, any signer can execute that exact action. The executor pays transaction costs and funds accounts created during execution; closing the pending-action account returns its rent to the original proposer.
+
+Supported premium mints are configured through premium config PDAs. `InitializeConfig` creates a premium config, `UpdateConfig` updates it, and `CloseConfig` closes that premium config.
 
 Timelockable wrapped opcodes:
 
@@ -92,15 +100,17 @@ Timelockable wrapped opcodes:
 | 17 | `CreateOracleSource` |
 | 18 | `UpdateOracleSource` |
 | 20 | `CloseConfig` |
+| 29 | `SetSettlementAttestor` |
+| 30 | `RevokeSettlementAttestor` |
 | 26 | `UpdateActionTimelock` |
 
-In production, the first six reject direct calls with `DirectCallDisabled`; they must go through queue -> execute. `UpdateActionTimelock` is special: raising or keeping the delay is immediate; lowering it must be queued and waited out under the current delay.
+In production, all listed operations except the immediate raise/keep form of `UpdateActionTimelock` reject direct calls with `DirectCallDisabled`; they must go through queue -> execute. `UpdateActionTimelock` is special: raising or keeping the delay is immediate; lowering it must be queued and waited out under the current delay.
 
 ### Wire Shape
 
 `QueuePendingAction` data is `[23, wrapped_opcode, ...wrapped_args]` and accounts are `[admin, pending_action_pda, system_program, global_config_pda, ...wrapped_accounts]`.
 
-`ExecutePendingAction` data is `[25, wrapped_opcode, ...wrapped_args]` and accounts are `[admin, pending_action_pda, ...wrapped_accounts]`.
+`ExecutePendingAction` data is `[25, wrapped_opcode, ...wrapped_args]` and accounts are `[executor, pending_action_pda, proposed_by, ...wrapped_accounts]`.
 
 The commitment binds:
 
@@ -121,17 +131,14 @@ Client note: generated Codama builders for `QueuePendingAction` and `ExecutePend
 
 While paused, `OpenPosition` fails with `ProtocolPaused`. Settlement, liquidation, and other exit paths remain available.
 
+## Settlement Attestation
+
+`GlobalConfig.settlement_attestor` optionally names an independent Ed25519 second signer for hot settlement publication. While it is unset (all-zero), `UpdateOraclePrice` behaves as described above. Once set (`SetSettlementAttestor`, cold-only), the hot wallet's direct call fails with `SettlementAttestationRequired` (1090); settlement then requires `UpdateOraclePriceAttested`, where an Ed25519 verify instruction signed by the attestor over a domain-separated message must immediately precede the update in the same transaction. The cold authority keeps the direct path as break-glass (Ed25519 precompile instructions cannot be produced through Squads CPI). `RevokeSettlementAttestor` (cold-only) clears the key and deliberately returns hot settlement to direct mode; the 32-byte replay domain is retained so signatures can never be replayed across deployments.
+
 ## Squads Integration
 
-`ACTA_ADMIN` is a Squads **3-of-4** vault PDA, which requires no contract changes. Squads handles member approval and key rotation; Acta checks only the resulting signer. Acta's timelock adds an on-chain, cancellable delay for sensitive actions. The guardian can veto queued actions independently of the proposer.
+Squads handles approvals and member rotation; Acta checks the cold vault signature. The approval threshold and Squads delay are stored in the multisig account. The Acta timelock separately controls when queued protocol actions become executable, and the guardian can cancel them before execution.
 
 ## Program Upgrade
 
-The program upgrade authority is the same Squads **3-of-4** vault as `ACTA_ADMIN`. A program upgrade can replace any logic — including the timelock and guardian — and is intentionally **not** behind Acta's on-chain timelock or guardian veto. The control on it is the 3-of-4 multisig threshold: an upgrade cannot execute without 3 of the 4 members. There is no separate on-chain upgrade delay.
-
-## Not Implemented
-
-- No per-kind timelock array.
-- No `AddPremiumToken` instruction. Supported premium mints are represented by premium config PDAs created through `InitializeConfig`.
-- No global-config close instruction. `CloseConfig` closes a premium config.
-- No on-chain Squads threshold introspection. The threshold lives in Squads state.
+Program upgrades use a separate Squads vault and its configured approvals and execution delay. The program's upgrade authority authorizes deployment of the program buffer. `GlobalConfig.timelock_secs` applies to Acta's queued instructions, not to program upgrades.
