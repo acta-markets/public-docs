@@ -184,10 +184,6 @@ let tx = Transaction::new_signed_with_payer(&[fund], Some(&operator.pubkey()), &
 
 Pyth's sponsored mainnet feeds update about once a minute, so a sponsored account can be just over 60 s old. If a step fails on staleness, retry after the next update or post your own verified update for the same feed. The feed accounts come from Rust `pyth_price_feed_account` / `oracle_source_pyth_feed`, or TS `resolveVaultPriceUpdates`.
 
-## Account migration
-
-Program builds after the vault account grew to 712 bytes (version 2) reject a 688-byte version-1 vault with `VaultMigrationRequired` (1161) on every instruction, including settlement, liquidation and funding. `MigrateVault` (opcode 83) is permissionless; the payer tops up rent (about 0.000167 SOL). Rust `VaultManager::migrate_vault()` (payer = actor); TS `flows.migrateVault(payer, vault)`. A migrated vault fails a second migration with `VaultAlreadyMigrated` (1162).
-
 ## If the operator disappears
 
 If only the delegate is lost, governance can do everything the delegate did, disable the delegate at once, and rotate it in the next Idle.
