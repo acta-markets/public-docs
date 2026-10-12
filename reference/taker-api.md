@@ -511,8 +511,7 @@ Query-style responses echo the same `request_id`:
 
 `GetMarkets`, `GetMarketDescriptors`, `GetExpiries` and `GetTokens` answer from the server's
 [reference snapshot](ws-common.md#reference-data): **tradable** markets only — non-finalized,
-non-disabled, and before the pre-expiry trading cutoff. There is no `active_only` field; the server
-ignores it if sent. Closed and finalized markets are on HTTP `GET /api/v1/markets?active=false`.
+non-disabled, and before the pre-expiry trading cutoff. Closed and finalized markets are on HTTP `GET /api/v1/markets?active=false`.
 Re-read on [`ReferenceChanged`](ws-common.md#referencechanged).
 
 ### Discovery strict policy

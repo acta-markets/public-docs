@@ -159,7 +159,7 @@ Fetch static metadata on `/maker/data` at startup and re-read it when the server
 { "type": "GetMarketsForMaker",   "data": { "request_id": "..." } }
 ```
 
-Discovery returns tradable markets only (non-finalized, non-disabled, before the pre-expiry trading cutoff); there is no `active_only` field. The same data is on HTTP: `GET /api/v1/venue`, `/api/v1/tokens` and `/api/v1/markets` (`active=false` adds closed and finalized markets), with ETag revalidation. See [Reference data](../reference/ws-common.md#reference-data).
+Discovery returns tradable markets only (non-finalized, non-disabled, before the pre-expiry trading cutoff). The same data is on HTTP: `GET /api/v1/venue`, `/api/v1/tokens` and `/api/v1/markets` (`active=false` adds closed and finalized markets), with ETag revalidation. See [Reference data](../reference/ws-common.md#reference-data).
 
 ## Operational defaults
 

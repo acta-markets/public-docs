@@ -88,9 +88,9 @@ Respect the venue limits: quantity on `size_rule`, strikes on `strike_tick` (`GE
 
 ### Checked signing
 
-Never sign a served transaction blind. The checked helpers rebuild the expected instructions from what you agreed to and sign only on an exact match. They compare fee payer, signers, compute budget within your bounds, every account with its flags, instruction data, ATA creates, the maker's Ed25519 quote check and the order id. Jupiter accounts are allowed only in the swap's route tail: at most 64, no signers, no payer, no read-only vault account made writable. A swap whose `minimum_out_amount` is below your `min_output_floor` is rejected even if it fits the quote's slippage. Compute the floor from your own oracle price, not from the server's quote. The `_unverified` / `signSponsoredTxBase64Unverified` helpers skip all of this.
+Never sign a served transaction blind. The checked helpers rebuild the expected instructions from what you agreed to and sign only on an exact match. They compare fee payer, signers, compute budget within your bounds, every account with its flags, instruction data, ATA creates, the maker's Ed25519 quote check and the order id. Jupiter accounts are allowed only in the swap's route tail: at most 64, no signers, no payer, no read-only vault account made writable. A swap whose `minimum_out_amount` is below your `min_output_floor` is rejected even if it fits the quote's slippage. Compute the floor from your own oracle price, not from the server's quote.
 
-| | Rust (`acta-maker-sdk`, feature `vault-chain`) | TypeScript (`@acta-markets/ts-sdk/ws`) |
+| | Rust (`acta-maker-sdk`, feature `vault`) | TypeScript (`@acta-markets/ts-sdk/ws`) |
 |---|---|---|
 | Position open | `VaultOperatorClient::verify_and_sign_sponsored_tx` | `verifyAndSignSponsoredTx` |
 | Swap | `VaultOperatorClient::verify_and_sign_swap` | `verifyAndSignSwap` |
@@ -159,7 +159,7 @@ vault.on("swapQuoteResult", async (quote) => {
 
 When the vault holds an option, the option is not funded at open. To exercise an ITM option, the vault must fund it (`FUND_MAKER`): it pays strike × quantity in quote for a call, or the quantity in underlying for a put, from the matching leg, and receives the collateral at settlement. **Fund before expiry.** After the market is finalized, anyone can liquidate an unfunded ITM position. The liquidator pays the writer and takes the collateral, and the vault keeps nothing: it loses the intrinsic value. Funding is still accepted after finalization until a settlement or liquidation lands, but then you are racing liquidators. Keep enough of the funding mint for every holder position you may need to exercise.
 
-Builders: TS `planner.trading.fundMakerPosition(position)`; Rust `VaultManager::fund_maker_position` in `acta-maker-sdk` (feature `vault-chain`). The builder picks the funding mint from the market side and the vault ATA by that mint. The actor signs (`FUND_MAKER` or governance) and pays; `VaultFundMakerPosition` takes no arguments and moves the amount the position needs.
+Builders: TS `planner.trading.fundMakerPosition(position)`; Rust `VaultManager::fund_maker_position` in `acta-maker-sdk` (feature `chain`). The builder picks the funding mint from the market side and the vault ATA by that mint. The actor signs (`FUND_MAKER` or governance) and pays; `VaultFundMakerPosition` takes no arguments and moves the amount the position needs.
 
 ```rust
 use acta_maker_sdk::chain::vault::{VaultAccount, VaultManager, VaultPositionRef};

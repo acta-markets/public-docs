@@ -38,8 +38,8 @@ Unit variants may omit `data`, for example:
 Tokens and markets come from one server snapshot, shared by WS (`GetTokens`, `GetMarkets`,
 `GetMarketDescriptors`, `GetExpiries`, `Snapshot.markets`) and HTTP (`/api/v1/tokens`,
 `/api/v1/markets`, see [HTTP API](http-api.md#reference-data)). WS discovery always answers from the
-active set: markets that are not finalized, not disabled and before their trading cutoff. The
-`active_only` field of `GetTokens` / `GetMarketDescriptors` was removed; the server ignores it if sent.
+active set: markets that are not finalized, not disabled and before their trading cutoff. There is no
+`active_only` field; the server ignores it if sent.
 For closed and finalized markets use `GET /api/v1/markets?active=false`.
 
 ### TokenInfo
