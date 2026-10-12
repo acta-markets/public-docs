@@ -77,14 +77,14 @@ A valid session returns `AuthSuccess`; an invalid/expired/revoked one returns `A
 Fetch market metadata before opening an RFQ. `GetMarketDescriptors` returns the full descriptor — `size_rule`, decimals, oracle PDAs, symbols — needed to validate quantity and render prices.
 
 ```json
-{ "type": "GetMarketDescriptors", "data": { "request_id": "<uuid>", "active_only": true } }
-{ "type": "GetTokens",            "data": { "request_id": "<uuid>", "active_only": true } }
+{ "type": "GetMarketDescriptors", "data": { "request_id": "<uuid>" } }
+{ "type": "GetTokens",            "data": { "request_id": "<uuid>" } }
 { "type": "GetExpiries",          "data": { "request_id": "<uuid>" } }
 ```
 
-Query-style requests require `request_id`; responses echo it. Cache descriptors and refresh on `MarketCreated` / `MarketFinalized`.
+Query-style requests require `request_id`; responses echo it. Discovery returns tradable markets only. Cache descriptors and re-read them when an authenticated session receives `ReferenceChanged`, which also covers a market passing its trading cutoff. Before auth, or without WS, read `GET /api/v1/tokens` and `GET /api/v1/markets` with `If-None-Match` (see [HTTP API](../reference/http-api.md#reference-data)).
 
-> **Size rules.** `size_rule = { min_size, max_size, step }` is in **underlying atomic units**, keyed by underlying mint. A valid `quantity` satisfies `min_size <= quantity <= max_size` and `(quantity - min_size) % step == 0`. If a market's underlying mint has no configured rule, `RfqRequest` is rejected with `missing_size_rule_for_underlying_mint`. `GetMarketDescriptors` fails the whole request if any market is missing a rule — partial discovery is not supported.
+> **Size rules.** `size_rule = { min_size, max_size, step }` is in **underlying atomic units**, keyed by underlying mint. A valid `quantity` satisfies `min_size <= quantity <= max_size` and `(quantity - min_size) % step == 0`. If a market's underlying mint has no configured rule, `RfqRequest` is rejected with `missing_size_rule_for_underlying_mint`. `GetMarketDescriptors` and `GetTokens` fail the whole request if any active market is missing a rule — partial discovery is not supported. `GetTokens` returns the same rule on each underlying token.
 
 ## The RFQ flow
 

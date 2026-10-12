@@ -26,11 +26,80 @@ Unit variants may omit `data`, for example:
 | `strike` | `u64`, quote per 1 underlying unit, 1e9 scale |
 | `quantity` | `u64`, underlying atomic units |
 | `size_rule` | min_size, max_size, step in underlying atomic units; always tied to underlying_mint |
+| `strike_tick` | `u64`, strike ladder spacing for an underlying, 1e9 scale |
 | Timestamps | Unix seconds |
 | `server_time_unix_ms` | Unix milliseconds |
 
 `price` and `strike` are always 1e9 fixed-point per 1 underlying unit, independent of mint decimals.
 
+
+## Reference data
+
+Tokens and markets come from one server snapshot, shared by WS (`GetTokens`, `GetMarkets`,
+`GetMarketDescriptors`, `GetExpiries`, `Snapshot.markets`) and HTTP (`/api/v1/tokens`,
+`/api/v1/markets`, see [HTTP API](http-api.md#reference-data)). WS discovery always answers from the
+active set: markets that are not finalized, not disabled and before their trading cutoff. The
+`active_only` field of `GetTokens` / `GetMarketDescriptors` was removed; the server ignores it if sent.
+For closed and finalized markets use `GET /api/v1/markets?active=false`.
+
+### TokenInfo
+
+One object per mint, on both transports. Underlying-only fields are omitted on quote tokens.
+
+```typescript
+type TokenInfo = {
+  mint: string;
+  symbol: string;
+  decimals: number;
+  oracle_feed_ids?: string[];      // Pyth feed ids, hex without 0x; omitted when none is known
+  size_rule?: {                    // underlyings only; underlying atomic units
+    min_size: number;
+    max_size: number;
+    step: number;
+  };
+  strike_tick?: number;            // underlyings only; strike ladder spacing, 1e9 scale
+  quote_mints?: string[];          // underlyings only; quote mints of its active markets
+};
+```
+
+A valid `quantity` satisfies `min_size <= quantity <= max_size` and `(quantity - min_size) % step == 0`.
+Only tokens of active markets are listed.
+
+### MarketInfo
+
+Used by `Snapshot.markets`, `Markets` and HTTP `/api/v1/markets`. Markets name tokens by mint.
+
+```typescript
+type MarketInfo = {
+  pda: string;
+  underlying: string;        // underlying mint
+  quote: string;             // quote mint
+  expiry_ts: number;
+  is_put: boolean;
+  status: "active" | "closed" | "finalized";
+  settlement_price?: number; // 1e9 scale, finalized markets only
+};
+```
+
+WS responses (`Snapshot`, `Markets`) contain only `active` markets.
+
+### ReferenceChanged
+
+Pushed to every authenticated maker, taker and vault operator session, without a subscription, when the token list or
+the market list changes, including a market crossing its trading cutoff or expiry. The server checks
+for changes every second.
+
+```json
+{
+  "type": "ReferenceChanged",
+  "data": { "tokens_etag": "\"3f2a...\"", "markets_etag": "\"9b1c...\"" }
+}
+```
+
+The ETags are the HTTP `ETag` values of `/api/v1/tokens` and of unfiltered
+`/api/v1/markets?active=false`. On receipt, re-read what you cache (`GetTokens` /
+`GetMarketDescriptors` on WS, or the HTTP routes with `If-None-Match`). Vault sessions on `/vault`
+re-read the HTTP routes.
 
 ## Quantity and collateral by position type
 

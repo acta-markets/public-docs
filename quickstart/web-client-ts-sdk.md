@@ -117,7 +117,7 @@ ws.getMarkets();
 
 // Full descriptors include size_rule, decimals, and oracle PDAs. Fetch before createRfq.
 ws.on("marketDescriptors", (descriptors) => { /* cache these */ });
-ws.getMarketDescriptors({ active_only: true });
+ws.getMarketDescriptors(); // tradable markets only
 ```
 
 ### 6. Create RFQ

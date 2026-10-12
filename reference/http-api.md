@@ -70,42 +70,157 @@ Prometheus metrics endpoint.
 
 ---
 
-## Markets
+## Reference data
 
-### GET `/api/v1/markets`
+`/venue`, `/tokens` and `/markets` are served from one in-memory snapshot that also answers the WS
+discovery requests (`GetTokens`, `GetMarkets`, `GetMarketDescriptors`, `GetExpiries` and
+`Snapshot.markets`), so HTTP and WS never disagree. They need no database and share the light per-IP
+rate limit (30 req/s, burst 60).
 
-List markets.
+The server rebuilds the snapshot when the market registry changes, when a market reaches its trading
+cutoff or expiry, and at least every 30 s. When the token list or the market list changes, every
+authenticated maker, taker and vault operator WS session receives
+[`ReferenceChanged`](ws-common.md#referencechanged) with the new ETags.
 
-Query:
-- `underlying` (optional symbol string)
+### Caching
 
-`GET /api/v1/markets` returns tradable markets only: not finalized, not disabled, and before the effective trading cutoff. `underlying` filters by symbol before that tradability filter. There is no `active=false` mode; use `/api/v1/markets/{pda}` for a specific market.
+Every response carries a strong `ETag` and `Cache-Control`:
 
-Response:
+| Route | `Cache-Control` |
+|---|---|
+| `/venue`, `/tokens` | `public, max-age=60` |
+| `/markets` | `public, max-age=5` |
+
+Send the last `ETag` back in `If-None-Match`; an unchanged body returns `304 Not Modified` with no
+body and the same `ETag` and `Cache-Control`. `If-None-Match` accepts a comma-separated list, `*`
+and the `W/` prefix. Polling with `If-None-Match` is cheap, but `ReferenceChanged` tells you when to
+re-read.
+
+`ReferenceChanged.tokens_etag` equals the `/tokens` ETag. `ReferenceChanged.markets_etag` is the ETag of
+the unfiltered `GET /api/v1/markets?active=false` body, not of the default active list or of a
+filtered query, so compare it only with that request.
+
+### GET `/api/v1/venue`
+
+Program id and the limits the server validates against. `null` means no limit. The values come from
+server configuration and change only on restart.
 
 ```json
 {
-  "markets": [
+  "program_id": "ProgramIdBase58",
+  "min_quote_validity_seconds": 100,
+  "settlement_buffer_seconds": 90,
+  "quote_refresh_lead_seconds": 10,
+  "min_rfq_timeout_seconds": 5,
+  "max_rfq_timeout_seconds": 120,
+  "signature_timeout_seconds": 30,
+  "max_quotes_per_rfq": 50,
+  "max_active_rfqs_per_taker": 50,
+  "pre_expiry_cutoff_seconds": 10800
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `min_quote_validity_seconds` | Minimum `valid_until - now` accepted on a quote (`settlement_buffer_seconds + quote_refresh_lead_seconds`) |
+| `settlement_buffer_seconds` | A quote stops being acceptable at `valid_until - settlement_buffer_seconds` |
+| `quote_refresh_lead_seconds` | How long before that cutoff the server sends `QuoteRefreshRequested` |
+| `min_rfq_timeout_seconds` / `max_rfq_timeout_seconds` | Accepted range for `RfqRequest.timeout_seconds` |
+| `signature_timeout_seconds` | Time a taker has to return a signed sponsored transaction |
+| `max_quotes_per_rfq` | Quotes kept per RFQ, or `null` |
+| `max_active_rfqs_per_taker` | Concurrent open RFQs per taker, or `null` |
+| `pre_expiry_cutoff_seconds` | Default no-trade window before market expiry; a market may override it |
+
+The example shows the server defaults; deployments may differ, so read the live endpoint.
+
+`500` `invalid_program_id` when the server's program id is misconfigured.
+
+### GET `/api/v1/tokens`
+
+Every token of the active markets, once, sorted by mint. Markets reference tokens by mint; join on
+`mint` for symbol and decimals.
+
+```json
+{
+  "tokens": [
     {
-      "pda": "MarketPdaBase58",
-      "underlying_mint": "UnderlyingMintBase58",
-      "quote_mint": "QuoteMintBase58",
-      "expiry_ts": 1710600000,
-      "is_put": false,
-      "is_finalized": false,
-      "settlement_price": null,
-      "underlying_symbol": "SOL",
-      "quote_symbol": "USDC"
+      "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "symbol": "USDC",
+      "decimals": 6,
+      "oracle_feed_ids": ["eaa020c61cc479712813461ce153894a96a6c00b21ed0cfc2798d1f9a9e9c94a"]
+    },
+    {
+      "mint": "So11111111111111111111111111111111111111112",
+      "symbol": "SOL",
+      "decimals": 9,
+      "oracle_feed_ids": ["ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"],
+      "size_rule": { "min_size": 100000000, "max_size": 1000000000000, "step": 10000000 },
+      "strike_tick": 500000000,
+      "quote_mints": ["EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"]
     }
   ]
 }
 ```
 
-`underlying_feed_id_hex` / `quote_feed_id_hex` are not part of current HTTP `MarketDto`.
+`TokenInfo` is the same object on WS; field meanings are in
+[WS common conventions](ws-common.md#tokeninfo). `size_rule`, `strike_tick` and `quote_mints` are
+present only on underlyings; `oracle_feed_ids` is omitted when no feed is known.
 
-### GET `/api/v1/markets/{pda}`
+`503` when token metadata is inconsistent (for example the same mint with two decimal values) or an
+underlying has no configured size rule (`code: "missing_size_rule_for_underlying_mint"`, as on WS).
+The body is the usual error object; retry later.
 
-Get a single market DTO.
+### GET `/api/v1/markets`
+
+Query (all optional):
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `underlying` | mint (base58) | Underlying mint |
+| `quote` | mint (base58) | Quote mint |
+| `expiry` | u64 | Exact `expiry_ts`, Unix seconds |
+| `is_put` | bool | `true` for puts, `false` for calls |
+| `active` | bool | Default `true`: tradable markets only. `false`: every market the server holds in memory |
+
+`underlying` and `quote` are mints, not symbols. Markets are sorted by `expiry_ts`, then PDA.
+
+```json
+{
+  "markets": [
+    {
+      "pda": "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin",
+      "underlying": "So11111111111111111111111111111111111111112",
+      "quote": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "expiry_ts": 1767225600,
+      "is_put": true,
+      "status": "finalized",
+      "settlement_price": 150000000000
+    },
+    {
+      "pda": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
+      "underlying": "So11111111111111111111111111111111111111112",
+      "quote": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "expiry_ts": 4102444800,
+      "is_put": false,
+      "status": "active"
+    }
+  ]
+}
+```
+
+| `status` | Meaning |
+|---|---|
+| `active` | Tradable: not finalized, not disabled, before the trading cutoff |
+| `closed` | Disabled, past its trading cutoff, or expired and not yet finalized |
+| `finalized` | Settlement price published; `settlement_price` is set (1e9 scale) |
+
+`active=false` is not a full history: the server holds finalized markets only from the time it
+started, so a market finalized before the last restart is missing. Use your own records or the
+chain for older markets.
+
+There is no single-market route; `GET /api/v1/markets/{pda}` was removed. Filter the list, or use
+`GetMarketDescriptors` on WS for the full descriptor (oracle PDAs, decimals, collateral and
+settlement mints).
 
 ---
 
@@ -195,6 +310,7 @@ its cycles, positions and depositor routes stay available.
       "last_settlement_ts": "1710000000",
       "cap_limit": "0",
       "capital_fallback_delay_secs": "43200",
+      "deposit_window_set_ts": "1709990000",
       "main_balance": "1000000",
       "second_balance": "0",
       "balance_updated_at": "1710000000",
@@ -234,6 +350,7 @@ its cycles, positions and depositor routes stay available.
 | `total_shares` | Boundary checkpoint adjusted for contract mint/burn — **not** live SPL supply. Use `live_share_supply` for the observed supply. |
 | `main_balance`, `second_balance`, `balance_updated_at`, `live_share_supply`, `observed_manager_stake_shares`, `balance_chain_slot` | All `null` together when no balance observation has landed yet. |
 | `capital_fallback_delay_secs` | Delay (default `43200`, max `259200`) after which anyone, not only the operator, may process a queued request. In `idle` it counts from the request's `created_at`; in `processing_capital` it counts from `active_expiry`. In `idle`, deposits also need priced equity, which a non-operator can only compute with an aged withdraw request; otherwise cancel the deposit. |
+| `deposit_window_set_ts` | Chain time of the last `SetAcceptingDeposits`, or `null` if the window was never set. |
 | `projection` | Position of this row in the listener's event stream. Compare `slot` / `transaction_index` / `event_index` to detect staleness. |
 | `performance` | Tagged by `status`. `unavailable`: the server has not loaded performance yet; show "—", not "new vault". `no_track_record`: no finished cycle yet, no other fields. `short_track_record`: `cycles_completed`, `last_cycle_return_pct`, `cumulative_return_pct`, `track_record_secs`. `annualized`: the same plus `annualized_return_pct`, once `track_record_secs` is at least 30 days. `track_record_secs` is the calendar span from the start of the first finished cycle to the end of the last one, idle gaps included. Returns are percentages (`1.0` = 1%), after fees, compounded from finished cycles. Refreshed in the background every 15 s. |
 

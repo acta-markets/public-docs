@@ -86,7 +86,7 @@ For takers, `expires_at` is always a number. Persist `session_id` + `expires_at`
 
 ### 4) Snapshot — server → client
 
-Sent automatically after `AuthSuccess`. `markets` is the compact `MarketInfo` shape — fetch full descriptors separately (step 5) before creating an RFQ:
+Sent automatically after `AuthSuccess`. `markets` lists the active markets in the compact `MarketInfo` shape — fetch full descriptors separately (step 5) before creating an RFQ:
 
 ```json
 {
@@ -98,7 +98,8 @@ Sent automatically after `AuthSuccess`. `markets` is the compact `MarketInfo` sh
         "underlying": "So11111111111111111111111111111111111111112",
         "quote": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "expiry_ts": 1710600000,
-        "is_put": false
+        "is_put": false,
+        "status": "active"
       }
     ]
   }
@@ -110,7 +111,7 @@ Sent automatically after `AuthSuccess`. `markets` is the compact `MarketInfo` sh
 Full descriptors carry `size_rule`, decimals, and oracle PDAs needed to validate `quantity` and render prices. Call this before `RfqRequest`.
 
 ```json
-{ "type": "GetMarketDescriptors", "data": { "request_id": "req-md-1", "active_only": true } }
+{ "type": "GetMarketDescriptors", "data": { "request_id": "req-md-1" } }
 ```
 
 ```json

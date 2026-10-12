@@ -135,14 +135,15 @@ If the client's `protocol_version` is incompatible, the server sends `VersionMis
         "underlying": "UnderlyingMintBase58",
         "quote": "QuoteMintBase58",
         "expiry_ts": 1710600000,
-        "is_put": false
+        "is_put": false,
+        "status": "active"
       }
     ]
   }
 }
 ```
 
-`Snapshot.markets` uses a compact `MarketInfo` shape (`pda`, `underlying`, `quote`, `expiry_ts`, `is_put`). This is a different DTO from the `MarketDescriptor` in `RfqBroadcast` which has additional fields (`chain_id`, `program_id`, `market_pda`, `underlying_mint`, `quote_mint`, `collateral_mint`, `settlement_mint`). Use `GetMarketDescriptors` for the full market descriptor.
+`Snapshot.markets` lists the active markets as compact [`MarketInfo`](ws-common.md#marketinfo) (`pda`, `underlying`, `quote`, `expiry_ts`, `is_put`, `status`). This is a different DTO from the `MarketDescriptor` in `RfqBroadcast` which has additional fields (`chain_id`, `program_id`, `market_pda`, `underlying_mint`, `quote_mint`, `collateral_mint`, `settlement_mint`). Use `GetMarketDescriptors` for the full market descriptor.
 
 ---
 
@@ -162,7 +163,7 @@ If the client's `protocol_version` is incompatible, the server sends `VersionMis
 
 - `Welcome`, `VersionMismatch`, `LogoutSuccess`
 - `AuthRequest`, `AuthSuccess`, `AuthError`
-- `Snapshot`
+- `Snapshot`, `ReferenceChanged`
 - `RfqBroadcast`, `RfqSkipped`
 - `QuoteRefreshRequested`, `QuoteAcknowledged`, `QuoteBestStatus`, `QuoteOutbid`, `QuoteSelected`
 - `QuoteRejected`, `QuoteFilled`, `QuoteCancelled`, `QuoteExpired`, `RfqAvailableAgain`, `RfqClosed`
@@ -754,17 +755,15 @@ All discovery requests require `request_id` (UUID). The server echoes `request_i
 { "type": "GetMyTrades", "data": { "request_id": "uuid" } }
 { "type": "GetTokenCaps", "data": { "request_id": "uuid" } }
 { "type": "GetMyCaps", "data": { "request_id": "uuid" } }
-{ "type": "GetMarketDescriptors", "data": { "request_id": "uuid", "active_only": true } }
+{ "type": "GetMarketDescriptors", "data": { "request_id": "uuid" } }
 { "type": "GetExpiries", "data": { "request_id": "uuid" } }
-{ "type": "GetTokens", "data": { "request_id": "uuid", "active_only": true } }
+{ "type": "GetTokens", "data": { "request_id": "uuid" } }
 ```
 
-`active_only` behavior:
-- default is `true` when omitted (wire default for `GetMarketDescriptors`, `GetTokens`)
+Request notes:
+- `GetMarkets`, `GetMarketDescriptors`, `GetExpiries` and `GetTokens` answer from the [reference snapshot](ws-common.md#reference-data): **tradable** markets only — non-finalized, non-disabled, and before the pre-expiry trading cutoff. They have no `active_only` field; the server ignores it if sent. Re-read on [`ReferenceChanged`](ws-common.md#referencechanged).
 - `GetMyQuotes` requires `scope: "live"` or `scope: "history"`; it has no `active_only` field. Live is the complete, unpaged Core set of this owner's unfinished quotes across previous connections, including retained and selected quotes. A missing/incomplete source returns an error, not a successful partial set.
 - History contains only persisted historical rows. `limit` defaults to 200 and is capped at 1000. Pass `cursor` (last row's `created_at`, Unix seconds) together with `cursor_id` (hex `order_id`) — both or neither. Stop when `has_more` is false. History is not a substitute for Live or execution lookup.
-- for `GetMarketDescriptors`/`GetTokens`, `active_only=true` means **tradable** markets — non-finalized, non-disabled, and before the pre-expiry trading cutoff; `active_only=false` returns all markets/tokens.
-- `GetExpiries` has **no** `active_only` field — it always returns the tradable set (same predicate as above).
 - `GetMarketsForMaker` uses the wider active set (non-finalized, non-disabled, `expiry_ts > now`), so it still lists a market during its final pre-expiry no-trade window.
 
 Optional filters for `GetMakerPositions`:
@@ -822,14 +821,15 @@ avoid polling this request.
         "underlying": "UnderlyingMintBase58",
         "quote": "QuoteMintBase58",
         "expiry_ts": 1710600000,
-        "is_put": false
+        "is_put": false,
+        "status": "active"
       }
     ]
   }
 }
 ```
 
-Same compact `MarketInfo` shape as `Snapshot.markets`.
+Same compact [`MarketInfo`](ws-common.md#marketinfo) shape as `Snapshot.markets`; active markets only.
 
 ### Expiries payload
 
@@ -844,6 +844,15 @@ Same compact `MarketInfo` shape as `Snapshot.markets`.
 ```
 
 List of all distinct market expiry timestamps (Unix seconds).
+
+### Tokens payload
+
+```jsonc
+{ "type": "Tokens", "data": { "request_id": "uuid", "tokens": [ /* TokenInfo */ ] } }
+```
+
+Each mint once; see [`TokenInfo`](ws-common.md#tokeninfo). Underlyings carry `size_rule`,
+`strike_tick` and `quote_mints`.
 
 ### MarketDescriptorInfo (from `MarketDescriptors`)
 
@@ -1063,7 +1072,7 @@ Field semantics:
 - `positions`: `MakerPositionInfo[]` — see [MakerPositions payload](#makerpositions-payload)
 - `active_quotes`: `MakerQuoteInfo[]` — see [MyQuotes payload](#myquotes-payload)
 - `markets`: `MakerMarketInfo[]` — see [MakerMarkets payload](#makermarkets-payload)
-- `tokens`: `TokenInfo[]` — see [Tokens payload](#tokens-payload)
+- `tokens`: `TokenInfo[]` — see [`TokenInfo`](ws-common.md#tokeninfo)
 - `computed_at`: server-side snapshot timestamp (Unix seconds)
 - `positions_has_more`: `true` when the embedded `positions` were capped at 500. Retrieve the rest via `GetMakerPositions` — page with the keyset cursor: pass `cursor` (the `created_at` of the last row, unix seconds) together with `cursor_id` (its `pda`) — both or neither. Ordering is second-granular with `pda` as the tie-break; stop when `has_more` is `false`. The rest of the snapshot is complete.
 

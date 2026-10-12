@@ -89,7 +89,7 @@ Authentication uses the same Ed25519 challenge-response as production.
 | Indicative pricing | Supported |
 | Sponsored tx signing | Supported |
 | Oracle | Backend reads its configured Pyth/Hermes feeds; settlement publication writes Acta oracle accounts. Oracle readiness is checked independently of Solana cluster selection |
-| HTTP API | Public read endpoints available under `/api/v1` (`/markets`, `/makers`, `/vaults`, `/stats`); participant RFQs/orders require an authenticated session |
+| HTTP API | Public read endpoints available under `/api/v1` (`/venue`, `/tokens`, `/markets`, `/makers`, `/vaults`, `/stats`); participant RFQs/orders require an authenticated session |
 
 ## Differences from production
 

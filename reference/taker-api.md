@@ -158,14 +158,15 @@ scopes are unchanged. Use `AddMints`/`RemoveMints` for incremental updates.
         "underlying": "UnderlyingMintBase58",
         "quote": "QuoteMintBase58",
         "expiry_ts": 1710600000,
-        "is_put": false
+        "is_put": false,
+        "status": "active"
       }
     ]
   }
 }
 ```
 
-`Snapshot.markets` uses a compact `MarketInfo` shape (`pda`, `underlying`, `quote`, `expiry_ts`, `is_put`). This is a different DTO from the `MarketDescriptor` used in `RfqCreated.order_options` and discovery responses. Use `GetMarketDescriptors` for the full market descriptor with `chain_id`, `program_id`, `collateral_mint`, `settlement_mint`, etc.
+`Snapshot.markets` lists the active markets as compact [`MarketInfo`](ws-common.md#marketinfo) (`pda`, `underlying`, `quote`, `expiry_ts`, `is_put`, `status`). This is a different DTO from the `MarketDescriptor` used in `RfqCreated.order_options` and discovery responses. Use `GetMarketDescriptors` for the full market descriptor with `chain_id`, `program_id`, `collateral_mint`, `settlement_mint`, etc.
 
 ---
 
@@ -187,7 +188,7 @@ scopes are unchanged. Use `AddMints`/`RemoveMints` for incremental updates.
 
 - `Welcome`, `VersionMismatch`, `LogoutSuccess`
 - `AuthRequest`, `AuthSuccess`, `AuthError`
-- `Snapshot`
+- `Snapshot`, `ReferenceChanged`
 - `RfqCreated`, `QuoteReceived`, `QuotesUpdate`
 - `SponsoredTxToSign`, `OrderAccepted`, `OrderSubmitted`, `OrderConfirmed`, `OrderFailed`
 - `RfqAvailableAgain`, `RfqClosed`
@@ -484,9 +485,9 @@ Current taker discovery requests:
 
 ```json
 { "type": "GetMarkets", "data": { "request_id": "uuid" } }
-{ "type": "GetMarketDescriptors", "data": { "request_id": "uuid", "active_only": true } }
+{ "type": "GetMarketDescriptors", "data": { "request_id": "uuid" } }
 { "type": "GetExpiries", "data": { "request_id": "uuid" } }
-{ "type": "GetTokens", "data": { "request_id": "uuid", "active_only": true } }
+{ "type": "GetTokens", "data": { "request_id": "uuid" } }
 { "type": "GetPositions", "data": { "request_id": "uuid" } }
 { "type": "GetMyActiveRfqs", "data": { "request_id": "uuid" } }
 { "type": "GetOrderStatus", "data": { "request_id": "uuid", "order_id": "0x...64chars" } }
@@ -508,17 +509,18 @@ Query-style responses echo the same `request_id`:
 - `EarnSummary`
 - `TokenMarketsInfo`
 
-`active_only` behavior:
-- default is `true` when omitted (wire default for `GetMarketDescriptors`, `GetTokens`)
-- for `GetMarketDescriptors`/`GetTokens`, `active_only=true` means **tradable** markets — non-finalized, non-disabled, and before the pre-expiry trading cutoff; `active_only=false` returns all markets/tokens
-- `GetExpiries` has **no** `active_only` field — it always returns the tradable set (same predicate as above)
+`GetMarkets`, `GetMarketDescriptors`, `GetExpiries` and `GetTokens` answer from the server's
+[reference snapshot](ws-common.md#reference-data): **tradable** markets only — non-finalized,
+non-disabled, and before the pre-expiry trading cutoff. There is no `active_only` field; the server
+ignores it if sent. Closed and finalized markets are on HTTP `GET /api/v1/markets?active=false`.
+Re-read on [`ReferenceChanged`](ws-common.md#referencechanged).
 
 ### Discovery strict policy
 
-- `GetMarketDescriptors` and `GetTokens` require `prices.size_by_mint` config for every underlying mint in the DB.
-- If any market is missing a size rule, the entire request fails with `missing_size_rule_for_underlying_mint`.
-- Partial discovery is not supported.
-- `config.toml` `[prices.size_by_mint]` must include all underlying mints used by markets.
+- Every underlying of an active market needs a configured size rule. If one is missing,
+  `GetMarketDescriptors` and `GetTokens` fail as a whole with `missing_size_rule_for_underlying_mint`.
+- `GetMarketDescriptors` also fails as a whole (`MarketMetadataIncomplete`) when an active market has
+  no oracle PDA. Partial discovery is not supported.
 
 ### MarketDescriptors payload
 
@@ -562,28 +564,13 @@ For cash-secured puts, the size_rule still constrains the underlying quantity on
 
 ### Tokens payload
 
-`Tokens` returns:
-
-```typescript
-type TokenInfo = {
-  mint: string;
-  decimals: number;
-  size_rule: {
-    min_size: number;
-    max_size: number;
-    step: number;
-  };
-  symbol: string;
-};
-
-type Tokens = {
-  request_id: string;
-  underlyings: TokenInfo[];
-  quotes_by_underlying: Record<string, TokenInfo[]>;
-};
+```jsonc
+{ "type": "Tokens", "data": { "request_id": "uuid", "tokens": [ /* TokenInfo */ ] } }
 ```
 
-`size_rule` and `symbol` are always present. For `quotes_by_underlying`, each quote token entry carries the same rule as its parent underlying key.
+`tokens` lists each mint once; see [`TokenInfo`](ws-common.md#tokeninfo). Underlyings carry
+`size_rule`, `strike_tick` and `quote_mints`; quote tokens do not. The same objects are served by
+HTTP `GET /api/v1/tokens`.
 
 ### Positions payload
 

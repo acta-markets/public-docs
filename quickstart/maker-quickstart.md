@@ -150,16 +150,16 @@ reads so they do not all hit the data plane in the same second.
 
 ## Discovery
 
-Fetch static metadata on `/maker/data` at startup and refresh it when markets or tokens change. Do not refresh these requests on a fixed interval.
+Fetch static metadata on `/maker/data` at startup and re-read it when the server sends `ReferenceChanged`. Do not refresh these requests on a fixed interval.
 
 ```json
-{ "type": "GetMarketDescriptors", "data": { "request_id": "...", "active_only": true } }
+{ "type": "GetMarketDescriptors", "data": { "request_id": "..." } }
 { "type": "GetExpiries",          "data": { "request_id": "..." } }
-{ "type": "GetTokens",            "data": { "request_id": "...", "active_only": true } }
+{ "type": "GetTokens",            "data": { "request_id": "..." } }
 { "type": "GetMarketsForMaker",   "data": { "request_id": "..." } }
 ```
 
-`active_only: true` filters to tradable markets (non-finalized, non-disabled, before the pre-expiry trading cutoff); `false` returns settled/expired markets in addition.
+Discovery returns tradable markets only (non-finalized, non-disabled, before the pre-expiry trading cutoff); there is no `active_only` field. The same data is on HTTP: `GET /api/v1/venue`, `/api/v1/tokens` and `/api/v1/markets` (`active=false` adds closed and finalized markets), with ETag revalidation. See [Reference data](../reference/ws-common.md#reference-data).
 
 ## Operational defaults
 

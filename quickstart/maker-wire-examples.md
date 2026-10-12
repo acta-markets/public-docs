@@ -87,7 +87,8 @@ The server verifies the signature by `quote_signing` key.
         "underlying": "UnderlyingMintBase58",
         "quote": "QuoteMintBase58",
         "expiry_ts": 1710600000,
-        "is_put": false
+        "is_put": false,
+        "status": "active"
       }
     ]
   }

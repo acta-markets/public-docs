@@ -13,12 +13,17 @@
 - [Maker wire examples](quickstart/maker-wire-examples.md) — complete JSON session
 - [Rust Maker SDK](quickstart/maker-rust-sdk.md) — Rust SDK integration guide
 
+## Vaults
+
+- [Vault operator guide](quickstart/vault-operator-guide.md) — roles, cycle, trading and checked signing, funding, fallbacks
+- [Vault HTTP endpoints](reference/http-api.md#vaults) — vault, position, cycle and depositor reads
+
 ## Reference
 
 - [Maker API](reference/maker-api.md) — WS messages, quote rules, events, enums
 - [Taker API](reference/taker-api.md) — WS messages, RFQs, sponsored transactions
 - [WS common conventions](reference/ws-common.md) — encodings, units, collateral formulas, timeouts
-- [HTTP API](reference/http-api.md) — REST endpoints
+- [HTTP API](reference/http-api.md) — REST endpoints, reference data (venue, tokens, markets), vaults
 - [Capacity limits](reference/caps.md) — OI caps, maker limits, monitoring
 - [Governance and security](reference/governance.md) — cold/hot authority split, authority matrix, on-chain timelock
 - [Sandbox / Devnet](reference/sandbox.md) — test environment, endpoints, program addresses
