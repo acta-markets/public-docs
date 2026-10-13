@@ -52,10 +52,9 @@ otherwise. The required components depend on the server configuration:
 <!-- generated:rfq-ready -->
 | Configuration | `/ready` gates on |
 |---|---|
-| database + DB feed ids + caps (production) | redis, kernel, maker_registry, market_metadata, postgres, feed_mapping, price_stream, caps |
-| database + caps, static feed ids | redis, kernel, maker_registry, market_metadata, postgres, caps |
-| database only | redis, kernel, maker_registry, market_metadata, postgres |
-| no database (local demo) | redis, kernel, maker_registry, market_metadata |
+| database + DB feed ids (production) | redis, kernel, maker_registry, market_metadata, caps, postgres, feed_mapping, price_stream |
+| database, static feed ids | redis, kernel, maker_registry, market_metadata, caps, postgres |
+| no database (local demo) | redis, kernel, maker_registry, market_metadata, caps |
 
 `kernel` is also the `/live` gate: a closed kernel channel needs a restart. During shutdown drain, `/ready` returns 503 while `/live` remains governed by the kernel.
 <!-- /generated:rfq-ready -->

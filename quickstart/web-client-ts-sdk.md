@@ -165,8 +165,6 @@ building the approved message. Matching `orderIdHex` alone is insufficient.
 
 The example assumes your application provides `approvedMessageForOrder(id)`.
 This is application code, not an SDK export. A wallet preview is complementary.
-Older SDKs without this argument require equivalent application checks;
-`signSponsoredTxBase64Unverified` explicitly retains server-template trust.
 
 ```typescript
 import { signSponsoredTxBase64 } from "@acta-markets/ts-sdk/ws";

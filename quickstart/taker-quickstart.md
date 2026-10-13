@@ -217,10 +217,7 @@ Library shortcuts:
 The TypeScript helper in SDK 0.1.6 requires an independently constructed expected
 message and checks it before signing. Include the accepted order, configured
 program/accounts, approved blockhash, instructions and resolved ALT references;
-never use bytes copied from the received transaction as the expectation. Older
-SDK versions require this check in application code. The explicitly named
-`signSponsoredTxBase64Unverified` is for applications that trust server-side
-construction.
+never use bytes copied from the received transaction as the expectation.
 
 ### 4. Track the order
 
