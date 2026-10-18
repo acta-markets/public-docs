@@ -167,11 +167,11 @@ The server locks the quote and builds a transaction to sign:
 }
 ```
 
-`tx_base64` is a **v0 `VersionedTransaction`**. The keeper is the fee payer and co-signer; the taker signs as the collateral authority. Steps (any language):
+`tx_base64` is a **v0 `VersionedTransaction`**. On an ordinary maker quote the keeper is the fee payer and co-signer, and the taker signs as the collateral authority. When the accepted quote's `maker` is a vault PDA (see `GET /api/v1/vaults`), there is no keeper signature: the taker is the fee payer and signs slot 0. Steps (any language):
 
 1. base64-decode `tx_base64` to bytes.
 2. Deserialize as a v0 `VersionedTransaction`.
-3. Sign with the taker wallet key. Add the signature to the taker's signer slot — **do not** replace the keeper's fee-payer signature or re-order accounts; the message bytes are fixed.
+3. Sign with the taker wallet key. Add the signature to the taker's signer slot — **do not** touch any other signature slot or re-order accounts; the message bytes are fixed.
 4. Re-serialize the partially-signed transaction and base64-encode it.
 5. Submit before `signature_deadline` (Unix seconds):
 
@@ -194,27 +194,29 @@ The TypeScript SDK provides signing helpers; they do not independently verify th
 
 - `shortvec(sig_count)` is a compact-u16 (little-endian base128 varint) count of signatures. For a 2-signer sponsored tx it is a single byte `0x02`.
 - Each signature slot is 64 bytes, ordered to match the message's required signers.
-- **Slot 0 = keeper** (fee payer / co-signer) — left zeroed at this stage; the keeper fills it *after* you submit.
-- **Slot 1 = taker** — the one slot you fill.
+- Ordinary maker quote: **slot 0 = keeper** (fee payer / co-signer), left zeroed at this stage; the keeper fills it *after* you submit. **Slot 1 = taker**, the one slot you fill.
+- Vault quote (`maker` is a vault PDA): **slot 0 = taker** (fee payer). Fill slot 0 instead of slot 1 in step 4 below.
+
+Find your slot by matching your pubkey against the message's first `sig_count` static account keys rather than hard-coding the index.
 
 To sign:
 
 1. Read the `shortvec` at offset 0 → `sig_count` and its byte length `n`.
 2. `msg_start = n + sig_count * 64`; the **message bytes** are `tx[msg_start..]`.
 3. Produce a raw 64-byte Ed25519 signature over those message bytes with the taker key. Signing the message bytes directly *is* a valid transaction signature — no VersionedTransaction reconstruction required.
-4. Write the 64 bytes into slot 1: `tx[n + 64 .. n + 128] = signature`.
+4. Write the 64 bytes into your slot `i` (1 for a maker quote, 0 for a vault quote): `tx[n + 64*i .. n + 64*(i+1)] = signature`.
 5. base64-encode the whole buffer and return it in `SubmitSignedSponsoredTx`.
 
-Do not modify the message bytes, account order, or the keeper's slot.
+Do not modify the message bytes, account order, or any other signature slot.
 
-> **The maker's signature is not a signer slot.** The maker's Ed25519 signature over `order_id` rides inside the message as an **Ed25519-program verify instruction** (immediately preceding `open_position`), not as a transaction signature. The only tx signer slot you touch is the taker's (slot 1).
+> **The maker's signature is not a signer slot.** The maker's Ed25519 signature over `order_id` rides inside the message as an **Ed25519-program verify instruction** (immediately preceding `open_position`), not as a transaction signature. The only tx signer slot you touch is the taker's (slot 1, or slot 0 on a vault quote).
 
 Library shortcuts:
-- **Rust** (`solana-sdk`): deserialize with `bincode`, sign `tx.message.serialize()` with the taker `Keypair`, set `tx.signatures[1]`; or operate on the raw bytes as above.
-- **Python** (`solders`): `tx = VersionedTransaction.from_bytes(raw)`, sign `bytes(tx.message)`, assign into `tx.signatures[1]`, re-serialize.
-- **TypeScript**: `signSponsoredTxBase64({ txBase64, taker, expectedMessageBytes })` from `@acta-markets/ts-sdk/ws` (no `@solana/web3.js`).
+- **Rust** (`solana-sdk`): deserialize with `bincode`, sign `tx.message.serialize()` with the taker `Keypair`, set the taker's index in `tx.signatures`; or operate on the raw bytes as above.
+- **Python** (`solders`): `tx = VersionedTransaction.from_bytes(raw)`, sign `bytes(tx.message)`, assign into the taker's index in `tx.signatures`, re-serialize.
+- **TypeScript**: `signSponsoredTxBase64({ txBase64, taker, expectedMessageBytes })` from `@acta-markets/ts-sdk/ws` (no `@solana/web3.js`) fills slot 1 for maker quotes. For a vault quote use `verifyAndSignSponsoredTx({ orderIdHex, txBase64, intent: { kind: "fill", holder, taker, terms }, tables, bounds, signer })` from the same module; it checks the served transaction against the intent and fills slot 0.
 
-The TypeScript helper in SDK 0.1.6 requires an independently constructed expected
+The TypeScript helper requires an independently constructed expected
 message and checks it before signing. Include the accepted order, configured
 program/accounts, approved blockhash, instructions and resolved ALT references;
 never use bytes copied from the received transaction as the expectation.

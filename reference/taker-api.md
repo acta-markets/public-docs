@@ -208,6 +208,7 @@ scopes are unchanged. Use `AddMints`/`RemoveMints` for incremental updates.
 
 - `TradeExecuted`, `StatsUpdate`, `ChainEvent`
 - `MarketCreated`, `MarketFinalized`
+- `VaultCatalogChanged`, `VaultProjectionAdvanced` (`vaults` channel; see [ws-common](ws-common.md#vaultcatalogchanged))
 
 `PositionUpdated` is **not** delivered to takers — it is a maker-owner-only push. Track your position state via `ChainEvent` (position settled/liquidated on the `chain_events` channel) plus `GetPositions`.
 

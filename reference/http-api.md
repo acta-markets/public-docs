@@ -267,6 +267,13 @@ Every per-vault route returns `404` `not_found` for an unknown vault or a PDA th
 `GET /vaults` and `GET /vaults/{pda}` list open vaults only; a closed vault returns `404` there, while
 its cycles, positions and depositor routes stay available.
 
+`/maker` quote sessions and taker WebSocket sessions subscribed to the `vaults` channel receive
+[`VaultCatalogChanged`](ws-common.md#vaultcatalogchanged) when a vault is created, re-delegated or
+closed (not when a delegate is disabled), and
+[`VaultProjectionAdvanced`](ws-common.md#vaultprojectionadvanced) when a vault's state changes.
+Both are hints that are never replayed: re-read `/vaults` (or `/vaults/{pda}`) on them and after
+every WebSocket connect or reconnect.
+
 ### GET `/api/v1/vaults`
 
 ```json

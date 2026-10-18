@@ -101,8 +101,10 @@ Authentication uses the same Ed25519 challenge-response as production.
 | Markets | Created on request | Dynamic |
 | SOL | Free via airdrop | Real SOL required |
 
-> The on-chain program logic is the same on devnet and production.
-> Differences are external: mints, oracles, and environment config.
+> The devnet program build differs from production in two vault paths: vault swaps go through a
+> mock router instead of Jupiter, and vault Pyth checks allow older and less aligned prices. See
+> [Vault operator guide: devnet differences](../quickstart/vault-operator-guide.md#devnet-differences).
+> Everything else differs only externally: mints, oracles, and environment config.
 
 Browsers obtain current reference prices from the selected backend through [`GetTokenMarketsInfo`](taker-api.md#tokenmarketsinfo). They do not need Pyth credentials. Solana devnet selection does not itself choose a different Hermes endpoint or guarantee feed freshness.
 

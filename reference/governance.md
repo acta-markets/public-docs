@@ -19,6 +19,9 @@ Cold authority operations:
 - set, rotate, or clear the guardian immediately
 - set, rotate, or revoke the settlement attestor through the timelock
 - toggle pause immediately
+- correct an already published settlement price immediately (`CorrectOraclePrice`)
+- create vaults (`CreateVault`)
+- freeze and unfreeze vaults, and start a vault's emergency unwind, immediately
 - queue pending actions
 - cancel pending actions
 
@@ -31,7 +34,7 @@ The hot wallet is the online key used by backend services. It is stored in `Glob
 Hot wallet operations:
 - create, finalize, and close markets
 - create and close concrete oracle accounts from already-approved oracle sources
-- publish a post-expiry scalar settlement price to an oracle account. `UpdateOraclePrice` checks the live `hot_authority`, and works for the hot wallet only while no settlement attestor is configured: once `GlobalConfig.settlement_attestor` is set, direct hot publication is rejected on-chain (`SettlementAttestationRequired`, 1090) and settlement requires `UpdateOraclePriceAttested` with an Ed25519 attestation from that key — a 2-of-2 of hot key and attestor key. The cold authority retains a break-glass direct path
+- publish a post-expiry scalar settlement price to an oracle account. `UpdateOraclePrice` checks the live `hot_authority`, and works for the hot wallet only while no settlement attestor is configured: once `GlobalConfig.settlement_attestor` is set, direct hot publication is rejected on-chain (`SettlementAttestationRequired`) and settlement requires `UpdateOraclePriceAttested` with an Ed25519 attestation from that key — a 2-of-2 of hot key and attestor key. The cold authority retains a break-glass direct path
 - co-sign `OpenPosition`
 - withdraw collected protocol fees
 
@@ -44,8 +47,9 @@ The guardian is an optional emergency key. It defaults to unset; the default pub
 Guardian operations:
 - cancel any queued pending action before execution
 - engage the emergency pause (releasing it / unpause is cold-only)
+- freeze a vault (`FreezeVault`; unfreezing is cold-only)
 
-The guardian cannot queue pending actions, rotate itself, rotate the hot wallet, unpause, or authorize hot/cold configuration changes. A guardian is a single trusted key: if compromised it can only grief (veto-spam queued actions, re-engage the pause) and the cold authority recovers by rotating it with `SetGuardian` (immediate).
+The guardian cannot queue pending actions, rotate itself, rotate the hot wallet, unpause, unfreeze vaults, or authorize hot/cold configuration changes. A guardian is a single trusted key: if compromised it can only grief (veto-spam queued actions, re-engage the pause, freeze vaults) and the cold authority recovers by rotating it with `SetGuardian` (immediate).
 
 ### Permissionless exits
 
@@ -67,14 +71,21 @@ Settlement and liquidation are permissionless. Any signer may settle an expired 
 | Raise / keep timelock delay (`UpdateActionTimelock`, op 26) | Cold | Immediate |
 | Lower timelock delay (`UpdateActionTimelock`, op 26) | Cold | Timelocked by current delay |
 | Initialize / update / close premium config | Cold | Timelocked |
-| Register maker | Cold | Timelocked |
+| Register maker (stores its `quote_signing` key) | Cold | Timelocked |
+| Rotate a maker's `quote_signing` key (`UpdateMakerQuoteSigning`) | Maker owner | Immediate |
 | Create / update oracle source | Cold | Timelocked |
 | Create / finalize / close market | Hot wallet | Immediate |
 | Create / close concrete oracle | Hot wallet | Immediate |
 | Publish settlement price (`UpdateOraclePrice`, op 16) | Hot wallet (only while no attestor is set) or cold | Immediate after expiry |
 | Publish attested settlement price (`UpdateOraclePriceAttested`, op 31) | Hot wallet + attestor Ed25519 proof (2-of-2) | After expiry, attestor set |
+| Correct a published settlement price (`CorrectOraclePrice`, op 72) | Cold | Immediate (not timelocked) |
 | Set / rotate settlement attestor (`SetSettlementAttestor`, op 29) | Cold | Timelocked |
 | Revoke settlement attestor (`RevokeSettlementAttestor`, op 30) | Cold | Timelocked |
+| Vault manager-stake floor, capital fallback delay (`SetVaultManagerStakeMinBps`, `SetVaultCapitalFallbackDelay`) | Cold | Timelocked |
+| Create vault (`CreateVault`) | Cold | Immediate |
+| Freeze vault (`FreezeVault`) | Cold or guardian | Immediate |
+| Unfreeze vault (`UnfreezeVault`) | Cold | Immediate |
+| Start vault emergency unwind (`EmergencyStartUnwind`, irreversible) | Cold | Immediate |
 | Withdraw protocol fees | Hot wallet | Immediate |
 | Open position | Hot wallet + taker tx signer + maker Ed25519 quote | Immediate |
 | Settle position | Permissionless | After market finalization |
@@ -103,6 +114,8 @@ Timelockable wrapped opcodes:
 | 29 | `SetSettlementAttestor` |
 | 30 | `RevokeSettlementAttestor` |
 | 26 | `UpdateActionTimelock` |
+| 70 | `SetVaultManagerStakeMinBps` |
+| 71 | `SetVaultCapitalFallbackDelay` |
 
 In production, all listed operations except the immediate raise/keep form of `UpdateActionTimelock` reject direct calls with `DirectCallDisabled`; they must go through queue -> execute. `UpdateActionTimelock` is special: raising or keeping the delay is immediate; lowering it must be queued and waited out under the current delay.
 
@@ -129,11 +142,13 @@ Client note: generated Codama builders for `QueuePendingAction` and `ExecutePend
 
 `SetPause` sets the `PAUSED` bit in `GlobalConfig.flags`. **Engaging** the pause is immediate for cold or guardian; **releasing** it (unpause) is **cold-only**, so a compromised guardian cannot unpause to resume an attack.
 
-While paused, `OpenPosition` fails with `ProtocolPaused`. Settlement, liquidation, and other exit paths remain available.
+While paused, `OpenPosition`, the vault position opens, `VaultSpotRebalance` and `ClosingConvertToMain` fail with `ProtocolPaused`. Settlement, liquidation, vault deposits and withdrawals, governance recovery conversion and the cold-only emergency conversion remain available.
 
 ## Settlement Attestation
 
-`GlobalConfig.settlement_attestor` optionally names an independent Ed25519 second signer for hot settlement publication. While it is unset (all-zero), `UpdateOraclePrice` behaves as described above. Once set (`SetSettlementAttestor`, cold-only), the hot wallet's direct call fails with `SettlementAttestationRequired` (1090); settlement then requires `UpdateOraclePriceAttested`, where an Ed25519 verify instruction signed by the attestor over a domain-separated message must immediately precede the update in the same transaction. The cold authority keeps the direct path as break-glass (Ed25519 precompile instructions cannot be produced through Squads CPI). `RevokeSettlementAttestor` (cold-only) clears the key and deliberately returns hot settlement to direct mode; the 32-byte replay domain is retained so signatures can never be replayed across deployments.
+`GlobalConfig.settlement_attestor` optionally names an independent Ed25519 second signer for hot settlement publication. While it is unset (all-zero), `UpdateOraclePrice` behaves as described above. Once set (`SetSettlementAttestor`, cold-only), the hot wallet's direct call fails with `SettlementAttestationRequired`; settlement then requires `UpdateOraclePriceAttested`, where an Ed25519 verify instruction signed by the attestor over a domain-separated message must immediately precede the update in the same transaction. The cold authority keeps the direct path as break-glass (Ed25519 precompile instructions cannot be produced through Squads CPI). `RevokeSettlementAttestor` (cold-only) clears the key and deliberately returns hot settlement to direct mode; the 32-byte replay domain is retained so signatures can never be replayed across deployments.
+
+`CorrectOraclePrice` (cold-only, immediate, not timelocked) overwrites a settlement price that has already been published. It fails if no price is set yet (`OraclePriceNotSet`) and rejects a zero, out-of-range or unchanged price (`OracleInvalidPrice`). Markets copy the price when they are finalized, so a correction only affects markets on that oracle that are not yet finalized. Once a price is published, by any path, further hot or attested publication fails with `OracleAlreadyUpdated`, so this is the only way to change it.
 
 ## Squads Integration
 

@@ -182,6 +182,7 @@ If the client's `protocol_version` is incompatible, the server sends `VersionMis
 
 - `TradeExecuted`, `StatsUpdate`, `PositionUpdated`, `ChainEvent`
 - `MarketCreated`, `MarketFinalized`
+- `VaultCatalogChanged`, `VaultProjectionAdvanced` (`vaults` channel; see [ws-common](ws-common.md#vaultcatalogchanged))
 
 ---
 

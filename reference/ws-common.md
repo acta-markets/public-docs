@@ -85,7 +85,7 @@ WS responses (`Snapshot`, `Markets`) contain only `active` markets.
 
 ### ReferenceChanged
 
-Pushed to every authenticated maker, taker and vault operator session, without a subscription, when the token list or
+Pushed to every authenticated maker (quote and `/maker/data`), taker and vault operator session, without a subscription, when the token list or
 the market list changes, including a market crossing its trading cutoff or expiry. The server checks
 for changes every second.
 
@@ -100,6 +100,47 @@ The ETags are the HTTP `ETag` values of `/api/v1/tokens` and of unfiltered
 `/api/v1/markets?active=false`. On receipt, re-read what you cache (`GetTokens` /
 `GetMarketDescriptors` on WS, or the HTTP routes with `If-None-Match`). Vault sessions on `/vault`
 re-read the HTTP routes.
+
+### VaultCatalogChanged
+
+Sent on the `vaults` channel to maker and taker sessions after a vault is created, re-delegated
+(`RotateVaultDelegate`) or closed. Disabling a delegate (`DisableVaultDelegate`) does not send it.
+It carries only the vault address; re-list vaults (`GET /api/v1/vaults`) to pick up the change.
+`/vault` operator sessions do not receive it.
+
+It is a hint, not a feed. It is never replayed: if your outbound queue is full the message is
+dropped and the server closes the connection, and nothing sent while you were disconnected is
+redelivered. Re-list vaults after every connect and reconnect as well as on this message.
+
+```json
+{ "type": "VaultCatalogChanged", "data": { "vault_pda": "VaultPdaBase58" } }
+```
+
+### VaultProjectionAdvanced
+
+Sent on the `vaults` channel after the server's projection of a vault advances by a committed
+on-chain vault event. `/maker` quote sessions and taker sessions subscribed to `vaults` receive it for every vault; a
+`/vault` operator session receives it only for its own vault. It is a change notification, not the
+new state: reload `GET /api/v1/vaults/{pda}`. `version` increases with each projected vault event; if
+you see a gap, or after a reconnect, reload the vault rather than repairing local state. Delivery
+follows the same drop-and-disconnect rule as `VaultCatalogChanged`.
+
+```json
+{
+  "type": "VaultProjectionAdvanced",
+  "data": {
+    "vault_pda": "VaultPdaBase58",
+    "version": 42,
+    "slot": 312345678,
+    "transaction_index": 3,
+    "signature": "TxSignatureBase58",
+    "event_index": 1
+  }
+}
+```
+
+`slot`, `transaction_index`, `signature` and `event_index` locate the vault event that produced
+`version`.
 
 ## Quantity and collateral by position type
 
@@ -199,13 +240,27 @@ Issued At: {RFC3339_timestamp}
 
 Makers do not need a `Wallet:` line. The server identifies the maker from `AuthChallenge.pubkey`, then looks up the registered signing key from the on-chain maker registry.
 
+**Vault operator challenge** (`/vault` sessions): the taker challenge for the operator key, followed by `\nVault: {vault_pda}` with **no** trailing newline. Because the taker challenge already ends in `\n`, a blank line precedes the `Vault:` line:
+
+```
+Acta RFQ Authentication
+
+Sign this message to authenticate your wallet.
+
+Wallet: {operator_pubkey}
+Nonce: {hex_encoded_32_random_bytes}
+Issued At: {RFC3339_timestamp}
+
+Vault: {vault_pda}
+```
+
 ### What to sign
 
-Validate the entire challenge **before invoking the signer**. Require the exact text and blank lines above, a nonce of exactly 64 lowercase hex characters, a valid UTC timestamp in `YYYY-MM-DDTHH:MM:SSZ` format, and a final `\n` after that timestamp. Reject extra lines, alternate domains, missing final newlines and arbitrary 32-byte strings. A maker challenge must have no `Wallet:` line. A taker challenge must include that line and it must match the wallet being authenticated.
+Validate the entire challenge **before invoking the signer**. Require the exact text and blank lines above, a nonce of exactly 64 lowercase hex characters, a valid UTC timestamp in `YYYY-MM-DDTHH:MM:SSZ` format, and a final `\n` after that timestamp. A maker challenge must have no `Wallet:` line. A taker challenge must include that line and it must match the wallet being authenticated. A vault challenge must be a valid taker challenge for the operator key followed by exactly `\nVault: {vault_pda}` for the vault you requested, and nothing after it. Reject anything that is not one of these three formats for your role: extra lines, alternate domains, missing final newlines and arbitrary 32-byte strings.
 
 After validation, sign the original UTF-8 bytes without normalization, additional prefix or hashing. The fixed text already supplies the authentication domain. Signing arbitrary endpoint text with the order key can authorize an order instead of authentication.
 
-Rust SDK 0.4.3 and TS SDK 0.1.6 validate authentication messages before invoking signers in their managed clients. Raw Rust clients use `validate_maker_auth_challenge`; raw TS clients use `validateAuthChallenge`, which checks the grammar of both server formats. This does not establish endpoint trust or prevent relay of a genuine server challenge. Rust 0.4.2 and TS 0.1.5 lack these checks.
+Rust SDK (`acta-maker-sdk` 0.5.1) and TS SDK (`@acta-markets/ts-sdk` 0.2.1) validate authentication messages before invoking signers in their managed clients. Raw Rust clients use `validate_maker_auth_challenge`, or `validate_vault_auth_challenge(challenge, operator, vault)` for a vault session; raw TS clients use `validateAuthChallenge`, which checks the grammar of the maker and taker formats and rejects the vault format, and `assertVaultAuthChallenge(challenge, operator, vault)` for a vault session. This does not establish endpoint trust or prevent relay of a genuine server challenge.
 
 ### AuthChallenge (client -> server)
 
@@ -482,6 +537,7 @@ Trade lifecycle and payoff: [Protocol flow](protocol-flow.md).
 | `stats` | `StatsUpdate` | Global venue stats. |
 | `chain_events` | `ChainEvent` (position opened / settled / liquidated, market finalized) | Anyone. **This is how a taker tracks position outcomes** (settlement / liquidation). |
 | `markets` | `MarketCreated`, `MarketFinalized` | Anyone tracking the tradable market set. |
+| `vaults` | `VaultCatalogChanged`, `VaultProjectionAdvanced` | Maker and taker sessions that list or watch vaults: they receive both, `VaultProjectionAdvanced` for every vault. `/vault` operator sessions are subscribed automatically and receive `VaultProjectionAdvanced` for their own vault only, and no `VaultCatalogChanged`. |
 | `positions` | — (no public producer) | `PositionUpdated` is delivered **owner-direct to the maker's session** by PDA lookup, never via this channel. The channel yields nothing for takers. |
 
 Takers typically subscribe to `chain_events` (position outcomes) plus optionally `trades` / `stats` / `markets`. They do **not** need `rfqs` or `positions`.
