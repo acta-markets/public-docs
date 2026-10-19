@@ -136,17 +136,18 @@ ws.on("quoteReceived", (quote) => {
   console.log("Quote:", display, "from", quote.maker);
 });
 
-ws.createRfq({
+const requestId = crypto.randomUUID(); // idempotency key; generated when omitted
+await ws.createRfq({
   market: marketPdaBase58,
   position_type: "covered_call",
   strike: 136_000_000_000,
   quantity: 5_000_000_000, // 5 SOL in lamports
   timeoutSeconds: 30,
-  clientRequestId: crypto.randomUUID(), // optional idempotency key, scoped per taker
+  requestId,
 });
 ```
 
-Repeating a `createRfq` with the same `clientRequestId` returns the same `rfq_id` while the RFQ is active. TTL is server-defined.
+`createRfq` resolves with `requestId` on the server's `CommandAccepted` and rejects with `ActaWsRequestError` on the matching `RequestError`, a timeout or a disconnect. `RfqCreated` echoes `request_id` and may arrive before or after that receipt. Repeating a `createRfq` with the same `requestId` returns the same `rfq_id` while the RFQ is active. TTL is server-defined.
 
 ### 7. Cancel RFQ
 
