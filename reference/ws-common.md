@@ -260,7 +260,7 @@ Validate the entire challenge **before invoking the signer**. Require the exact 
 
 After validation, sign the original UTF-8 bytes without normalization, additional prefix or hashing. The fixed text already supplies the authentication domain. Signing arbitrary endpoint text with the order key can authorize an order instead of authentication.
 
-Rust SDK (`acta-maker-sdk` 0.5.1) and TS SDK (`@acta-markets/ts-sdk` 0.2.1) validate authentication messages before invoking signers in their managed clients. Raw Rust clients use `validate_maker_auth_challenge`, or `validate_vault_auth_challenge(challenge, operator, vault)` for a vault session; raw TS clients use `validateAuthChallenge`, which checks the grammar of the maker and taker formats and rejects the vault format, and `assertVaultAuthChallenge(challenge, operator, vault)` for a vault session. This does not establish endpoint trust or prevent relay of a genuine server challenge.
+Rust SDK (`acta-maker-sdk` 0.5.2) and TS SDK (`@acta-markets/ts-sdk` 0.2.2) validate authentication messages before invoking signers in their managed clients. Raw Rust clients use `validate_maker_auth_challenge`, or `validate_vault_auth_challenge(challenge, operator, vault)` for a vault session; raw TS clients use `validateAuthChallenge`, which checks the grammar of the maker and taker formats and rejects the vault format, and `assertVaultAuthChallenge(challenge, operator, vault)` for a vault session. This does not establish endpoint trust or prevent relay of a genuine server challenge.
 
 ### AuthChallenge (client -> server)
 
@@ -281,7 +281,7 @@ Rust SDK (`acta-maker-sdk` 0.5.1) and TS SDK (`@acta-markets/ts-sdk` 0.2.1) vali
 
 ### Auth constraints
 
-- Max auth attempts per connection: `3`. After 3 failures, connection is closed.
+- Max auth attempts per connection: `3`. The 4th attempt closes the connection.
 - Auth deadline after challenge issued: `15s`.
 
 ### Ping / Pong
@@ -302,6 +302,27 @@ Rust SDK (`acta-maker-sdk` 0.5.1) and TS SDK (`@acta-markets/ts-sdk` 0.2.1) vali
 ```
 
 Clients should send `Ping` every ~30s to avoid the 90s idle timeout.
+
+### Connection close codes
+
+When the server closes a connection itself, the close frame carries one of these codes, with the
+name as the close reason. An `Error` or `AuthError` frame naming the cause usually precedes it.
+Other closes (blacklist, expired session, too many parse or auth errors, shutdown) send a close
+frame without a code; the preceding error frame says why.
+
+| Code | Reason | Cause |
+|---|---|---|
+| `4000` | `idle_timeout` | No traffic within the idle timeout |
+| `4001` | `auth_timeout` | Authentication not completed within the auth deadline |
+| `4002` | `slow_consumer` | A critical message could not be queued for you, or a socket write to you timed out |
+| `4003` | `rate_limited` | Connection or wallet message rate exceeded, or you sent faster than the server could process (inbound queue full). Quote-plane messages never trip the message rate; see the quote bucket |
+| `4004` | `session_replaced` | A newer connection authenticated as the same maker or taker session |
+| `4005` | `hello_timeout` | `Hello` not received in time |
+
+A rejected WebSocket upgrade returns an HTTP status with the same JSON body as the HTTP API,
+`{"error": "...", "code": "..."}`: `403 origin_not_allowed`, `429 rate_limited` (too many
+connections from your IP), `503 too_many_connections`, `503 server_overloaded`,
+`503 server_shutting_down`.
 
 ### Logout
 
@@ -360,13 +381,8 @@ The protocol charges a fee per trade, configured per quote mint in basis points 
 }
 ```
 
-`reason` is a `snake_case` code. `message` is optional and may be omitted.
-
-Current `reason` codes:
-- `session_expired`, `already_authenticated`
-- `auth_timeout`, `too_many_auth_attempts`
-- `invalid_pubkey`, `invalid_signature`, `pubkey_mismatch`, `challenge_mismatch`
-- `maker_not_registered`
+`reason` is a `snake_case` code from the [WS error code catalog](#ws-error-codes) (frames
+marked `AuthError`). `message` is optional and may be omitted.
 
 ## Error format
 
@@ -417,6 +433,31 @@ echoes the client's `request_id` from the originating message:
 
 The inner `error` has the same `ServerError` shape as `Error.data`.
 
+Failures of `SubmitSignedSponsoredTx` and `SwapSubmit` also carry `delivery`:
+
+```json
+{
+  "type": "RequestError",
+  "data": {
+    "request_id": "uuid",
+    "error": { "type": "Generic", "data": { "code": "vault_swap_quote_expired", "message": "Vault swap quote expired" } },
+    "delivery": "not_forwarded"
+  }
+}
+```
+
+`delivery` describes this one request only:
+
+- `not_forwarded`: this request was rejected before it was handed to the keeper (routing gates,
+  validation, a pre-enqueue rejection).
+- `unknown`: this request may have reached the keeper pipeline (timeouts, queue errors, Core
+  timeout, `order_already_submitted`). Resolve it with `GetOrderStatus` (orders) or
+  `GetSwapStatus` / `SwapSettled` (Vault swaps).
+
+It says nothing about earlier attempts with the same signed transaction. Treat an order or swap as
+not executed only if every attempt you made returned `not_forwarded`; if any attempt timed out,
+was lost with the connection, or returned `unknown`, resolve it by status before re-signing.
+
 Prefer `RequestError` handlers over `Error` handlers wherever you pass `request_id` in requests.
 Both events fire `error` in the TypeScript SDK (see [Web client SDK](../quickstart/web-client-ts-sdk.md)).
 
@@ -454,23 +495,105 @@ Typed variant examples:
 }
 ```
 
-### Common `generic.code` values
-
-- `parse_error`
-- `message_too_large`
-- `too_many_parse_errors`
-- `hello_required`
-- `hello_timeout`
-- `hello_already_sent`
-- `session_replaced`
-- `session_expired`
-- `already_authenticated`
-- `trading_paused`
-- `internal_error`
-
-This list grows over time; keep a fallback branch for unknown codes.
+Generic codes and `AuthError` reasons are listed in the [WS error code catalog](#ws-error-codes).
 
 JavaScript integrators must preserve integer precision: a wire `u64` can exceed `Number.MAX_SAFE_INTEGER`. TS SDK represents most WS amounts as `number`; it reports `unsafe_integer` for oversized amount literals but still dispatches the message. Do not use such rounded values for signing or accounting. Inbound nonces have separate lossless handling. For full-range raw JSON amounts, use lossless parsing and bigint arithmetic; `BigInt(JSON.parse(...).amount)` cannot repair precision already lost. This does not change the wire encoding or the `1e9` scale.
+
+## WS error codes
+
+The closed set of `Generic.code` values (in `Error.data` and `RequestError.data.error`) and
+`AuthError.reason` values. The server sends nothing outside this table; typed `ServerError`
+variants (`RfqNotFound`, `Unauthenticated`, `WrongEndpoint`, …) are not codes. Keep a fallback
+branch for codes added later.
+
+| Code | Frames | Meaning |
+|---|---|---|
+| `parse_error` | Generic | The frame is not valid JSON or not a known message |
+| `too_many_parse_errors` | Generic | Consecutive parse errors exhausted the budget; the connection closes |
+| `hello_required` | Generic | The first message was not `Hello`; the connection closes |
+| `hello_timeout` | Generic | No `Hello` in time; followed by close `4005` |
+| `hello_already_sent` | Generic | A second `Hello` on one connection |
+| `rate_limited` | Generic | Connection or wallet rate limits close with `4003`; a per-category limit rejects only the message |
+| `server_overloaded` | Generic | The admission queue for this message class is full; retry with backoff. A full connection command queue sends it uncorrelated and closes with `4003` |
+| `server_busy` | Generic, AuthError | A bounded internal queue (auth, RFQ creation) is full; retry |
+| `internal_error` | Generic | Unexpected server failure; the message is sanitized |
+| `temporarily_unavailable` | Generic, AuthError | A dependency (database, Core, registry) is not ready; retry with backoff |
+| `clock_error` | Generic, AuthError | The server clock is before the Unix epoch |
+| `trading_paused` | Generic | Venue trading is paused; order-path messages are rejected |
+| `batch_quotes_too_large` | Generic | `BatchQuotes` exceeds `max_batch_quotes` |
+| `session_replaced` | Generic | A newer connection took over this session; do not reconnect automatically |
+| `session_expired` | Generic, AuthError | The session or resume credential expired; authenticate again |
+| `session_limit_exceeded` | AuthError | Too many concurrent sessions for this identity |
+| `session_conflict` | Generic | Core no longer binds this session to the identity |
+| `blacklisted` | Generic, AuthError | The identity is blacklisted; terminal |
+| `maker_unregistered` | Generic | The maker left the registry while connected; the connection closes |
+| `maker_not_registered` | Generic, AuthError | The pubkey is not a registered maker |
+| `auth_timeout` | AuthError | Authentication did not finish in time; followed by close `4001` |
+| `too_many_auth_attempts` | AuthError | Auth attempt budget exhausted; the connection closes |
+| `already_authenticated` | AuthError | Auth started on an authenticated connection |
+| `challenge_not_issued` | AuthError | `AuthChallenge` without a preceding `AuthRequest` |
+| `challenge_mismatch` | AuthError | The signed challenge differs from the issued one |
+| `invalid_pubkey` | Generic, AuthError | A pubkey field is not valid base58 |
+| `pubkey_mismatch` | AuthError | `AuthChallenge.pubkey` differs from the `StartAuth` pubkey |
+| `invalid_signature` | AuthError | The challenge signature does not verify |
+| `invalid_operator` | AuthError | The Vault operator is not a valid pubkey |
+| `operator_mismatch` | AuthError | The Vault challenge was signed by another operator |
+| `invalid_vault` | Generic, AuthError | `vault_pda` is not a valid address |
+| `vault_auth_not_started` | AuthError | Vault challenge answered without `StartVaultAuth` |
+| `vault_auth_required` | Generic | A Vault message on a session without Vault authority |
+| `vault_resume_not_supported` | AuthError | `ResumeAuth` on `/vault` |
+| `vault_operator_unauthorized` | AuthError | The operator holds no current grant for the Vault |
+| `vault_authorization_unavailable` | AuthError | Vault authority could not be read; retry |
+| `vault_session_invalidated` | Generic | The Vault grant changed or was revoked; the session closes |
+| `invalid_vault_subscription` | Generic | The subscription is not allowed for a Vault session |
+| `subscription_scope_too_large` | Generic | The subscription mint filter exceeds its limit |
+| `history_projection_incomplete` | Generic | A history read lacks listener metadata; retrying does not help until reconciliation |
+| `invalid_position_status` | Generic | Unknown position status filter |
+| `invalid_cursor` | Generic | Malformed pagination cursor |
+| `invalid_query_scope` | Generic | `limit` or `cursor` sent with `scope: live` |
+| `market_not_found` | Generic | The market is not in the registry |
+| `invalid_program_id` | Generic | The server program id is misconfigured |
+| `invalid_strike_notional` | Generic | Strike × quantity is zero or not representable on chain |
+| `invalid_quantity_size_rule` | Generic | The quantity is outside the size rule |
+| `missing_size_rule_for_underlying_mint` | Generic | No size rule is configured for the underlying |
+| `invalid_underlying_mint_key` | Generic | The tick configuration key is not a valid mint |
+| `missing_tick_for_underlying_mint` | Generic | No tick is configured for the underlying |
+| `ladder_strike_source_unavailable` | Generic | The strike ladder source failed |
+| `invalid_strikes` | Generic | The requested strike set is invalid |
+| `duplicate_rfq_id` | Generic | The RFQ id already exists |
+| `rfq_closed` | Generic | The RFQ is closed |
+| `market_finalized` | Generic | The market is finalized |
+| `market_disabled` | Generic | The market is disabled |
+| `market_expired` | Generic | The market expired |
+| `market_pre_expiry` | Generic | The market is in its pre-expiry window |
+| `quote_identity_mismatch` | Generic | The quote does not match its order binding |
+| `quote_refresh_required` | Generic | The quote must be refreshed; the maker got `QuoteRefreshRequested` |
+| `duplicate_quote` | Generic | Duplicate quote `order_id` |
+| `resource_limit` | Generic | A per-identity resource limit was reached |
+| `kernel_timeout` | Generic | Core did not answer in time; a submission's outcome is unknown |
+| `caps_authority_unavailable` | Generic | Quote risk authority changed; request a new quote |
+| `vault_not_tradable` | Generic | A Vault counterparty cannot take this position now |
+| `invalid_vault_counterparty` | Generic | Writer and holder must be distinct Vaults |
+| `tx_build_failed` | Generic | The sponsored transaction could not be built; the message is from a fixed list |
+| `order_already_submitted` | Generic | The order was already handed to settlement |
+| `sponsored_tx_not_ready` | Generic | The sponsored transaction is not ready yet |
+| `invalid_signed_tx` | Generic | The signed transaction does not decode or match |
+| `invalid_amount` | Generic | The swap amount is not a positive u64 string |
+| `vault_authorization_failed` | Generic | Vault authorization is no longer valid |
+| `vault_projection_unavailable` | Generic | Vault state is temporarily unavailable |
+| `vault_safety_mode` | Generic | Vault safety mode forbids the action |
+| `vault_pending_capital` | Generic | The idle capital window must be closed and unpriced |
+| `vault_trading_closed` | Generic | The Vault cycle does not permit trading |
+| `vault_mismatch` | Generic | The request Vault differs from the session Vault |
+| `vault_governance_required` | Generic | Recovery and closing swaps need governance |
+| `vault_swap_invalid_state` | Generic | Vault state does not permit this swap |
+| `vault_swap_invalid_amount` | Generic | The swap amount is invalid for the Vault |
+| `vault_swap_idempotency_conflict` | Generic | The swap id is already bound to different swap data |
+| `vault_swap_quote_expired` | Generic | The swap quote expired; request a new one |
+| `vault_swap_signed_tx_rejected` | Generic | The signed swap transaction was rejected |
+| `vault_swap_oracle_stale` | Generic | The Pyth price is too old; retry within seconds |
+| `vault_swap_route_unavailable` | Generic | No swap route right now |
+| `vault_swap_service_unavailable` | Generic | Another transient swap-service failure |
 
 ## Correlation semantics
 
@@ -479,7 +602,18 @@ There's no single global correlation id. Correlation is per-request, via the `re
 - `Subscribe` / `Unsubscribe` carry a mandatory `request_id`. The server echoes it in `SubscribeAck` / `UnsubscribeAck`, and the `subscribed` / `unsubscribed` arrays contain only the diff for this call — not the full subscription list.
 - `GetSubscriptions` carries `request_id`; `Subscriptions` echoes it.
 - Query-style `Get*` operations require `request_id` and echo it in their responses.
-- Correlated failures use `RequestError { request_id, error }`; `Error` has no request ID. Not every handler follows the correlated path: `GetTokenMarketsInfo` can return an uncorrelated error or no response for an empty market set. See [its failure behavior](taker-api.md#tokenmarketsinfo).
+- Correlated failures use `RequestError { request_id, error }`; `Error` has no request ID.
+- `RfqRequest`, `AcceptQuote` and `SubmitSignedSponsoredTx` require `request_id` and get exactly one
+  reply: `CommandAccepted { request_id }` or `RequestError { request_id, error }`, including for
+  routing gates (rate limit, pause, invite gate, wrong endpoint, overload). `CommandAccepted` means
+  the server accepted the command, never that anything landed on chain. Lifecycle pushes
+  (`RfqCreated`, `OrderAccepted`, `OrderFailed`, …) stay keyed by `rfq_id` / `order_id` and may
+  arrive before or after the receipt. `RfqRequest.request_id` is also the idempotency key: a
+  repeated `request_id` returns the RFQ it created, echoed in `RfqCreated.request_id`. Not every handler follows the correlated path: `GetTokenMarketsInfo` can return an uncorrelated error or no response for an empty market set. See [its failure behavior](taker-api.md#tokenmarketsinfo).
+- Exception: when the server's inbound queue for a connection is full it sends an uncorrelated
+  `Error { code: "server_overloaded" }` and closes the socket with `4003 rate_limited`. Every request
+  still outstanding on that connection has an unknown outcome; resolve submissions by status after
+  reconnecting.
 - Indicative pricing uses `request_id` on both `IndicativePricesRequest` (server → maker) and `IndicativePricesResponse` (maker → server).
 - Broadcasts (`RfqBroadcast`, `TradeExecuted`, `StatsUpdate`, etc.) don't carry `request_id`.
 
@@ -538,9 +672,25 @@ Trade lifecycle and payoff: [Protocol flow](protocol-flow.md).
 | `chain_events` | `ChainEvent` (position opened / settled / liquidated, market finalized) | Anyone. **This is how a taker tracks position outcomes** (settlement / liquidation). |
 | `markets` | `MarketCreated`, `MarketFinalized` | Anyone tracking the tradable market set. |
 | `vaults` | `VaultCatalogChanged`, `VaultProjectionAdvanced` | Maker and taker sessions that list or watch vaults: they receive both, `VaultProjectionAdvanced` for every vault. `/vault` operator sessions are subscribed automatically and receive `VaultProjectionAdvanced` for their own vault only, and no `VaultCatalogChanged`. |
-| `positions` | — (no public producer) | `PositionUpdated` is delivered **owner-direct to the maker's session** by PDA lookup, never via this channel. The channel yields nothing for takers. |
 
-Takers typically subscribe to `chain_events` (position outcomes) plus optionally `trades` / `stats` / `markets`. They do **not** need `rfqs` or `positions`.
+There is no `positions` channel: `PositionUpdated` and `MakerCapsUpdated` are delivered **owner-direct to the maker's session**, with no subscription.
+
+Takers typically subscribe to `chain_events` (position outcomes) plus optionally `trades` / `stats` / `markets`. They do **not** need `rfqs`.
+
+### Delivery criticality
+
+When your outbound queue is full, the server handles a pushed message in one of two ways:
+
+- **Critical**: the message is dropped and the connection is closed with `4002 slow_consumer`. Responses and some pushes are retried briefly first; lifecycle pushes fanned out from chain events are not. Reconnect and re-read state.
+- **Best-effort**: the message is dropped silently and the connection stays open.
+
+| Audience | Critical | Best-effort |
+|---|---|---|
+| `/maker` | `RfqBroadcast`, `QuoteReceived`, `QuoteAcknowledged`, `QuoteRefreshRequested`, `OrderAccepted`, `SponsoredTxToSign`, `OrderSubmitted`, `OrderConfirmed`, `OrderFailed`, `MarketCreated`, `MarketFinalized`, `VaultCatalogChanged`, `VaultProjectionAdvanced` | `TradeExecuted`, `ChainEvent`, `StatsUpdate`, `RfqSkipped`, `IndicativePricesRequest` |
+| `/taker` | everything except `StatsUpdate` | `StatsUpdate` |
+| `/maker/data`, `/vault` | everything | — |
+
+Messages addressed to your session alone (responses, your own lifecycle, `PositionUpdated`, `MakerCapsUpdated`) always follow the critical rule.
 
 `TradeExecuted` is a best-effort live hint and may be lost, delayed, or repeated.
 Merge it with role-appropriate authoritative history by `trade.id`; never derive

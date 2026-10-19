@@ -120,7 +120,7 @@ Client should persist both `session_id` and `expires_at` for future `ResumeAuth`
 }
 ```
 
-`reason` is a `snake_case` code. `message` is optional and may be omitted.
+`reason` is a code from the [WS error code catalog](ws-common.md#ws-error-codes). `message` is optional and may be omitted.
 
 ### Subscribe
 
@@ -229,17 +229,28 @@ through the observation slot; a later audit-gap retraction fails the read closed
 {
   "type": "RfqRequest",
   "data": {
+    "request_id": "uuid",
     "market": "MarketPdaBase58",
     "position_type": "cash_secured_put",
     "strike": 136000000000,
     "quantity": 20000000,
-    "timeout_seconds": 30,
-    "client_request_id": "optional-uuid"
+    "timeout_seconds": 30
   }
 }
 ```
 
-`client_request_id` is optional and used for idempotent RFQ creation.
+`request_id` is required. It correlates the reply and is the idempotency key: repeating it returns
+the RFQ it created. The reply is exactly one `CommandAccepted { request_id }` or
+`RequestError { request_id, error }`; see [correlation semantics](ws-common.md#correlation-semantics).
+
+### CommandAccepted (server -> client)
+
+```json
+{ "type": "CommandAccepted", "data": { "request_id": "uuid" } }
+```
+
+The server accepted `RfqRequest`, `AcceptQuote` or `SubmitSignedSponsoredTx`. It does not mean
+the order executed; follow the lifecycle pushes for that.
 
 ### RfqCreated (server -> taker)
 
@@ -249,7 +260,7 @@ through the observation slot; a later audit-gap retraction fails the read closed
   "data": {
     "rfq_id": "uuid",
     "rfq_version": 1,
-    "client_request_id": "optional-uuid",
+    "request_id": "uuid",
     "expires_at": 1710000030,
     "created_at": 1710000000,
     "order_options": [{ "strike": 136000000000 }]
@@ -313,6 +324,7 @@ executable quotes remain.
 {
   "type": "AcceptQuote",
   "data": {
+    "request_id": "uuid",
     "rfq_id": "uuid",
     "maker": "MakerOwnerPubkeyBase58",
     "order_id": "0x...64chars"
@@ -353,11 +365,17 @@ Cancels an active RFQ. `request_id` is required on the wire. The server responds
 {
   "type": "SubmitSignedSponsoredTx",
   "data": {
+    "request_id": "uuid",
     "order_id": "0x...64chars",
     "tx_base64": "..."
   }
 }
 ```
+
+A failure is a `RequestError` with per-request `delivery` (`not_forwarded` or `unknown`). Unless
+every submission you made for the order returned `not_forwarded`, resolve it with `GetOrderStatus`
+before signing anything new. See
+[RequestError](ws-common.md#requesterror--request-correlated-errors).
 
 ### OrderAccepted (server -> taker)
 
@@ -1037,15 +1055,7 @@ Common typed `ServerError` variants (PascalCase on the wire):
 - `Invite` (data is `InviteErrorReason` string, e.g. `"invalid_code"`)
 - `Claim` (data is `ClaimErrorReason` string, e.g. `"code_taken"`)
 
-Common `Generic` variant `code` values in taker flows:
-- `missing_size_rule_for_underlying_mint` — no configured size rule for RFQ market underlying mint
-- `invalid_quantity_size_rule` — RFQ `quantity` violates `min/max/step` constraint
-- `trading_paused` — backend or on-chain pause currently blocks new trading actions
-- `session_expired` — `ResumeAuth` with invalid/expired/revoked session
-- `already_authenticated` — `ResumeAuth` on an already authenticated connection
-- `hello_required`, `hello_timeout`, `hello_already_sent`
-- `parse_error`, `too_many_parse_errors`, `message_too_large`
-- `internal_error`
+`Generic` codes are listed, with their frames, in the [WS error code catalog](ws-common.md#ws-error-codes).
 
 ### RateLimitReason (in typed `RateLimit` error)
 

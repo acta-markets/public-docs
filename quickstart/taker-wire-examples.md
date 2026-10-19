@@ -147,7 +147,7 @@ Full descriptors carry `size_rule`, decimals, and oracle PDAs needed to validate
 
 ### 6) Subscribe → SubscribeAck
 
-`request_id` is required for takers. A taker subscribes to `chain_events` (position settled/liquidated), and optionally `trades` / `stats` / `markets`. `rfqs` and `positions` are **maker** channels — a taker's own RFQ/quote/order events arrive session-direct, and `PositionUpdated` is never delivered to takers.
+`request_id` is required for takers. A taker subscribes to `chain_events` (position settled/liquidated), and optionally `trades` / `stats` / `markets`. `rfqs` is a **maker** channel — a taker's own RFQ/quote/order events arrive session-direct, and `PositionUpdated` is never delivered to takers.
 
 ```json
 {
@@ -176,14 +176,18 @@ Full descriptors carry `size_rule`, decimals, and oracle PDAs needed to validate
 {
   "type": "RfqRequest",
   "data": {
+    "request_id": "7a4c4b3e-2f1d-4c55-9a51-4f0d0e2b6a42",
     "market": "MarketPdaBase58",
     "position_type": "covered_call",
     "strike": 136000000000,
     "quantity": 5000000000,
-    "timeout_seconds": 30,
-    "client_request_id": "cli-req-42"
+    "timeout_seconds": 30
   }
 }
+```
+
+```json
+{ "type": "CommandAccepted", "data": { "request_id": "7a4c4b3e-2f1d-4c55-9a51-4f0d0e2b6a42" } }
 ```
 
 ```json
@@ -192,7 +196,7 @@ Full descriptors carry `size_rule`, decimals, and oracle PDAs needed to validate
   "data": {
     "rfq_id": "rfq-777",
     "rfq_version": 1,
-    "client_request_id": "cli-req-42",
+    "request_id": "7a4c4b3e-2f1d-4c55-9a51-4f0d0e2b6a42",
     "expires_at": 1710000030,
     "created_at": 1710000000,
     "order_options": [{ "strike": 136000000000 }]
@@ -244,6 +248,7 @@ You pick the winner by `order_id` (here maker B, the higher premium). Show `net_
 {
   "type": "AcceptQuote",
   "data": {
+    "request_id": "0c9e1d52-6c0b-4f7e-b1a9-7d8f3c2e5a10",
     "rfq_id": "rfq-777",
     "maker": "MakerBOwnerPubkeyBase58",
     "order_id": "0x2222222222222222222222222222222222222222222222222222222222222222"
@@ -270,6 +275,7 @@ Sign `tx_base64` and return it before `signature_deadline`. On an ordinary maker
 {
   "type": "SubmitSignedSponsoredTx",
   "data": {
+    "request_id": "5f2b8a61-3d4e-4b7c-8e9f-1a2b3c4d5e6f",
     "order_id": "0x2222...2222",
     "tx_base64": "AQABAg... (same tx, taker slot now filled) ..."
   }
@@ -415,7 +421,7 @@ Redeem before trading:
 }
 ```
 
-An `RfqRequest` before redemption fails with a typed `InviteRequired` error (delivered as `RequestError` when the request carried a `request_id`). Devnet is open — no invite needed.
+An `RfqRequest` before redemption fails with a typed `InviteRequired` error in a `RequestError` carrying its `request_id`. Devnet is open — no invite needed.
 
 ### Size-rule violation (RequestError)
 

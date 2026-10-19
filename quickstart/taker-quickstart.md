@@ -102,17 +102,17 @@ RfqRequest -> RfqCreated -> QuoteReceived (0..N) -> AcceptQuote
 {
   "type": "RfqRequest",
   "data": {
+    "request_id": "<uuid>",
     "market": "<market PDA, base58>",
     "position_type": "covered_call",
     "strike": 136000000000,
     "quantity": 5000000000,
-    "timeout_seconds": 30,
-    "client_request_id": "<optional uuid>"
+    "timeout_seconds": 30
   }
 }
 ```
 
-`position_type` is `covered_call` or `cash_secured_put`. `client_request_id` is an optional idempotency key: repeating a request with the same key while the RFQ is active returns the same `rfq_id`. The server replies with `RfqCreated { rfq_id, rfq_version, expires_at, created_at, order_options }`, then broadcasts the RFQ to eligible makers.
+`position_type` is `covered_call` or `cash_secured_put`. `request_id` is required and is also the idempotency key: repeating a request with the same `request_id` while the RFQ is active returns the same `rfq_id`. The server answers the request with `CommandAccepted { request_id }` or `RequestError { request_id, error }`, sends `RfqCreated { rfq_id, rfq_version, request_id, expires_at, created_at, order_options }`, then broadcasts the RFQ to eligible makers.
 
 ### 2. Collect quotes
 
@@ -147,6 +147,7 @@ Name the winning quote by `order_id`:
 {
   "type": "AcceptQuote",
   "data": {
+    "request_id": "<uuid>",
     "rfq_id": "<uuid>",
     "maker": "<maker owner pubkey, base58>",
     "order_id": "0x<64 hex>"
@@ -178,9 +179,11 @@ The server locks the quote and builds a transaction to sign:
 ```json
 {
   "type": "SubmitSignedSponsoredTx",
-  "data": { "order_id": "0x<64 hex>", "tx_base64": "<signed, base64>" }
+  "data": { "request_id": "<uuid>", "order_id": "0x<64 hex>", "tx_base64": "<signed, base64>" }
 }
 ```
+
+`AcceptQuote` and `SubmitSignedSponsoredTx` are answered with `CommandAccepted` or `RequestError` carrying the same `request_id`. A failed submission also says `delivery` for that request: `not_forwarded` (this request was not sent) or `unknown` (it may have been). Treat the order as not executed only if every submission you made returned `not_forwarded`; otherwise check `GetOrderStatus` first.
 
 > The wallet must support **versioned (v0) transaction signing**. Browser wallets that only sign legacy transactions will not work; for headless/bot takers, sign the raw message bytes with the keypair directly (see below). If a wallet cannot sign arbitrary bytes at all, WS auth also fails — use a server-side signer.
 
@@ -263,7 +266,7 @@ Once open, the position's collateral is locked in its own escrow — no margin, 
 | `settled` | Market finalized after expiry; assets distributed by ITM/OTM outcome. |
 | `liquidated` | An unfunded ITM position was closed by a permissionless liquidator, who fronts the settlement to the taker. |
 
-Track position outcomes by subscribing to `chain_events` (the `ChainEvent(position_settled)` / `ChainEvent(position_liquidated)` pushes for your market) and by polling `GetPositions`. Note: `PositionUpdated` and the `positions` channel are **maker-only** — takers receive nothing there. Settlement mechanics and payoff tables are in [`../reference/protocol-flow.md`](../reference/protocol-flow.md).
+Track position outcomes by subscribing to `chain_events` (the `ChainEvent(position_settled)` / `ChainEvent(position_liquidated)` pushes for your market) and by polling `GetPositions`. Note: `PositionUpdated` is a **maker-only** owner-direct push — takers receive nothing there. Settlement mechanics and payoff tables are in [`../reference/protocol-flow.md`](../reference/protocol-flow.md).
 
 ## Reconnection and recovery
 

@@ -118,8 +118,8 @@ If the client's `protocol_version` is incompatible, the server sends `VersionMis
 - Server WS ping interval: `30s`
 - Max consecutive parse errors before close: `3`
 - Inbound message size: `32 KiB`
-- Message rate limit per connection: token bucket `30 msg/s` sustained, `60` burst
-- Quote rate limit per connection: token bucket `50 quote tokens/s` sustained, `100` burst — covers `Quote`/`ReplaceQuote`/`BatchQuotes`/`CancelQuote`/`CancelAllQuotes` (maker plane); `BatchQuotes` costs `max(1, quotes.length)` tokens. Exceeding it is a soft `rate_limited` reject; exceeding the message-rate bucket closes the connection.
+- Message rate limit per connection: token bucket `30 msg/s` sustained, `60` burst; exceeding it closes the connection with `4003 rate_limited`. Quote-plane messages (`Quote`, `ReplaceQuote`, `BatchQuotes` within `max_batch_quotes`, `CancelQuote`, `CancelAllQuotes`) do not count toward it, so quoting and cancelling never close the socket; an oversized `BatchQuotes` does count.
+- Quote rate limit per connection: token bucket `50 quote tokens/s` sustained, `100` burst — covers `Quote`/`ReplaceQuote`/`BatchQuotes`/`CancelQuote`/`CancelAllQuotes` (maker plane); `BatchQuotes` costs `max(1, quotes.length)` tokens. Exceeding it is a soft reject: `QuoteRejected` (per quote in `BatchQuotesAck`) with reason `rate_limited`; the connection stays open.
 - Query rate limit per connection: token bucket `20 query tokens/s` sustained, `40` burst
 - `BatchQuotes` hard max: `50` quote elements; cost is `max(1, quotes.length)` quote tokens
 
@@ -178,9 +178,13 @@ If the client's `protocol_version` is incompatible, the server sends `VersionMis
 - `OrderStatus`, `MyQuotes`, `MakerPositions`, `MakerMarkets`, `MmSummary`, `MyTrades`, `TokenCaps`, `MyCaps`, `Subscriptions`
 - `ActiveRfqs`, `Markets`, `MarketDescriptors`, `Expiries`, `Tokens`
 
+### Server -> Maker (owner-direct, no subscription)
+
+- `PositionUpdated`, `MakerCapsUpdated`
+
 ### Server -> Maker (broadcast if subscribed)
 
-- `TradeExecuted`, `StatsUpdate`, `PositionUpdated`, `ChainEvent`
+- `TradeExecuted`, `StatsUpdate`, `ChainEvent`
 - `MarketCreated`, `MarketFinalized`
 - `VaultCatalogChanged`, `VaultProjectionAdvanced` (`vaults` channel; see [ws-common](ws-common.md#vaultcatalogchanged))
 
@@ -399,6 +403,7 @@ The value under `cap_exceeded` is a `CapError`: a bare string for
 
 | Value | Meaning |
 |-------|---------|
+| `unauthorized` | Session is not an authenticated maker, or a vault maker that may not trade or hold this position (see `message`) |
 | `invalid_strike` | Strike not in `order_options` set |
 | `market_expired` | Target market has expired |
 | `quote_expiry_too_short` | `valid_until` below minimum |
@@ -409,6 +414,9 @@ The value under `cap_exceeded` is a `CapError`: a bare string for
 | `rfq_not_found` | RFQ does not exist |
 | `rfq_not_active` | RFQ is no longer accepting quotes |
 | `duplicate_order_id` | `order_id` already submitted |
+| `rate_limited` | Quote rate limit exceeded; retry after backing off |
+| `trading_paused` | Trading is paused venue-wide; retry after it resumes |
+| `internal_error` | Server-side failure; the quote was not accepted, retry is safe |
 
 ### QuoteRefreshRequested (server -> maker)
 
@@ -990,7 +998,7 @@ A History row uses the same identity/amount fields with, for example, `"state": 
 { "type": "OrderStatus", "data": { "request_id": "uuid", "order_id": "0x...64chars", "state": { "type": "pending" } } }
 ```
 
-Available to the authenticated owner on `/maker`, `/maker/data`, and `/taker`. Makers should use `/maker/data` to keep execution lookups off the quote connection. `state` is `pending`, `confirmed` (with `position_pda`), or `unknown`, encoded as a tagged object. See the shared [execution lookup contract](taker-api.md#orderstatus-server---taker).
+Available to the authenticated owner on `/maker`, `/maker/data`, `/taker`, and to the operator on `/vault`. Makers should use `/maker/data` to keep execution lookups off the quote connection. `state` is `pending`, `confirmed` (with `position_pda`), or `unknown`, encoded as a tagged object. See the shared [execution lookup contract](taker-api.md#orderstatus-server---taker).
 
 A lost ACK leaves the command outcome unknown. Keep unresolved orders in strategy state across reconnect; neither an empty Live response, a missing position, a timeout nor `unknown` proves nonexecution. Execution lookup failures return `RequestError` with the request ID.
 
@@ -1245,7 +1253,7 @@ the last representable value after overflow; prefer the USD object.
 
 ### PositionUpdated (owner-only push)
 
-`PositionUpdated` is delivered **directly to the session of the maker that owns the position**. It is not broadcast to public channel subscribers, even though `positions` appears in the channel list. After a fill, positions move through `open` -> `funded` -> `settled` or `liquidated`. See [Protocol Flow](protocol-flow.md).
+`PositionUpdated` is delivered **directly to the session of the maker that owns the position**. It is never broadcast and needs no subscription (there is no `positions` channel). After a fill, positions move through `open` -> `funded` -> `settled` or `liquidated`. See [Protocol Flow](protocol-flow.md).
 
 ```json
 {
@@ -1364,13 +1372,13 @@ All variants require `signature` (tx signature, base58), `instruction_index` (in
 
 ## Delivery and recovery
 
-Delivery is **best-effort, with loss surfaced as a disconnect**. Every *critical* message is delivered reliably or — if it cannot be delivered under backpressure — dropped, after which the server **closes the connection**. Critical means the owner-direct pushes (`PositionUpdated`, `TradeExecuted`), `RfqBroadcast`, and the maker quote-lifecycle messages listed above. `QuoteReceived`, `QuotesUpdate`, and the order-signing lifecycle are taker-only. A lost critical message therefore always surfaces as a disconnect — never silent staleness. Only non-critical broadcasts (`StatsUpdate`) may drop silently.
+When your outbound queue is full, a *critical* message is dropped and the server **closes the connection** (`4002 slow_consumer`), so its loss always surfaces as a disconnect. Best-effort broadcasts are dropped silently. For `/maker` the critical set is `RfqBroadcast`, the quote and order lifecycle, `QuoteRefreshRequested`, `MarketCreated`, `MarketFinalized`, `VaultCatalogChanged`, `VaultProjectionAdvanced`, and every message addressed to your session alone (responses, `PositionUpdated`, `MakerCapsUpdated`). `TradeExecuted`, `ChainEvent`, `StatsUpdate`, `RfqSkipped` and `IndicativePricesRequest` are best-effort. The full table is in [WebSocket common](ws-common.md#delivery-criticality).
 
-On every (re)connect read `GetMmSummary`, `GetActiveRfqs` and complete `GetMyQuotes { scope: Live }`; query `GetOrderStatus` for unresolved orders. Managed Rust SDK requires all three recovery reads before `Ready`. These observations span Core live state and persistent projections; they are not an atomic snapshot. `ActiveRfqs` supplies each RFQ's taker and market PDA for the quote preimage.
+On every (re)connect read `GetActiveRfqs` and complete `GetMyQuotes { scope: Live }` on `/maker`, and `GetMmSummary` on `/maker/data`. The managed Rust SDK sends exactly these reads per endpoint before `Ready`; querying `GetOrderStatus` for orders you still consider unresolved is up to you. These observations span Core live state and persistent projections; they are not an atomic snapshot. `ActiveRfqs` supplies each RFQ's taker and market PDA for the quote preimage.
 
 The wire has no replay cursor or stream sequence number. Apply entity versions on a live connection and re-read state after disconnect; do not infer execution from absent events. SDK receiver sequence gaps are local delivery gaps, distinct from the wire.
 
-`TradeExecuted` is a UI hint, not authoritative. The DB-backed reads — `GetMmSummary`, `GetMakerPositions`, `GetMyTrades` — are the recovery authority: on any doubt, re-read rather than trusting the last live push. A fill's `PositionUpdated` can occasionally be deferred to a later snapshot rather than pushed, so also reconcile periodically (and after your own transactions) via `GetMmSummary`.
+`TradeExecuted` is a UI hint, not authoritative. The DB-backed reads — `GetMmSummary`, `GetMakerPositions`, `GetMyTrades` — are the recovery authority: on any doubt, re-read rather than trusting the last live push. A fill's `PositionUpdated` can occasionally be deferred to a later snapshot rather than pushed, so also reconcile via `GetMmSummary` after your own transactions and when you detect drift, not on a timer.
 
 If `MmSummary.positions_has_more` (or a `MakerPositions` response's `has_more`) is `true`, the position list was truncated at 500 — retrieve the rest via `GetMakerPositions`: page with the keyset cursor: pass `cursor` (the `created_at` of the last row, unix seconds) together with `cursor_id` (its `pda`) — both or neither. Ordering is second-granular with `pda` as the tie-break; stop when `has_more` is `false`.
 
@@ -1448,11 +1456,7 @@ Important typed `ServerError` variants for makers (PascalCase on the wire):
 
 Quote-specific validation failures are sent as `QuoteRejected` with a typed `reason`. See the `QuoteRejected` section above for its variants.
 
-Common `Generic` variant `code` values in maker/runtime flows (non-exhaustive; match on `code`):
-- Connection / handshake: `hello_required`, `hello_timeout`, `hello_already_sent`, `session_replaced`, `session_expired`, `already_authenticated`
-- Limits / codec: `rate_limited`, `message_too_large`, `batch_quotes_too_large`, `parse_error`, `too_many_parse_errors`
-- Maker / registration: `maker_not_registered`, `invalid_maker_signature`
-- Market / server: `trading_paused`, `internal_error`
+`Generic` codes are listed, with their frames, in the [WS error code catalog](ws-common.md#ws-error-codes); match on `code`.
 
 Operational handling recommendations:
 - for `rate_limited`: retry with exponential backoff + jitter. Quote/query-bucket rejects are soft (connection stays open); a message-rate-bucket breach closes the connection — see Operational defaults.
@@ -1573,7 +1577,7 @@ A resumed maker auth session restores server-side routing and mint scope. Omitte
 
 ### Max message size
 
-32 KB inbound. Larger messages are rejected with `generic.code = "message_too_large"`.
+32 KB inbound. A larger frame closes the connection without an error frame.
 
 ### Nonce
 

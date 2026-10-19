@@ -10,7 +10,7 @@ Wire messages, errors, and enums are in [`../reference/taker-api.md`](../referen
 npm install @acta-markets/ts-sdk
 ```
 
-This guide covers version 0.2.1, which targets the program deployed to devnet and mainnet on 2026-10-17. Its instruction opcodes and program error codes differ from the program 0.1.6 was built against, so upgrade both together; the package README has a "Migrating from 0.1.6" table. Refer to opcodes and errors by name through the generated constants exported from `@acta-markets/ts-sdk` (`*_DISCRIMINATOR` for opcodes, `ACTA_CONTRACT_ERROR__*` for errors), not by number.
+This guide covers version 0.2.2, which targets the program deployed to devnet and mainnet on 2026-10-17. Its instruction opcodes and program error codes differ from the program 0.1.6 was built against, so upgrade both together; the package README has a "Migrating from 0.1.6" table. Refer to opcodes and errors by name through the generated constants exported from `@acta-markets/ts-sdk` (`*_DISCRIMINATOR` for opcodes, `ACTA_CONTRACT_ERROR__*` for errors), not by number.
 
 **Vault payout fields were renamed in 0.2.0.** Deposit payouts take `refundTo` / `sharesTo` and withdrawal payouts `sharesBackTo`; `liquidateVaultPosition(liquidator, { owner, paidTo }, position)` replaces the old fourth destination argument. JavaScript silently ignores the old `refundDestination` / `shareDestination` fields and a fourth argument, so the funds go to the canonical ATAs instead of the destination you meant.
 `ActaWsClient` validates challenge format before calling any auth provider;
@@ -96,7 +96,7 @@ starting another resume; it does not end an already authenticated connection.
 ### 4. Subscribe to live updates
 
 ```typescript
-// Takers track position outcomes via chain events; `positions`/`positionUpdated`
+// Takers track position outcomes via chain events; `positionUpdated`
 // is a maker-only push and never fires for a taker.
 ws.on("authenticated", () => ws.subscribe(["chain_events"]));
 

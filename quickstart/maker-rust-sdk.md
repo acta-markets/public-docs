@@ -12,10 +12,10 @@ For JSON-layer integrations, see [`maker-quickstart.md`](maker-quickstart.md). M
 
 ```toml
 [dependencies]
-acta-maker-sdk = { version = "0.5.0", features = ["ws-client"] }
+acta-maker-sdk = { version = "0.5.2", features = ["ws-client"] }
 ```
 
-Version 0.5.0 targets the program deployed to devnet and mainnet on 2026-10-17. This guide covers ordinary makers; vault operators use the `vault` feature, see the [vault operator guide](vault-operator-guide.md).
+Version 0.5.2 targets the program deployed to devnet and mainnet on 2026-10-17. Upgrading from 0.5.0/0.5.1: `ManagedWsConfig::new` takes the maker owner, `QuoteBuilder` requires `maker_owner` and `min_valid_until`, and `MakerQuoteClient` quotes through `quote_in_epoch` / `replace_in_epoch` / `batch_quotes_in_epoch` (see the crate's `CHANGELOG.md`). This guide covers ordinary makers; vault operators use the `vault` feature, see the [vault operator guide](vault-operator-guide.md).
 
 Quote-only integrations need `ws-client`. `chain` adds Solana instruction builders (including `chain::vault`); `chain-rpc` adds on-chain reads; `http` adds the read-only HTTP client; `vault` adds the vault operator client and implies `ws-client` and `chain`.
 
@@ -29,37 +29,37 @@ This fragment runs inside an async function returning `Result`. Supply `url: Str
 
 ```rust
 use acta_maker_sdk::{BytesSigner, encode_base58};
-use acta_maker_sdk::ws::managed::{ManagedWsConfig, MakerWsEndpoint, spawn_managed_ws};
+use acta_maker_sdk::ws::maker::{MakerDataClient, MakerQuoteClient};
+use acta_maker_sdk::ws::managed::{ManagedWsConfig, MakerWsEndpoint};
 use std::sync::Arc;
 
 let signer = Arc::new(BytesSigner::from_secret(quote_signing_secret));
 let maker_owner_base58 = encode_base58(&maker_owner);
 
-let quote_config = ManagedWsConfig::new(url.clone(), hello.clone(), signer.clone())
-    .with_auth_pubkey(maker_owner_base58.clone())
-    .with_cancel_on_disconnect(true)
-    .low_latency()
-    .with_initial_subscribe(subscribe_data);
+let quote_config =
+    ManagedWsConfig::new(url.clone(), hello.clone(), signer.clone(), maker_owner_base58.clone())
+        .with_cancel_on_disconnect(true)
+        .low_latency()
+        .with_initial_subscribe(subscribe_data);
 
-let quote_handle = spawn_managed_ws(quote_config)?;
-let mut messages = quote_handle.subscribe_messages(); // Consume recovery before quoting.
+let quote_client = MakerQuoteClient::spawn(quote_config)?;
+let mut messages = quote_client.subscribe_messages(); // Consume recovery before quoting.
 
-let data_config = ManagedWsConfig::new(url, hello, signer.clone())
-    .with_auth_pubkey(maker_owner_base58)
+let data_config = ManagedWsConfig::new(url, hello, signer.clone(), maker_owner_base58)
     .with_endpoint(MakerWsEndpoint::Data);
 
-let data_handle = spawn_managed_ws(data_config)?;
+let data_client = MakerDataClient::spawn(data_config)?;
 ```
 
 `url` accepts `http(s)://` and `ws(s)://` interchangeably. The default endpoint appends `/maker`; `with_endpoint(MakerWsEndpoint::Data)` appends `/maker/data`. `hello` carries the protocol version (use `WS_PROTOCOL_VERSION`), opt-in `features`, and `client_name` / `client_version` strings.
 
-The signer is an `Arc<dyn SignerLike + Send + Sync>`. It signs the auth challenge with the registered key; `.with_auth_pubkey(...)` identifies the maker owner. Use that same owner in `QuoteBuilder::maker_owner`. `ManagedWsConfig::new_async` takes an `AsyncSignerLike` for HSM- or KMS-backed keys. `BytesSigner` holds an ed25519 keypair in memory and zeroes it on drop.
+The signer is an `Arc<dyn SignerLike + Send + Sync>`. It signs the auth challenge with the registered key; the fourth argument is the maker owner, required even when the owner key signs. Use that same owner in `QuoteBuilder::maker_owner`. `ManagedWsConfig::new_async(url, hello, signer, owner)` takes an `AsyncSignerLike` for HSM- or KMS-backed keys. `BytesSigner` holds an ed25519 keypair in memory and zeroes it on drop.
 
 The managed quote client requests cancel-on-disconnect (COD) by default: the server cancels the connection's active and retained non-winning quotes on disconnect. Selected/executing orders remain obligations. To disable COD, set `.with_cancel_on_disconnect(false)` and omit `cancel_on_disconnect` from `HelloData.features`; the setter preserves manually supplied features. The data client does not add this feature automatically. If a required feature is absent from `Welcome.enabled_features`, the session terminates with `FeatureUnsupported`.
 
-`low_latency()` uses 2 s ping/pong deadlines, a 1 s write timeout and larger buffers. The default gap policy is `EndpointDefault`: reconnect on inbound gaps for Quote, surface them for Data. `low_latency()` selects `Reconnect` on either endpoint.
+`low_latency()` uses 2 s ping/pong deadlines, a 1 s write timeout and a larger command buffer. The inbound ring holds 4096 messages by default. The default gap policy is `EndpointDefault`: reconnect on inbound gaps for Quote, surface them for Data. `low_latency()` selects `Reconnect` on either endpoint. A gap on the quote endpoint therefore reconnects, and COD removes the connection's active and retained non-winning quotes (selected/executing orders survive); keep the receiver draining.
 
-Readiness always includes successful `GetMmSummary`, `GetActiveRfqs` and `GetMyQuotes { scope: Live }`. Quote first reconciles its desired subscription target with the server and waits for acknowledgements. `initial_subscribe` seeds the desired subscription target; its `request_id` is not sent on the wire, and recovery uses fresh request IDs. Dynamic subscription changes update the desired target after acknowledgement.
+Readiness reads depend on the endpoint: Quote reads `GetActiveRfqs` and `GetMyQuotes { scope: Live }`; Data reads `GetMmSummary`. Quote first reconciles its desired subscription target with the server and waits for acknowledgements. `initial_subscribe` seeds the desired subscription target; its `request_id` is not sent on the wire, and recovery uses fresh request IDs. Dynamic subscription changes update the desired target after acknowledgement.
 
 Resume can restore a server-side mint scope. The SDK explicitly sends both mint lists, including empty lists, to replace it with its local target. `Ready` identifies a connection epoch whose required reads completed; the strategy must consume them and reconcile its own unresolved orders before resuming risk-taking. These reads are not an atomic execution snapshot.
 
@@ -71,30 +71,31 @@ After applying recovery, retain that `recovery_epoch: u64` with the strategy sta
 
 ```rust
 use acta_maker_sdk::{AtomicNonceGenerator, Nonce, Price, QuoteExpiry, RfqBinding};
-use acta_maker_sdk::ws::types::ClientMessage;
 
 static NONCE_GEN: AtomicNonceGenerator = AtomicNonceGenerator::new();
 
 // `rfq` is the current borrowed RfqBroadcastMessage; `price` is your premium.
-// Choose `valid_until: QuoteExpiry` within the market and settlement deadlines.
+// `min_validity` is `min_quote_validity_seconds` from `GET /api/v1/venue`.
+let min_valid_until = QuoteExpiry::after(min_validity).ok_or("clock")?;
 let quote = RfqBinding::from_broadcast(rfq)?
     .quote()
     .maker_owner(maker_owner)
     .price(Price::new(price))
     .valid_until(valid_until)
+    .min_valid_until(min_valid_until)
     .nonce(Nonce::new(NONCE_GEN.next_u64()?))
     .sign(signer.as_ref())?;
 
-quote_handle.send_in_epoch(ClientMessage::Quote(quote), recovery_epoch).await?;
+quote_client.quote_in_epoch(quote, recovery_epoch).await?;
 ```
 
-`QuoteExpiry` stores whole Unix seconds; use `QuoteExpiry::from_unix_seconds(...)` or `QuoteExpiry::after(...)` rather than putting a fractional `SystemTime` into a signed order. `RfqBinding` also supports choosing a permitted strike from `order_options`. See the crate's `managed_quote` example (`cargo run --example managed_quote --features ws-client` from the 0.5.0 crate sources; API reference on [docs.rs](https://docs.rs/acta-maker-sdk)) for receiving recovery responses, checking epochs and handling stream gaps.
+`QuoteExpiry` stores whole Unix seconds; use `QuoteExpiry::from_unix_seconds(...)` or `QuoteExpiry::after(...)` rather than putting a fractional `SystemTime` into a signed order. `RfqBinding` also supports choosing a permitted strike from `order_options`. See the crate's `managed_quote` example (`cargo run --example managed_quote --features ws-client,http` from the 0.5.2 crate sources; API reference on [docs.rs](https://docs.rs/acta-maker-sdk)) for receiving recovery responses, checking epochs and handling stream gaps.
 
-`send_in_epoch` rejects if the connection has changed. Do not replace the applied recovery epoch with the latest transport epoch just before sending.
+`quote_in_epoch`, `replace_in_epoch` and `batch_quotes_in_epoch` (and their `try_` forms) return `NotReady` if the connection has changed. Do not replace the applied recovery epoch with the latest transport epoch just before sending.
 
 Constraints:
 
-- `now + 100s ≤ valid_until ≤ market.expiry_ts`. The trailing 90s is reserved for settlement; the effective trading window ends at `valid_until − 90s`. Size it as `rfq.expires_at + 100s` plus a little slack, capped at market expiry.
+- `now + min_quote_validity_seconds ≤ valid_until ≤ market.expiry_ts`, with `min_quote_validity_seconds` from `GET /api/v1/venue`. `QuoteBuilder` checks both bounds before signing (`ValidUntilTooSoon`, `ValidUntilAfterMarketExpiry`). The trailing `settlement_buffer_seconds` is reserved for settlement; the effective trading window ends at `valid_until − settlement_buffer_seconds`. Size it as `rfq.expires_at + min_quote_validity_seconds` plus a little slack, capped at market expiry.
 - `is_taker_buy` is fixed at `false`. The taker is always the option writer. Setting `true` produces an `order_id` the server rejects.
 - Use a fresh nonce and order ID for a new quote; the server validates the hash-bound order ID, not independent nonce uniqueness. `AtomicNonceGenerator` is safe to declare as a `static`.
 
@@ -120,10 +121,8 @@ Lifecycle events arrive through the managed message receiver with a connection e
 Use `ReplaceQuote` for repricing. The prior quote is removed only after the replacement validates, so the swap is single-RTT. `CancelQuote` followed by `Quote` creates a gap and adds a round-trip.
 
 ```rust
-quote_handle.send_in_epoch(ClientMessage::ReplaceQuote(ReplaceQuoteMessage {
-    old_order_id,
-    rfq_id, strike, price, valid_until, nonce, order_id, signature,
-}), recovery_epoch).await?;
+// `quote` is a freshly signed QuoteMessage with a new nonce.
+quote_client.replace_in_epoch(quote.into_replacement(old_order_id), recovery_epoch).await?;
 ```
 
 The preimage is constructed identically to a fresh `Quote` with a new `nonce` and `order_id`. The server confirms with `QuoteAcknowledged { replaced_order_id: Some(old_order_id) }`. Retain `old_order_id` until the replacement is acknowledged, since events keyed to the old id may still be in flight.
@@ -179,7 +178,27 @@ For typed integrations, `MakerQuoteClient` exposes trading operations and `Maker
 
 `WsClientError` covers transport failures; the reconnection loop retries. `ManagedWsError::Closed` indicates the handle's connection task is no longer running; `QueueFull` that the outbound queue or writer lane is full. `SendAwaitError::Timeout` signals the `send_await` deadline elapsed; `Disconnected` indicates the connection went down before the response arrived; `QueueFull` that the request was never queued to the socket. Terminal session states surface through `subscribe_state()` as `Closed { reason }`: `SessionReplaced`, `ProtocolVersionMismatch`, `AuthenticationRejected`, `ReconnectLimitReached`, `FeatureUnsupported`, `SessionPanicked`.
 
-Protocol-level errors arrive as `ServerMessage::Error` (session-level) or `ServerMessage::RequestError` (per-request, correlated by `request_id`). Variants — `AuthError`, `QuoteError`, `CapError`, `RfqError` — are exhaustive enums; the full list is in [`../reference/maker-api.md`](../reference/maker-api.md).
+Protocol-level errors arrive as `ServerMessage::Error` (session-level) or `ServerMessage::RequestError` (per-request, correlated by `request_id`), both carrying one `#[non_exhaustive]` `ServerError`. Codes without a typed variant are `ServerError::Generic { code, message }`; match on `code`. Quote outcomes arrive as `QuoteRejected { reason }`; besides validation reasons, `RateLimited` means the quote bucket is exhausted (the session stays up, retry later) and `TradingPaused` means the venue is paused. The full list is in [`../reference/maker-api.md`](../reference/maker-api.md).
+
+Server-initiated closes carry a close code: `4000 idle_timeout`, `4001 auth_timeout`, `4002 slow_consumer`, `4003 rate_limited`, `4004 session_replaced`, `4005 hello_timeout`. The managed client logs the frame and reports it as `ManagedWsEvent::Disconnected { close: Some(ServerClose { code, reason }) }`, including when an `AuthError` / `Error` with the same code precedes the close; `close_code()` decodes it to `Option<CloseCode>`. `WsClient::server_close()` returns it after `next()` ends. The managed client reconnects after all of them except session replacement, which terminates it. Some server closes carry no code (blacklisted or unregistered maker, expired session, parse-error or auth-attempt limits, server shutdown); then `close` is `None` and the preceding `Error` / `AuthError` usually names the cause. Every opened connection ends with exactly one `Disconnected`, before `Terminated` when the client stops. Code 4900 is the TypeScript client's own pong timeout and never comes from the server.
+
+---
+
+## Key rotation
+
+Rotate the quote-signing key with `UpdateMakerQuoteSigning`, signed by the maker owner; the new key needs no SOL:
+
+```rust
+use acta_maker_sdk::chain::ix::{UpdateQuoteSigningIxArgs, build_update_quote_signing_ixs};
+
+let ixs = build_update_quote_signing_ixs(
+    &program_id,
+    &UpdateQuoteSigningIxArgs { maker_owner, new_quote_signing },
+);
+// Send `ixs` in a transaction signed by `maker_owner` (feature `chain`).
+```
+
+Once it lands, restart the quote and data sessions with the new signer; the owner passed to `ManagedWsConfig::new` and `QuoteBuilder::maker_owner` stays the same. Rotate immediately if a quote-signing key may be compromised.
 
 ---
 

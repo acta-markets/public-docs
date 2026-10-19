@@ -22,19 +22,18 @@ https://beta-api.acta.markets
 { "error": "Human-readable message", "code": "error_code" }
 ```
 
-Common codes:
-- `invalid_id` (400)
-- `invalid_cursor` (400)
+Codes (HTTP status):
+- `invalid_request`, `invalid_cursor`, `invalid_limit`, `invalid_delegate`, `invalid_wallet` (400)
 - `not_found` (404)
+- `rate_limited` (429) — per-IP rate limit; retry with backoff
 - `db_disabled` (503) — server runs without a database; permanent, do not retry
 - `db_busy` (503) — database pool exhausted or query timed out; retry with backoff
 - `server_busy` (503) — global in-flight limit reached; retry with backoff
-- `rate_limited` (429) — per-IP rate limit; retry with backoff
-- `data_validation_error` (500)
-- `schema_error` (500)
-- `db_error` (500)
+- `unavailable`, `caps_projection_unavailable`, `chain_replay_unavailable`, `position_history_unavailable` (503) — the backing projection is not established yet; retry with backoff
+- `token_metadata_incomplete`, `missing_size_rule_for_underlying_mint` (503) — `/tokens` while an active market lacks decimals or a size rule
+- `history_projection_incomplete`, `caps_projection_incomplete`, `data_validation_error`, `schema_error`, `db_error`, `invalid_program_id`, `encode_failed`, `invalid_stats` (500)
 
-Temporary unavailability may return HTTP `503`.
+WebSocket codes are a separate set; see the [WS error code catalog](ws-common.md#ws-error-codes).
 
 ---
 
@@ -275,6 +274,9 @@ Both are hints that are never replayed: re-read `/vaults` (or `/vaults/{pda}`) o
 every WebSocket connect or reconnect.
 
 ### GET `/api/v1/vaults`
+
+Optional query: `delegate=<pubkey>` returns only vaults that key can operate as delegate: it is the
+`primary_delegate` and holds an unexpired delegate grant. A value that is not a base58 pubkey returns `400` `invalid_delegate`.
 
 ```json
 {
