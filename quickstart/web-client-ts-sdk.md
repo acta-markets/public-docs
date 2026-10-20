@@ -10,7 +10,7 @@ Wire messages, errors, and enums are in [`../reference/taker-api.md`](../referen
 npm install @acta-markets/ts-sdk
 ```
 
-This guide covers version 0.2.2, which targets the program deployed to devnet and mainnet on 2026-10-17. Its instruction opcodes and program error codes differ from the program 0.1.6 was built against, so upgrade both together; the package README has a "Migrating from 0.1.6" table. Refer to opcodes and errors by name through the generated constants exported from `@acta-markets/ts-sdk` (`*_DISCRIMINATOR` for opcodes, `ACTA_CONTRACT_ERROR__*` for errors), not by number.
+This guide covers version 0.2.3, which targets the program deployed to devnet and mainnet on 2026-10-17. Its instruction opcodes and program error codes differ from the program 0.1.6 was built against, so upgrade both together; the package README has a "Migrating from 0.1.6" table. Refer to opcodes and errors by name through the generated constants exported from `@acta-markets/ts-sdk` (`*_DISCRIMINATOR` for opcodes, `ACTA_CONTRACT_ERROR__*` for errors), not by number.
 
 **Vault payout fields were renamed in 0.2.0.** Deposit payouts take `refundTo` / `sharesTo` and withdrawal payouts `sharesBackTo`; `liquidateVaultPosition(liquidator, { owner, paidTo }, position)` replaces the old fourth destination argument. JavaScript silently ignores the old `refundDestination` / `shareDestination` fields and a fourth argument, so the funds go to the canonical ATAs instead of the destination you meant.
 `ActaWsClient` validates challenge format before calling any auth provider;
@@ -170,21 +170,23 @@ A mismatch throws `VaultIntentError` and nothing is signed. ALT references resol
 from `tables`.
 
 ```typescript
-import { verifyAndSignTakerFill } from "@acta-markets/ts-sdk/ws";
+import { address } from "@solana/kit";
+import { ActaWsRequestError, verifyAndSignTakerFill } from "@acta-markets/ts-sdk/ws";
 
 let connectionEpoch = 0;
 ws.on("stateChange", () => { connectionEpoch++; });
 
 // acceptedQuote: the QuoteReceivedMessage you accepted; descriptor: the cached
 // MarketDescriptorInfo of the RFQ's market; rfqRequest: what you passed to createRfq.
-ws.on("sponsoredTxToSign", async (id, txBase64, signatureDeadline) => {
+ws.on("sponsoredTxToSign", async (id, txBase64, signatureDeadline, lastValidBlockHeight) => {
   if (id !== orderIdHex || !ws.isAuthenticated()) return;
   const epoch = connectionEpoch;
   const walletMatches = () => wallet.publicKey?.toBase58() === walletPublicKeyBase58;
   const expired = () => Date.now() / 1000 >= signatureDeadline;
   if (!walletMatches() || expired()) return;
+  let signedTxBase64: string;
   try {
-    const signedTxBase64 = await verifyAndSignTakerFill({
+    signedTxBase64 = await verifyAndSignTakerFill({
       txBase64,
       quote: acceptedQuote,
       rfq: {
@@ -192,20 +194,35 @@ ws.on("sponsoredTxToSign", async (id, txBase64, signatureDeadline) => {
         position_type: rfqRequest.position_type,
         quantity: rfqRequest.quantity,
       },
-      taker: walletPublicKeyBase58,
+      taker: address(walletPublicKeyBase58),
       tables: {},
       bounds: { maxUnitLimit: 400_000, maxUnitPriceMicroLamports: 100_000 },
       signer: wallet,
     });
-    if (epoch !== connectionEpoch || id !== orderIdHex || !walletMatches() || expired()) return;
-    await ws.submitSignedSponsoredTx({ orderIdHex: id, txBase64: signedTxBase64 });
   } catch (error) {
     console.error(id, error); // do not submit; cancel the RFQ or pick another quote
+    return;
+  }
+  if (epoch !== connectionEpoch || id !== orderIdHex || !walletMatches() || expired()) return;
+  try {
+    await ws.submitSignedSponsoredTx({ orderIdHex: id, txBase64: signedTxBase64 });
+  } catch (err) {
+    if (err instanceof ActaWsRequestError && err.delivery === "not_forwarded") {
+      // This attempt was not sent: retry, or choose another quote if no earlier attempt was unknown.
+    } else {
+      ws.getOrderStatus(id); // May have been sent: resolve before anything else.
+    }
   }
 });
 
-ws.acceptQuote(rfqId, makerPubkey, orderIdHex);
+try {
+  await ws.acceptQuote(rfqId, makerPubkey, orderIdHex);
+} catch (err) {
+  if (err instanceof ActaWsRequestError) console.error(err.kind, err.error);
+}
 ```
+
+`acceptQuote` resolves on `CommandAccepted` and rejects with `ActaWsRequestError` on its `RequestError`, a timeout or a disconnect; `SponsoredTxToSign` may arrive before or after the receipt. A rejected `submitSignedSponsoredTx` carries `err.delivery`: `not_forwarded` means this attempt was not sent; if every attempt for the order returned it, retrying or choosing another quote is safe; `unknown`, or no `delivery` (timeout, disconnect), means it may have been sent: query `GetOrderStatus` before signing or submitting anything for that RFQ. `lastValidBlockHeight` is the block height the served transaction's blockhash is valid through.
 
 `verifyAndSignTakerFill` fills signature slot 1, the taker's slot on an ordinary maker quote: the keeper pays fees and signs slot 0. When the quote's `maker` is a vault PDA, the taker is the fee payer and only signer: pass `makerVault: await fetchMakerVault(rpc, quote.maker)` (from `@acta-markets/ts-sdk/chain`, `null` for a non-vault maker) and the same call verifies the vault fill against that on-chain account and signs slot 0.
 
@@ -271,6 +288,8 @@ const ws = new ActaWsClient({
 });
 
 ws.on("disconnected", (code, reason) => {});
+// code: a server close code (ServerCloseCode, 4000–4005; see ws-common.md) or one of the
+// client's own drops (ClientCloseCode): 4900 "pong_timeout", 4901 "auth_error".
 ws.on("versionMismatch", (msg) => {
   // Auto-reconnect stops on VersionMismatch until explicit reconnect
 });

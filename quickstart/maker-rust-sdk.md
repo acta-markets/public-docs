@@ -12,10 +12,10 @@ For JSON-layer integrations, see [`maker-quickstart.md`](maker-quickstart.md). M
 
 ```toml
 [dependencies]
-acta-maker-sdk = { version = "0.5.2", features = ["ws-client"] }
+acta-maker-sdk = { version = "0.5.3", features = ["ws-client"] }
 ```
 
-Version 0.5.2 targets the program deployed to devnet and mainnet on 2026-10-17. Upgrading from 0.5.0/0.5.1: `ManagedWsConfig::new` takes the maker owner, `QuoteBuilder` requires `maker_owner` and `min_valid_until`, and `MakerQuoteClient` quotes through `quote_in_epoch` / `replace_in_epoch` / `batch_quotes_in_epoch` (see the crate's `CHANGELOG.md`). This guide covers ordinary makers; vault operators use the `vault` feature, see the [vault operator guide](vault-operator-guide.md).
+Version 0.5.3 targets the program deployed to devnet and mainnet on 2026-10-17. Upgrading from 0.5.0/0.5.1: `ManagedWsConfig::new` takes the maker owner, `QuoteBuilder` requires `maker_owner` and `min_valid_until`, and `MakerQuoteClient` quotes through `quote_in_epoch` / `replace_in_epoch` / `batch_quotes_in_epoch` (see the crate's `CHANGELOG.md`). This guide covers ordinary makers; vault operators use the `vault` feature, see the [vault operator guide](vault-operator-guide.md).
 
 Quote-only integrations need `ws-client`. `chain` adds Solana instruction builders (including `chain::vault`); `chain-rpc` adds on-chain reads; `http` adds the read-only HTTP client; `vault` adds the vault operator client and implies `ws-client` and `chain`.
 
@@ -70,13 +70,16 @@ Resume can restore a server-side mint scope. The SDK explicitly sends both mint 
 After applying recovery, retain that `recovery_epoch: u64` with the strategy state and build quotes from its `RfqBroadcast`. `RfqBinding` verifies the market PDA and terms under the configured Acta program before deriving the preimage and wire message. Use `from_broadcast_for_program` for a different locally configured deployment; never take that program ID from the RFQ:
 
 ```rust
+use std::time::Duration;
+
 use acta_maker_sdk::{AtomicNonceGenerator, Nonce, Price, QuoteExpiry, RfqBinding};
 
 static NONCE_GEN: AtomicNonceGenerator = AtomicNonceGenerator::new();
 
 // `rfq` is the current borrowed RfqBroadcastMessage; `price` is your premium.
 // `min_validity` is `min_quote_validity_seconds` from `GET /api/v1/venue`.
-let min_valid_until = QuoteExpiry::after(min_validity).ok_or("clock")?;
+let min_valid_until =
+    QuoteExpiry::after(Duration::from_secs(u64::from(min_validity))).ok_or("clock")?;
 let quote = RfqBinding::from_broadcast(rfq)?
     .quote()
     .maker_owner(maker_owner)
@@ -89,7 +92,11 @@ let quote = RfqBinding::from_broadcast(rfq)?
 quote_client.quote_in_epoch(quote, recovery_epoch).await?;
 ```
 
-`QuoteExpiry` stores whole Unix seconds; use `QuoteExpiry::from_unix_seconds(...)` or `QuoteExpiry::after(...)` rather than putting a fractional `SystemTime` into a signed order. `RfqBinding` also supports choosing a permitted strike from `order_options`. See the crate's `managed_quote` example (`cargo run --example managed_quote --features ws-client,http` from the 0.5.2 crate sources; API reference on [docs.rs](https://docs.rs/acta-maker-sdk)) for receiving recovery responses, checking epochs and handling stream gaps.
+With the `http` feature, `.venue(&venue)` replaces `.min_valid_until(...)`: given the `Venue` from `HttpClient::new(DEVNET_API)?.venue().await?`, it sets the floor to `now + min_quote_validity_seconds` at the current clock and refuses a `valid_until` whose `valid_until − settlement_buffer_seconds` is not after now (`QuoteBuildError::ValidUntilWithinSettlementBuffer`). Fetch the venue at startup; the builder reads the clock when `.venue` is called. `DEVNET_API`, `DEVNET_WS`, `MAINNET_API` and `MAINNET_WS` are the public origins.
+
+Units: `RfqBroadcast.quantity` and `QuoteFilled.quantity` are underlying atoms; `Price` and `Strike` are 1e9-scaled per underlying token, independent of decimals. Mint decimals come only from `GetMarketDescriptors` on `/maker/data` (`underlying_decimals`, `quote_decimals` per `market_pda`); `MarketDecimals::observe(&message)` caches them and `get(market_pda)` returns them. `total_premium_quote_atoms(price, quantity, underlying_decimals, quote_decimals)` is the fill's gross premium (before protocol fees) in quote atoms with the contract's rounding; `Price::as_decimal()`, `Strike::as_decimal()` and `Quantity::to_units(decimals)` are for display.
+
+`QuoteExpiry` stores whole Unix seconds; use `QuoteExpiry::from_unix_seconds(...)` or `QuoteExpiry::after(...)` rather than putting a fractional `SystemTime` into a signed order. `RfqBinding` also supports choosing a permitted strike from `order_options`. See the crate's `managed_quote` example (`cargo run --example managed_quote --features ws-client,http` from the 0.5.3 crate sources; API reference on [docs.rs](https://docs.rs/acta-maker-sdk)) for receiving recovery responses, checking epochs and handling stream gaps.
 
 `quote_in_epoch`, `replace_in_epoch` and `batch_quotes_in_epoch` (and their `try_` forms) return `NotReady` if the connection has changed. Do not replace the applied recovery epoch with the latest transport epoch just before sending.
 
@@ -112,7 +119,7 @@ Lifecycle events arrive through the managed message receiver with a connection e
 | `QuoteBestStatus` / `QuoteOutbid` | Current book position. |
 | `QuoteRefreshRequested` | Settlement-buffer cutoff approaching. Resubmit with `valid_until ≥ min_valid_until`. |
 | `QuoteSelected` | Quote locked; awaiting the taker signature. |
-| `QuoteFilled` | Position opened on-chain. Carries `position_pda` and `tx_signature`. |
+| `QuoteFilled` | Position opened on-chain. Carries `market_pda`, `expiry_ts`, `position_type`, `position_pda` and `tx_signature`, so it can be attributed without the RFQ. |
 | `QuoteCancelled` | Removes only the listed `order_ids`; an empty list removes nothing. It is not a cancellation-command ACK. Reconcile after disconnect. |
 | `QuoteExpired` | Emitted only when `quote_expired` was opted into via `Hello`. |
 | `RfqAvailableAgain` | Settlement reverted; re-quote with a fresh `order_id`. |
@@ -180,7 +187,7 @@ For typed integrations, `MakerQuoteClient` exposes trading operations and `Maker
 
 Protocol-level errors arrive as `ServerMessage::Error` (session-level) or `ServerMessage::RequestError` (per-request, correlated by `request_id`), both carrying one `#[non_exhaustive]` `ServerError`. Codes without a typed variant are `ServerError::Generic { code, message }`; match on `code`. Quote outcomes arrive as `QuoteRejected { reason }`; besides validation reasons, `RateLimited` means the quote bucket is exhausted (the session stays up, retry later) and `TradingPaused` means the venue is paused. The full list is in [`../reference/maker-api.md`](../reference/maker-api.md).
 
-Server-initiated closes carry a close code: `4000 idle_timeout`, `4001 auth_timeout`, `4002 slow_consumer`, `4003 rate_limited`, `4004 session_replaced`, `4005 hello_timeout`. The managed client logs the frame and reports it as `ManagedWsEvent::Disconnected { close: Some(ServerClose { code, reason }) }`, including when an `AuthError` / `Error` with the same code precedes the close; `close_code()` decodes it to `Option<CloseCode>`. `WsClient::server_close()` returns it after `next()` ends. The managed client reconnects after all of them except session replacement, which terminates it. Some server closes carry no code (blacklisted or unregistered maker, expired session, parse-error or auth-attempt limits, server shutdown); then `close` is `None` and the preceding `Error` / `AuthError` usually names the cause. Every opened connection ends with exactly one `Disconnected`, before `Terminated` when the client stops. Code 4900 is the TypeScript client's own pong timeout and never comes from the server.
+Server-initiated closes carry a close code: `4000 idle_timeout`, `4001 auth_timeout`, `4002 slow_consumer`, `4003 rate_limited`, `4004 session_replaced`, `4005 hello_timeout`. The managed client logs the frame and reports it as `ManagedWsEvent::Disconnected { close: Some(ServerClose { code, reason }) }`, including when an `AuthError` / `Error` with the same code precedes the close; `close_code()` decodes it to `Option<CloseCode>`. `WsClient::server_close()` returns it after `next()` ends. The managed client reconnects after all of them except session replacement, which terminates it. Some server closes carry no code (blacklisted or unregistered maker, expired session, parse-error or auth-attempt limits, server shutdown); then `close` is `None` and the preceding `Error` / `AuthError` usually names the cause. Every opened connection ends with exactly one `Disconnected`, before `Terminated` when the client stops. Codes 4900 (`pong_timeout`) and 4901 (`auth_error`) are the TypeScript client's own drops and never come from the server.
 
 ---
 

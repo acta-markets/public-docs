@@ -112,7 +112,7 @@ RfqRequest -> RfqCreated -> QuoteReceived (0..N) -> AcceptQuote
 }
 ```
 
-`position_type` is `covered_call` or `cash_secured_put`. `request_id` is required and is also the idempotency key: repeating a request with the same `request_id` while the RFQ is active returns the same `rfq_id`. The server answers the request with `CommandAccepted { request_id }` or `RequestError { request_id, error }`, sends `RfqCreated { rfq_id, rfq_version, request_id, expires_at, created_at, order_options }`, then broadcasts the RFQ to eligible makers.
+`position_type` is `covered_call` or `cash_secured_put`. `request_id` is required and is also the idempotency key: repeating a request with the same `request_id` while the RFQ is active returns the same `rfq_id`. The server answers the request with `CommandAccepted { request_id }` or `RequestError { request_id, error }`. On success it also sends `RfqCreated { rfq_id, rfq_version, request_id, expires_at, created_at, order_options }`, before or after the receipt, and broadcasts the RFQ to eligible makers.
 
 ### 2. Collect quotes
 
@@ -163,12 +163,13 @@ The server locks the quote and builds a transaction to sign:
   "data": {
     "order_id": "0x<64 hex>",
     "tx_base64": "<base64 v0 VersionedTransaction>",
+    "last_valid_block_height": 312456789,
     "signature_deadline": 1710000040
   }
 }
 ```
 
-`tx_base64` is a **v0 `VersionedTransaction`**. On an ordinary maker quote the keeper is the fee payer and co-signer, and the taker signs as the collateral authority. When the accepted quote's `maker` is a vault PDA (see `GET /api/v1/vaults`), there is no keeper signature: the taker is the fee payer and signs slot 0. Steps (any language):
+`last_valid_block_height` is the block height the transaction's blockhash is valid through. `tx_base64` is a **v0 `VersionedTransaction`**. On an ordinary maker quote the keeper is the fee payer and co-signer, and the taker signs as the collateral authority. When the accepted quote's `maker` is a vault PDA (see `GET /api/v1/vaults`), there is no keeper signature: the taker is the fee payer and signs slot 0. Steps (any language):
 
 1. base64-decode `tx_base64` to bytes.
 2. Deserialize as a v0 `VersionedTransaction`.
@@ -257,7 +258,7 @@ On a signature timeout or tx-build failure, only the winning quote is discarded;
 { "type": "CancelRfq", "data": { "rfq_id": "<uuid>", "request_id": "<uuid>" } }
 ```
 
-The server responds with `RfqClosed { reason: "taker_cancelled" }`.
+Success has no `CommandAccepted`: the RFQ, active or awaiting your signature, closes with `RfqClosed { reason: "taker_cancelled" }`. Cancelling an RFQ of yours that is already closed gets no reply. A failure is a `RequestError` with the same `request_id`: `RfqNotFound`, or `Generic` `order_already_submitted` once your signed transaction is queued (resolve it with `GetOrderStatus`).
 
 ## Position lifecycle
 

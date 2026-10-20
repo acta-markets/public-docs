@@ -76,7 +76,7 @@ The signature is verified directly against `pubkey`. On success:
 {
   "type": "AuthSuccess",
   "data": {
-    "session_id": "sess-abc-123",
+    "session_id": "6d1f0c2a-9b7e-4a35-8c41-2e5f7a9b0d13",
     "expires_at": 1710086400
   }
 }
@@ -111,14 +111,14 @@ Sent automatically after `AuthSuccess`. `markets` lists the active markets in th
 Full descriptors carry `size_rule`, decimals, and oracle PDAs needed to validate `quantity` and render prices. Call this before `RfqRequest`.
 
 ```json
-{ "type": "GetMarketDescriptors", "data": { "request_id": "req-md-1" } }
+{ "type": "GetMarketDescriptors", "data": { "request_id": "2c7e4a91-5d3b-4f60-9a8e-1b4c6d2f7e05" } }
 ```
 
 ```json
 {
   "type": "MarketDescriptors",
   "data": {
-    "request_id": "req-md-1",
+    "request_id": "2c7e4a91-5d3b-4f60-9a8e-1b4c6d2f7e05",
     "markets": [
       {
         "market": {
@@ -153,7 +153,7 @@ Full descriptors carry `size_rule`, decimals, and oracle PDAs needed to validate
 {
   "type": "Subscribe",
   "data": {
-    "request_id": "req-sub-1",
+    "request_id": "4e9a2b17-8c6d-4f31-a5e0-7d3b1c9f2a64",
     "channels": ["chain_events", "trades"],
     "underlying_mints": [],
     "quote_mints": []
@@ -164,7 +164,7 @@ Full descriptors carry `size_rule`, decimals, and oracle PDAs needed to validate
 ```json
 {
   "type": "SubscribeAck",
-  "data": { "request_id": "req-sub-1", "subscribed": ["chain_events", "trades"] }
+  "data": { "request_id": "4e9a2b17-8c6d-4f31-a5e0-7d3b1c9f2a64", "subscribed": ["chain_events", "trades"] }
 }
 ```
 
@@ -194,7 +194,7 @@ Full descriptors carry `size_rule`, decimals, and oracle PDAs needed to validate
 {
   "type": "RfqCreated",
   "data": {
-    "rfq_id": "rfq-777",
+    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "rfq_version": 1,
     "request_id": "7a4c4b3e-2f1d-4c55-9a51-4f0d0e2b6a42",
     "expires_at": 1710000030,
@@ -212,7 +212,7 @@ Each quote is firm and hash-bound via `order_id`. Two makers respond:
 {
   "type": "QuoteReceived",
   "data": {
-    "rfq_id": "rfq-777",
+    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "strike": 136000000000,
     "maker": "MakerAOwnerPubkeyBase58",
     "price": 50000000,
@@ -228,7 +228,7 @@ Each quote is firm and hash-bound via `order_id`. Two makers respond:
 {
   "type": "QuoteReceived",
   "data": {
-    "rfq_id": "rfq-777",
+    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "strike": 136000000000,
     "maker": "MakerBOwnerPubkeyBase58",
     "price": 51000000,
@@ -242,18 +242,22 @@ Each quote is firm and hash-bound via `order_id`. Two makers respond:
 
 You pick the winner by `order_id` (here maker B, the higher premium). Show `net_price`; use `price` + `order_id` for the accept.
 
-### 9) AcceptQuote → SponsoredTxToSign
+### 9) AcceptQuote → CommandAccepted → SponsoredTxToSign
 
 ```json
 {
   "type": "AcceptQuote",
   "data": {
     "request_id": "0c9e1d52-6c0b-4f7e-b1a9-7d8f3c2e5a10",
-    "rfq_id": "rfq-777",
+    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "maker": "MakerBOwnerPubkeyBase58",
     "order_id": "0x2222222222222222222222222222222222222222222222222222222222222222"
   }
 }
+```
+
+```json
+{ "type": "CommandAccepted", "data": { "request_id": "0c9e1d52-6c0b-4f7e-b1a9-7d8f3c2e5a10" } }
 ```
 
 ```json
@@ -262,14 +266,15 @@ You pick the winner by `order_id` (here maker B, the higher premium). Show `net_
   "data": {
     "order_id": "0x2222...2222",
     "tx_base64": "AQABAg... (base64 v0 VersionedTransaction) ...",
+    "last_valid_block_height": 312456789,
     "signature_deadline": 1710000030
   }
 }
 ```
 
-Sign `tx_base64` and return it before `signature_deadline`. On an ordinary maker quote the taker fills **signature slot 1** (slot 0 is the keeper fee-payer); on a vault quote (`maker` is a vault PDA) the taker is the fee payer and fills slot 0; see [Sponsored transaction: raw signing](taker-quickstart.md#sponsored-transaction-raw-signing) for the byte-level layout.
+The receipt and the lifecycle push (`SponsoredTxToSign` here, `OrderAccepted` in step 10) can arrive in either order. Sign `tx_base64` and return it before `signature_deadline`. On an ordinary maker quote the taker fills **signature slot 1** (slot 0 is the keeper fee-payer); on a vault quote (`maker` is a vault PDA) the taker is the fee payer and fills slot 0; see [Sponsored transaction: raw signing](taker-quickstart.md#sponsored-transaction-raw-signing) for the byte-level layout.
 
-### 10) SubmitSignedSponsoredTx → OrderAccepted → OrderSubmitted → OrderConfirmed
+### 10) SubmitSignedSponsoredTx → CommandAccepted → OrderAccepted → OrderSubmitted → OrderConfirmed
 
 ```json
 {
@@ -280,6 +285,10 @@ Sign `tx_base64` and return it before `signature_deadline`. On an ordinary maker
     "tx_base64": "AQABAg... (same tx, taker slot now filled) ..."
   }
 }
+```
+
+```json
+{ "type": "CommandAccepted", "data": { "request_id": "5f2b8a61-3d4e-4b7c-8e9f-1a2b3c4d5e6f" } }
 ```
 
 ```json
@@ -318,7 +327,7 @@ Terminal RFQ event; follows `OrderConfirmed` on a fill. Drop per-RFQ state here.
 {
   "type": "RfqClosed",
   "data": {
-    "rfq_id": "rfq-777",
+    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "rfq_version": 2,
     "reason": "filled",
     "winner": {
@@ -338,7 +347,7 @@ Terminal RFQ event; follows `OrderConfirmed` on a fill. Drop per-RFQ state here.
 ### Session resume (skip the wallet signature)
 
 ```json
-{ "type": "ResumeAuth", "data": { "session_id": "sess-abc-123" } }
+{ "type": "ResumeAuth", "data": { "session_id": "6d1f0c2a-9b7e-4a35-8c41-2e5f7a9b0d13" } }
 ```
 
 Valid session → `AuthSuccess` (as in step 3, no `AuthRequest`/signing). Invalid/expired → `AuthError`:
@@ -350,13 +359,13 @@ Valid session → `AuthSuccess` (as in step 3, no `AuthRequest`/signing). Invali
 ### Cancel an RFQ
 
 ```json
-{ "type": "CancelRfq", "data": { "rfq_id": "rfq-777", "request_id": "req-cancel-1" } }
+{ "type": "CancelRfq", "data": { "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e", "request_id": "b3d5f7a9-1c2e-4f40-8b6d-9e0a2c4e6f81" } }
 ```
 
 ```json
 {
   "type": "RfqClosed",
-  "data": { "rfq_id": "rfq-777", "rfq_version": 2, "reason": "taker_cancelled", "closed_at": 1710000020 }
+  "data": { "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e", "rfq_version": 2, "reason": "taker_cancelled", "closed_at": 1710000020 }
 }
 ```
 
@@ -377,7 +386,7 @@ Only a locally proven-unforwarded failure may reopen an eligible RFQ with `reaso
 {
   "type": "RfqAvailableAgain",
   "data": {
-    "rfq_id": "rfq-777",
+    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "rfq_version": 3,
     "reason": "tx_failed",
     "available_again_at": 1710000015
@@ -396,7 +405,7 @@ failure; a later failure can never replace confirmation.
 ```json
 {
   "type": "RfqClosed",
-  "data": { "rfq_id": "rfq-778", "rfq_version": 1, "reason": "expired", "closed_at": 1710000060 }
+  "data": { "rfq_id": "9a4f8f7b-5a6d-4c8d-8a2e-2a3b4c5d6e7f", "rfq_version": 1, "reason": "expired", "closed_at": 1710000060 }
 }
 ```
 
@@ -411,13 +420,13 @@ After `AuthSuccess`, an unregistered taker receives (unit variant, no `data`):
 Redeem before trading:
 
 ```json
-{ "type": "RedeemInvite", "data": { "request_id": "req-inv-1", "code": "abc123" } }
+{ "type": "RedeemInvite", "data": { "request_id": "c8e2a4f6-3b5d-4a71-9c0e-5f7a9b1d3e26", "code": "abc123" } }
 ```
 
 ```json
 {
   "type": "InviteRedeemed",
-  "data": { "request_id": "req-inv-1", "referral_code": "my-code" }
+  "data": { "request_id": "c8e2a4f6-3b5d-4a71-9c0e-5f7a9b1d3e26", "referral_code": "my-code" }
 }
 ```
 
@@ -431,7 +440,7 @@ An `RfqRequest` before redemption fails with a typed `InviteRequired` error in a
 {
   "type": "RequestError",
   "data": {
-    "request_id": "req-rfq-bad",
+    "request_id": "1e3a5c7e-9b0d-4f26-8a4c-6e8a0c2e4f93",
     "error": { "type": "Generic", "data": { "code": "invalid_quantity_size_rule", "message": "quantity violates min/max/step" } }
   }
 }
@@ -442,16 +451,16 @@ An `RfqRequest` before redemption fails with a typed `InviteRequired` error in a
 Subscriptions and in-flight state are not replayed; re-auth, resubscribe, then query:
 
 ```json
-{ "type": "GetMyActiveRfqs", "data": { "request_id": "req-rec-1" } }
-{ "type": "GetOrderStatus",  "data": { "request_id": "req-rec-2", "order_id": "0x2222...2222" } }
-{ "type": "GetPositions",    "data": { "request_id": "req-rec-3" } }
+{ "type": "GetMyActiveRfqs", "data": { "request_id": "d2f4a6c8-7e9b-4b13-8d5f-0a2c4e6a8b37" } }
+{ "type": "GetOrderStatus",  "data": { "request_id": "e5a7c9e1-2b4d-4c68-9f1a-3c5e7a9b1d48", "order_id": "0x2222...2222" } }
+{ "type": "GetPositions",    "data": { "request_id": "f1b3d5e7-9a2c-4d84-8e6a-4b6c8d0e2f59" } }
 ```
 
 ```json
 {
   "type": "Positions",
   "data": {
-    "request_id": "req-rec-3",
+    "request_id": "f1b3d5e7-9a2c-4d84-8e6a-4b6c8d0e2f59",
     "positions": [
       {
         "pda": "PositionPdaBase58",

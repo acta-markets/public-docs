@@ -78,11 +78,97 @@ Only cold can start `EmergencyUnwind`, which is irreversible. It allows deposit 
 
 ## Trading through the SDK
 
-One WebSocket connection on `/vault` (same host as `/maker` and `/taker`) serves one vault. Auth is `StartVaultAuth { operator, vault_pda }`, a challenge signed by the operator key, then `VaultAuthSuccess { operator_kind, permissions }`, where `permissions` is a u32 bitmask of the delegate permission bits (TS `VaultDelegatePermission` / `hasVaultPermission`). The TS `ActaWsClient` emits `vaultAuthenticated` for it, not `authenticated`. Every reconnect re-authenticates; there is no `ResumeAuth`. The only subscribable channel is `vaults`, on by default; `VaultProjectionAdvanced` on it means this vault's row changed: reload `/api/v1/vaults/{pda}`, and reload it after every reconnect too, since missed notifications are not replayed. To follow the set of vaults, use a maker or taker session subscribed to `vaults`: it receives `VaultCatalogChanged { vault_pda }` when a vault is created, re-delegated or closed (not when a delegate is disabled). It is a hint that can be lost with a dropped connection, so re-list `GET /api/v1/vaults` on it and after every connect or reconnect.
+One WebSocket connection on `/vault` (same host as `/maker` and `/taker`) serves one vault. Auth is `StartVaultAuth { operator, vault_pda }`, a challenge signed by the operator key, then `VaultAuthSuccess { vault_pda, operator, operator_kind, permissions }`, where `operator_kind` is `governance` or `delegate` and `permissions` is a u32 bitmask of the delegate permission bits (TS `VaultDelegatePermission` / `hasVaultPermission`). The TS `ActaWsClient` emits `vaultAuthenticated` for it, not `authenticated`. Every reconnect re-authenticates; there is no `ResumeAuth`. The only subscribable channel is `vaults`, on by default; `VaultProjectionAdvanced` on it means this vault's row changed: reload `/api/v1/vaults/{pda}`, and reload it after every reconnect too, since missed notifications are not replayed. To follow the set of vaults, use a maker or taker session subscribed to `vaults`: it receives `VaultCatalogChanged { vault_pda }` when a vault is created, re-delegated or closed (not when a delegate is disabled). It is a hint that can be lost with a dropped connection, so re-list `GET /api/v1/vaults` on it and after every connect or reconnect.
 
 - **Selling** (vault is writer, `OPEN_TAKER`): send `RfqRequest` and `AcceptQuote` as a taker. The server returns `SponsoredTxToSign`; the operator is fee payer and signs slot 0.
 - **Buying** (vault is holder, `SIGN_MAKER_QUOTES`): answer `RfqBroadcast` with a quote whose `maker_owner` is the vault PDA, signed by the operator key. The external taker signs the transaction; the vault pays the premium from its quote-mint leg.
-- **Swaps** (`REBALANCE`; `recovery` and `closing` need governance and accept only `direction: "second_to_main"`): `SwapQuote { mode, direction, amount, slippage_bps }` returns a server-built transaction with one route through the swap router the program build pins (Jupiter v6 on mainnet, a mock router on devnet), `minimum_out_amount`, `valid_until`, and `main_price_update` / `second_price_update` (the Pyth price-update accounts the transaction reads). A failed quote returns a `RequestError` with a `Generic` code from the [WS error code catalog](../reference/ws-common.md#ws-error-codes) (the `vault_*` and `vault_swap_*` rows; `vault_swap_oracle_stale` is retryable within seconds, `vault_swap_route_unavailable` and `vault_swap_service_unavailable` later). Sign it and send `SwapSubmit`; `SwapSubmitResult` confirms durable queueing, not execution. A failed `SwapSubmit` carries `delivery` for that request: `not_forwarded` means this request was rejected before it was queued, `unknown` means it may have been queued. It says nothing about your earlier submissions of the same transaction: treat a swap as not executed only if every `SwapSubmit` you sent for it returned `not_forwarded`. Resolve `unknown`, a lost `SwapSubmitResult` or a restart with `GetSwapStatus { request_id, execution_id }` → `SwapStatus { state }`, where `state.type` is `pending`, `finalized` (with `signature`, `slot`), `failed`, `expired` or `unknown` (no settled handoff known for this vault, including a handoff stuck in the outbox dead-letter queue — not proof that nothing executed). Every session of the vault also gets `SwapSettled { vault_pda, execution_id, state }` when the swap becomes terminal; a push missed during a reconnect is not replayed, so poll `GetSwapStatus` after reconnecting. Rebalance works in `active` before expiry in either direction while the vault has at least one open position, and in `processing_capital` before equity only second-to-main.
+- **Swaps** (`REBALANCE`; `recovery` and `closing` need governance and accept only `direction: "second_to_main"`): `SwapQuote` returns a server-built transaction with one route through the swap router the program build pins (Jupiter v6 on mainnet, a mock router on devnet). Rebalance works in `active` before expiry in either direction while the vault has at least one open position, and in `processing_capital` before equity only second-to-main.
+
+A swap quote is exact-in: `amount` is the input in raw atoms of the source leg, as a decimal string. `slippage_bps` is optional (default 50). `vault_pda` must be the authenticated vault.
+
+```json
+{
+  "type": "SwapQuote",
+  "data": {
+    "request_id": "3b0f6a0e-8c41-4d2a-9f57-2e6c1d9a7b13",
+    "vault_pda": "VaultPdaBase58",
+    "mode": "rebalance",
+    "direction": "main_to_second",
+    "amount": "250000000",
+    "slippage_bps": 50
+  }
+}
+```
+
+```json
+{
+  "type": "SwapQuoteResult",
+  "data": {
+    "request_id": "3b0f6a0e-8c41-4d2a-9f57-2e6c1d9a7b13",
+    "execution_id": "<64 hex>",
+    "mode": "rebalance",
+    "tx_base64": "<base64 v0 VersionedTransaction>",
+    "last_valid_block_height": 312456789,
+    "in_amount": "250000000",
+    "quoted_out_amount": "1503221",
+    "minimum_out_amount": "1495705",
+    "valid_until": "1710000060",
+    "main_price_update": "MainPriceUpdatePubkeyBase58",
+    "second_price_update": "SecondPriceUpdatePubkeyBase58"
+  }
+}
+```
+
+Amounts and `valid_until` (Unix seconds) are decimal strings; `last_valid_block_height` is a number, the block height the transaction's blockhash is valid through. `main_price_update` / `second_price_update` are the Pyth price-update accounts the transaction reads. `execution_id` names this swap in every later message. A failed quote returns a `RequestError` with a `Generic` code from the [WS error code catalog](../reference/ws-common.md#ws-error-codes) (usually a `vault_*` or `vault_swap_*` row, also general codes such as `invalid_amount`; `vault_swap_oracle_stale` is retryable within seconds, `vault_swap_route_unavailable` and `vault_swap_service_unavailable` later).
+
+Sign it and send `SwapSubmit`:
+
+```json
+{
+  "type": "SwapSubmit",
+  "data": {
+    "request_id": "9d4e2c71-5a3b-4f80-b6e2-0c7a1f9d3e58",
+    "execution_id": "<64 hex>",
+    "signed_tx_base64": "<signed, base64>"
+  }
+}
+```
+
+```json
+{ "type": "SwapSubmitResult", "data": { "request_id": "9d4e2c71-5a3b-4f80-b6e2-0c7a1f9d3e58", "execution_id": "<64 hex>" } }
+```
+
+`SwapSubmitResult` confirms durable queueing, not execution. A failed `SwapSubmit` carries `delivery` for that request: `not_forwarded` means this request was rejected before it was queued, `unknown` means it may have been queued. It says nothing about your earlier submissions of the same transaction: treat a swap as not executed only if every `SwapSubmit` you sent for it returned `not_forwarded`. Resolve `unknown`, a lost `SwapSubmitResult` or a restart with `GetSwapStatus` (TS `vault.getVaultSwapStatus({ execution_id })`, Rust `client.swap_status(execution_id)`):
+
+```json
+{ "type": "GetSwapStatus", "data": { "request_id": "c1a7f3e9-2b64-4d58-8e0f-6a9b3c2d1e47", "execution_id": "<64 hex>" } }
+```
+
+```json
+{
+  "type": "SwapStatus",
+  "data": {
+    "request_id": "c1a7f3e9-2b64-4d58-8e0f-6a9b3c2d1e47",
+    "execution_id": "<64 hex>",
+    "state": { "type": "finalized", "signature": "5eyk...base58sig", "slot": 312456801 }
+  }
+}
+```
+
+`state.type` is `pending`, `finalized` (with `signature` and `slot`, a number), `failed`, `expired` or `unknown`. `unknown` means the server has no resolved handoff of this swap for this vault: none exists, or a failed handoff may still be retried or already be executing. It is not proof that nothing executed. Every session of the vault also gets `SwapSettled` when the swap becomes terminal:
+
+```json
+{
+  "type": "SwapSettled",
+  "data": {
+    "vault_pda": "VaultPdaBase58",
+    "execution_id": "<64 hex>",
+    "state": { "type": "failed" }
+  }
+}
+```
+
+A push missed during a reconnect is not replayed, so poll `GetSwapStatus` after reconnecting.
 
 Respect the venue limits: quantity on `size_rule`, strikes on `strike_tick` (`GET /api/v1/tokens`), quote validity, RFQ timeouts, per-taker RFQ limit and trading cutoff (`GET /api/v1/venue`). Vault sessions receive `ReferenceChanged` like maker and taker sessions (Rust `VaultOperatorClient::subscribe_reference_changes()`); on it, re-read those routes with `If-None-Match`.
 
@@ -121,7 +207,7 @@ let signed = client.verify_and_sign_sponsored_tx(
 client.submit_signed_sponsored_tx(signed).await?;
 ```
 
-For swaps, `client.swap_quote(request)` returns the quote; pass it with `VaultSwapIntent { vault, request, quote, price_feeds: PairPriceFeeds { main, second, shards }, min_output_floor, router }` to `verify_and_sign_swap`, then `swap_submit`. `router` is required in Rust. The crate's `vault_operator` example (`cargo run --example vault_operator --features vault`) shows verified fill and swap signing.
+For swaps, `client.swap_quote(request)` returns the quote; pass it with `VaultSwapIntent { vault, request, quote, price_feeds: PairPriceFeeds { main, second, shards }, min_output_floor, router }` to `verify_and_sign_swap`, then `swap_submit_in_epoch(payload, epoch, gate)`: `epoch` is the connection epoch `wait_until_ready()` returned, and the swap is sent only on that connection and only if `gate` admits it (`Ungated` admits every send). `router` is required in Rust. The crate's `vault_operator` example (`cargo run --example vault_operator --features vault`) shows verified fill and swap signing.
 
 TypeScript:
 

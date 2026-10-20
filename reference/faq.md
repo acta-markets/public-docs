@@ -6,7 +6,7 @@ Integration questions and protocol-level errors.
 
 ### What happens to active quotes when the maker disconnects?
 
-With cancel-on-disconnect (COD), Core removes the session's active and retained non-winning quotes after detecting disconnect. The client requests `cancel_on_disconnect` in `Hello.features`; the server confirms it in `Welcome.enabled_features`. The managed Rust quote SDK requests it by default. Selected/executing obligations survive. Without COD, resting quotes can remain fillable while offline.
+With cancel-on-disconnect, the server removes the session's active and retained non-winning quotes after detecting the disconnect. The client requests `cancel_on_disconnect` in `Hello.features`; the server confirms it in `Welcome.enabled_features`. The managed Rust quote SDK requests it by default. Selected/executing obligations survive. Without it, resting quotes can remain fillable while offline.
 
 Resume restores server-side subscriptions; fresh authentication requires establishing them again. The managed SDK reconciles its desired target on either path. After reconnect, apply `GetMyQuotes { scope: "live" }` and use `GetOrderStatus` for unresolved orders. An empty quote or position list is not proof of nonexecution. See [cancellation semantics](maker-api.md#cancelallquotes-maker---server).
 
@@ -24,7 +24,7 @@ No. Only one active quote WebSocket per maker pubkey is allowed, alongside the s
 |---|---|
 | `invalid_strike` | The strike is not in the RFQ's `order_options` set. |
 | `order_id_mismatch` | The submitted `order_id` does not equal `SHA-256(preimage182)`. See [Troubleshooting](#troubleshooting). |
-| `quote_expiry_too_short` | `valid_until < now + 100s` (the server's settlement buffer floor). |
+| `quote_expiry_too_short` | `valid_until < now + min_quote_validity_seconds` (`GET /api/v1/venue`, currently 100). |
 | `cap_exceeded` | A position-count, notional, or balance cap was breached. See [`caps.md`](caps.md). |
 | `rfq_not_active` | The RFQ expired or filled before the quote arrived. |
 
@@ -36,7 +36,7 @@ The server pre-filters RFQs against the maker's caps before broadcast. When a pr
 
 ### What is the appropriate value for `valid_until`?
 
-The hard floor is `now + 100s`; lower values are rejected with `quote_expiry_too_short`. The hard ceiling is the market's `expiry_ts`; later values are rejected with `market_expired`. The server reserves the trailing 90 seconds as the settlement buffer, so the trading cutoff is `valid_until - 90s`. Size the quote against the auction you are quoting into: `rfq.expires_at + 100s` covers the whole auction plus the settlement buffer and the refresh lead. Add a few seconds of slack for clock skew, and stay at or below market expiry. Longer windows leave stale quotes live without helping fills, because the taker cannot accept after `rfq.expires_at`. Track server clock offset from `Welcome.server_time_unix_ms` and `Pong.server_time_unix_ms`.
+The hard floor is `now + min_quote_validity_seconds` (from `GET /api/v1/venue`, currently 100); lower values are rejected with `quote_expiry_too_short`. The hard ceiling is the market's `expiry_ts`; later values are rejected with `market_expired`. The server reserves the trailing `settlement_buffer_seconds` (currently 90) as the settlement buffer, so the trading cutoff is `valid_until` minus that buffer. Size the quote against the auction you are quoting into: `rfq.expires_at + min_quote_validity_seconds` covers the whole auction plus the settlement buffer and the refresh lead. Add a few seconds of slack for clock skew, and stay at or below market expiry. Longer windows leave stale quotes live without helping fills, because the taker cannot accept after `rfq.expires_at`. Track server clock offset from `Welcome.server_time_unix_ms` and `Pong.server_time_unix_ms`.
 
 ## Troubleshooting
 

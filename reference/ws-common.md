@@ -260,7 +260,7 @@ Validate the entire challenge **before invoking the signer**. Require the exact 
 
 After validation, sign the original UTF-8 bytes without normalization, additional prefix or hashing. The fixed text already supplies the authentication domain. Signing arbitrary endpoint text with the order key can authorize an order instead of authentication.
 
-Rust SDK (`acta-maker-sdk` 0.5.2) and TS SDK (`@acta-markets/ts-sdk` 0.2.2) validate authentication messages before invoking signers in their managed clients. Raw Rust clients use `validate_maker_auth_challenge`, or `validate_vault_auth_challenge(challenge, operator, vault)` for a vault session; raw TS clients use `validateAuthChallenge`, which checks the grammar of the maker and taker formats and rejects the vault format, and `assertVaultAuthChallenge(challenge, operator, vault)` for a vault session. This does not establish endpoint trust or prevent relay of a genuine server challenge.
+Rust SDK (`acta-maker-sdk` 0.5.3) and TS SDK (`@acta-markets/ts-sdk` 0.2.3) validate authentication messages before invoking signers in their managed clients. Raw Rust clients use `validate_maker_auth_challenge`, or `validate_vault_auth_challenge(challenge, operator, vault)` for a vault session; raw TS clients use `validateAuthChallenge`, which checks the grammar of the maker and taker formats and rejects the vault format, and `assertVaultAuthChallenge(challenge, operator, vault)` for a vault session. This does not establish endpoint trust or prevent relay of a genuine server challenge.
 
 ### AuthChallenge (client -> server)
 
@@ -275,7 +275,7 @@ Rust SDK (`acta-maker-sdk` 0.5.2) and TS SDK (`@acta-markets/ts-sdk` 0.2.2) vali
 }
 ```
 
-**Maker**: `pubkey` is the `maker_owner` pubkey registered on-chain. Sign the challenge with the maker's registered signing key, which is also used for quotes. The server looks up `maker_owner` and verifies the authentication signature against that key.
+**Maker**: `pubkey` is the `maker_owner` pubkey registered on-chain. Sign the challenge with the maker's registered `quote_signing` key, the same key that signs quotes. The server looks up `maker_owner` and verifies the authentication signature against its `quote_signing` key.
 
 **Taker**: `pubkey` is the taker's wallet pubkey (same as the `Wallet:` value in the challenge). The signature is verified directly against this key.
 
@@ -414,7 +414,7 @@ Endpoint-policy violations use a typed error rather than closing the socket:
 }
 ```
 
-Endpoint values are `maker`, `maker_data`, and `taker`.
+Endpoint values are `maker`, `maker_data`, `taker`, and `vault`.
 
 ### RequestError — request-correlated errors
 
@@ -497,7 +497,7 @@ Typed variant examples:
 
 Generic codes and `AuthError` reasons are listed in the [WS error code catalog](#ws-error-codes).
 
-JavaScript integrators must preserve integer precision: a wire `u64` can exceed `Number.MAX_SAFE_INTEGER`. TS SDK represents most WS amounts as `number`; it reports `unsafe_integer` for oversized amount literals but still dispatches the message. Do not use such rounded values for signing or accounting. Inbound nonces have separate lossless handling. For full-range raw JSON amounts, use lossless parsing and bigint arithmetic; `BigInt(JSON.parse(...).amount)` cannot repair precision already lost. This does not change the wire encoding or the `1e9` scale.
+JavaScript integrators must preserve integer precision: a wire `u64` can exceed `Number.MAX_SAFE_INTEGER`. TS SDK represents most WS amounts as `number`; for an oversized amount literal it reports `unsafe_integer` and drops the whole frame, so the matching event never fires; recover state with a read (`GetMyActiveRfqs`, `GetOrderStatus`). Inbound nonces have separate lossless handling. For full-range raw JSON amounts, use lossless parsing and bigint arithmetic; `BigInt(JSON.parse(...).amount)` cannot repair precision already lost. This does not change the wire encoding or the `1e9` scale.
 
 ## WS error codes
 

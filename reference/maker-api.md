@@ -90,7 +90,7 @@ If the client's `protocol_version` is incompatible, the server sends `VersionMis
 | Feature | Effect |
 |---------|--------|
 | `quote_expired` | The server emits explicit `QuoteExpired` events instead of silent expiry. |
-| `cancel_on_disconnect` | On an actual disconnect (socket close or liveness timeout), Core removes active and retained non-winning quotes still owned by that physical session, including retained quotes in locked RFQs. Ownership takeover preserves quotes; late cleanup of the replaced connection cannot cancel the new owner's book. Quotes a taker has already accepted (`QuoteSelected`) stay locked and settle or expire on their own timers. Without this feature, resting quotes survive a disconnect and can be filled while the maker is offline. Session resume does not restore cancelled quotes; re-quote after reconnecting. |
+| `cancel_on_disconnect` | On an actual disconnect (socket close or liveness timeout), the server removes active and retained non-winning quotes still owned by that physical session, including retained quotes in locked RFQs. Ownership takeover preserves quotes; late cleanup of the replaced connection cannot cancel the new owner's book. Quotes a taker has already accepted (`QuoteSelected`) stay locked and settle or expire on their own timers. Without this feature, resting quotes survive a disconnect and can be filled while the maker is offline. Session resume does not restore cancelled quotes; re-quote after reconnecting. |
 
 ### Subscribe
 
@@ -119,7 +119,7 @@ If the client's `protocol_version` is incompatible, the server sends `VersionMis
 - Max consecutive parse errors before close: `3`
 - Inbound message size: `32 KiB`
 - Message rate limit per connection: token bucket `30 msg/s` sustained, `60` burst; exceeding it closes the connection with `4003 rate_limited`. Quote-plane messages (`Quote`, `ReplaceQuote`, `BatchQuotes` within `max_batch_quotes`, `CancelQuote`, `CancelAllQuotes`) do not count toward it, so quoting and cancelling never close the socket; an oversized `BatchQuotes` does count.
-- Quote rate limit per connection: token bucket `50 quote tokens/s` sustained, `100` burst — covers `Quote`/`ReplaceQuote`/`BatchQuotes`/`CancelQuote`/`CancelAllQuotes` (maker plane); `BatchQuotes` costs `max(1, quotes.length)` tokens. Exceeding it is a soft reject: `QuoteRejected` (per quote in `BatchQuotesAck`) with reason `rate_limited`; the connection stays open.
+- Quote rate limit per connection: token bucket `50 quote tokens/s` sustained, `100` burst — covers `Quote`/`ReplaceQuote`/`BatchQuotes`/`CancelQuote`/`CancelAllQuotes` (maker plane); `BatchQuotes` costs `max(1, quotes.length)` tokens. Exceeding it is a soft reject and the connection stays open: `Quote` / `ReplaceQuote` get `QuoteRejected` (per quote in `BatchQuotesAck`) with reason `rate_limited`; `CancelQuote` / `CancelAllQuotes` get a `RequestError` with `Generic` code `rate_limited`, and nothing is cancelled.
 - Query rate limit per connection: token bucket `20 query tokens/s` sustained, `40` burst
 - `BatchQuotes` hard max: `50` quote elements; cost is `max(1, quotes.length)` quote tokens
 
@@ -156,7 +156,7 @@ If the client's `protocol_version` is incompatible, the server sends `VersionMis
 - `AddMints`, `RemoveMints`, `AddChannels`, `RemoveChannels`
 - `Quote`, `ReplaceQuote`, `BatchQuotes`, `CancelQuote`, `CancelAllQuotes`
 - `IndicativePricesResponse`
-- `GetOrderStatus`, `GetMyQuotes`, `GetMakerPositions`, `GetMarketsForMaker`, `GetMmSummary`, `GetMyTrades`, `GetTokenCaps`, `GetMyCaps`, `GetSubscriptions`
+- `GetOrderStatus`, `GetMyQuotes`, `GetMakerPositions`, `GetMarketsForMaker`, `GetMmSummary`, `GetMyTrades`, `GetTokenCaps`, `GetMyCaps`, `CheckQuote`, `GetSubscriptions`
 - `GetActiveRfqs`, `GetMarkets`, `GetMarketDescriptors`, `GetExpiries`, `GetTokens`
 
 ### Server -> Maker (direct)
@@ -175,18 +175,48 @@ If the client's `protocol_version` is incompatible, the server sends `VersionMis
 
 ### Server -> Maker (responses / query results)
 
-- `OrderStatus`, `MyQuotes`, `MakerPositions`, `MakerMarkets`, `MmSummary`, `MyTrades`, `TokenCaps`, `MyCaps`, `Subscriptions`
+- `OrderStatus`, `MyQuotes`, `MakerPositions`, `MakerMarkets`, `MmSummary`, `MyTrades`, `TokenCaps`, `MyCaps`, `QuoteCheck`, `Subscriptions`
 - `ActiveRfqs`, `Markets`, `MarketDescriptors`, `Expiries`, `Tokens`
 
 ### Server -> Maker (owner-direct, no subscription)
 
-- `PositionUpdated`, `MakerCapsUpdated`
+- `PositionUpdated`, `MakerCapsUpdated`, `TradeExecuted`
 
 ### Server -> Maker (broadcast if subscribed)
 
-- `TradeExecuted`, `StatsUpdate`, `ChainEvent`
+- `StatsUpdate`, `ChainEvent`
 - `MarketCreated`, `MarketFinalized`
 - `VaultCatalogChanged`, `VaultProjectionAdvanced` (`vaults` channel; see [ws-common](ws-common.md#vaultcatalogchanged))
+
+### Delivery by endpoint
+
+Pushes reach a session in one of three ways: a channel the session subscribed
+to (`Subscribe` is accepted on `/maker` and `/vault`, not on `/maker/data`),
+the session that sent the quote, or the maker owner's `/maker` session
+whatever it subscribed to. Query responses (`MyQuotes`, `MakerPositions`,
+`MmSummary`, ...) return on the connection that asked.
+
+| Message | `/maker` | `/maker/data` | `/vault` |
+|---|---|---|---|
+| `RfqBroadcast` | `rfqs` channel, within the mint scope | no | sessions with `sign_maker_quotes`, no subscription |
+| `RfqSkipped` | `rfqs` channel, makers the caps prefilter skipped | no | sessions with `sign_maker_quotes` the prefilter skipped |
+| `IndicativePricesRequest` | `rfqs` channel | no | no |
+| `QuoteAcknowledged`, `QuoteRejected`, `QuoteBestStatus`, `QuoteOutbid`, `QuoteSelected`, `QuoteRefreshRequested`, `QuoteExpired`, `QuoteCancelled` | the session that sent the quote | no | the session that sent the quote |
+| `QuoteFilled` | the session that sent the winning quote | no | the session that sent the winning quote |
+| `RfqClosed`, `RfqAvailableAgain` | every session that quoted the RFQ | no | every session that quoted the RFQ, and the taker session |
+| `OrderAccepted`, `SponsoredTxToSign`, `OrderSubmitted`, `OrderConfirmed`, `OrderFailed` | never: these go to the taker | no | only as the taker of its own RFQ |
+| `TradeExecuted` | owner's session, no subscription | no | no |
+| `PositionUpdated`, `MakerCapsUpdated` | owner's session, no subscription | no | no |
+| `ReferenceChanged` | every session | every session | every session |
+| `MarketCreated`, `MarketFinalized` | `markets` channel | no | no |
+| `StatsUpdate` / `ChainEvent` | `stats` / `chain_events` channel | no | no |
+| `VaultCatalogChanged` | `vaults` channel | no | no |
+| `VaultProjectionAdvanced` | `vaults` channel | no | `vaults` channel, own vault only |
+
+A maker learns of its fill from `QuoteFilled` (and `TradeExecuted`), never from
+`OrderConfirmed`. `PositionUpdated` and `MakerCapsUpdated` reach only the
+owner's `/maker` session; a client that reads on `/maker/data` alone recovers
+them with `GetMakerPositions`, `GetMyCaps` or `GetMmSummary`.
 
 ---
 
@@ -266,7 +296,7 @@ Sent instead of `RfqBroadcast` when cap limits pre-filter the maker. `reason` is
 Rules:
 - `valid_until` MUST be >= `now + 100` seconds (server rejects shorter expiries with `quote_expiry_too_short`)
 - `valid_until` MUST be <= the market's `expiry_ts` (later expiries are rejected with `market_expired`)
-- The server applies a **90-second settlement buffer**. Your quote is considered active for trading until `valid_until - 90` seconds. Set `valid_until` to `rfq.expires_at + 100` seconds so the quote stays tradable for the whole auction; the accepted floor is 100 seconds from now.
+- The server applies a **settlement buffer** (`settlement_buffer_seconds` from `GET /api/v1/venue`, currently 90). Your quote is active for trading until `valid_until` minus that buffer. Set `valid_until` to at least `rfq.expires_at + min_quote_validity_seconds` (currently 100) so the quote stays tradable for the whole auction; the accepted floor is `now + min_quote_validity_seconds`.
 - `order_id = sha256(preimage182)`
 - maker signs only 32-byte `order_id`
 - if `order_options` is present, strike must be from that set
@@ -461,6 +491,9 @@ Identified by `(rfq_id, strike)`, not `order_id`. If quoting multiple strikes pe
   "data": {
     "rfq_id": "uuid",
     "order_id": "0x...64chars",
+    "market_pda": "MarketPdaBase58",
+    "expiry_ts": 1710489600,
+    "position_type": "covered_call",
     "taker": "TakerPubkeyBase58",
     "price": 50000000,
     "quantity": 1000000000,
@@ -472,11 +505,18 @@ Identified by `(rfq_id, strike)`, not `order_id`. If quoting multiple strikes pe
 }
 ```
 
-`QuoteFilled` is the fill-details event for the winning maker.
+`QuoteFilled` is the fill-details event for the winning maker. `market_pda`,
+`expiry_ts` (market expiry, Unix seconds; `null` if the server no longer knows the market, so resolve it from `market_pda`) and `position_type` identify the
+market without the RFQ, so a fill can be attributed after a restart; mint
+decimals for the market come from `GetMarketDescriptors`. `quantity` is in
+underlying atoms and `price` is 1e9-scaled per underlying token, so the gross
+premium (before protocol fees) in quote atoms is `floor(price * quantity * 10^quote_decimals / (1e9 * 10^underlying_decimals))`
+(the contract's rounding; the Rust SDK's `total_premium_quote_atoms` and the TS
+SDK's `totalPremiumQuoteAtoms` compute it).
 `RfqClosed` is the terminal RFQ event.
 
 Current runtime behavior for successful fills:
-- winner maker receives `QuoteFilled` and then `RfqClosed` (in that order for maker session)
+- winner maker receives `RfqClosed` and then `QuoteFilled`; accept fill details after the RFQ has closed
 - taker receives `OrderConfirmed` and then `RfqClosed`
 - close RFQ state only on `RfqClosed`; process `QuoteFilled` as fill-details information
 - `RfqClosed.your_quote` / `RfqClosed.winner` are optional fields and may be omitted
@@ -645,7 +685,7 @@ Connection is closed after this message.
 }
 ```
 
-Cancels **all** of this connection's active quotes on the given RFQ (across all strikes). There is no per-order_id cancel — use `CancelQuote` per rfq_id. Server responds after Core applies the command with `CancelQuoteAck { request_id, rfq_id, cancelled_order_ids }`, or a correlated `RequestError` (for example `RfqNotFound`, `RfqNotActive`, `QuoteLocked`). `QuoteCancelled` is a lifecycle notification, not the command receipt.
+Cancels **all** of this connection's active quotes on the given RFQ (across all strikes). There is no per-order_id cancel — use `CancelQuote` per rfq_id. The server responds once the cancellation is applied with `CancelQuoteAck { request_id, rfq_id, cancelled_order_ids }`, or a correlated `RequestError` (for example `RfqNotFound`, `RfqNotActive`, `QuoteLocked`). `QuoteCancelled` is a lifecycle notification, not the command receipt.
 
 ### CancelQuoteAck (server -> maker)
 
@@ -674,9 +714,9 @@ On an Active RFQ an empty list is an idempotent no-op: the connection has no quo
 }
 ```
 
-`market` is optional. If provided, it filters cancellation to that market; otherwise all markets are considered. CancelAll removes this connection's active and retained non-winning quotes, including those inside locked RFQs. Removed retained quotes cannot return on rollback. Selected/awaiting-signature and executing orders are preserved. COD applies the same cleanup after Core processes the disconnect. Neither operation is an account-wide persistent halt.
+`market` is optional. If provided, it filters cancellation to that market; otherwise all markets are considered. CancelAll removes this connection's active and retained non-winning quotes, including those inside locked RFQs. Removed retained quotes cannot return on rollback. Selected/awaiting-signature and executing orders are preserved. Cancel-on-disconnect applies the same cleanup once the server processes the disconnect. Neither operation is an account-wide persistent halt.
 
-Server responds with `CancelAllQuotesAck` after Core applies the cancellation. An invalid `market` returns `RequestError` with `InvalidMarket`; it does not broaden cancellation to all markets.
+The server responds with `CancelAllQuotesAck` once the cancellation is applied. An invalid `market` returns `RequestError` with `InvalidMarket`; it does not broaden cancellation to all markets.
 
 ### CancelAllQuotesAck (server -> maker)
 
@@ -691,9 +731,9 @@ Server responds with `CancelAllQuotesAck` after Core applies the cancellation. A
 }
 ```
 
-`cancelled_count` equals `cancelled_order_ids.length`; both report the orders actually removed by Core. An empty list means this command removed no quotes; it does not establish that no selected or executing obligations remain. Lifecycle `QuoteCancelled` messages are separate from the receipt and must not complete another request's await.
+`cancelled_count` equals `cancelled_order_ids.length`; both report the orders actually removed. An empty list means this command removed no quotes; it does not establish that no selected or executing obligations remain. Lifecycle `QuoteCancelled` messages are separate from the receipt and must not complete another request's await.
 
-Quote, batch, replacement and cancellation commands from one connection retain FIFO order through the SDK writer, socket actor and Core request queue. Commands before a cancellation may execute first; commands sent afterward may create new quotes. Cancellation is not a persistent account halt.
+Quote, batch, replacement and cancellation commands from one connection retain FIFO order from the SDK writer through the server's processing. Commands before a cancellation may execute first; commands sent afterward may create new quotes. Cancellation is not a persistent account halt.
 
 If the connection drops before the ACK, retain an unknown outcome and reconcile instead of automatically replaying the command.
 
@@ -864,6 +904,11 @@ Each mint once; see [`TokenInfo`](ws-common.md#tokeninfo). Underlyings carry `si
 `strike_tick` and `quote_mints`.
 
 ### MarketDescriptorInfo (from `MarketDescriptors`)
+
+Token decimals live here and nowhere in `RfqBroadcast`: `RfqBroadcast.quantity`,
+`QuoteFilled.quantity` and `size_rule` are underlying atoms. Cache
+`underlying_decimals` / `quote_decimals` by `market.market_pda` (the Rust SDK's
+`MarketDecimals` does this from `MarketDescriptors`).
 
 ```typescript
 type MarketDescriptor = {
@@ -1183,6 +1228,35 @@ Platform-level OI and notional caps. Full schema (fields, unlimited semantics, `
 ### MyCaps payload
 
 Per-maker position count, notional, and balance caps. Full schema (fields, `decimals` rendering, unlimited semantics): [caps.md](caps.md#maker-caps).
+
+### CheckQuote / QuoteCheck
+
+Dry run of the cap checks a `Quote` of `quantity` at `price` on `market_id` (the market PDA) would face. Allowed on `/maker`, `/maker/data` and `/vault`. Nothing is reserved: a passing check is advice, not a hold.
+
+```json
+{
+  "type": "CheckQuote",
+  "data": {
+    "request_id": "uuid",
+    "market_id": "MarketPdaBase58",
+    "quantity": 1000000000,
+    "price": 50000000
+  }
+}
+```
+
+```json
+{
+  "type": "QuoteCheck",
+  "data": {
+    "request_id": "uuid",
+    "admissible": false,
+    "cap_detail": { "maker_position_cap_exceeded": { "current": 10, "limit": 10 } }
+  }
+}
+```
+
+`quantity` is in underlying base units; `price` is the gross price per underlying unit scaled by 1e9, as on `Quote`. `cap_detail` is omitted when `admissible` is `true`; otherwise it is the [CapError](caps.md#caperror-variants) a `QuoteRejected` would carry. `"cap_detail": "caps_unavailable"` means retry, not a cap. An unknown `market_id` returns an uncorrelated `Error` with `Generic` code `market_not_found`.
 
 ### Subscriptions payload
 
@@ -1543,6 +1617,7 @@ See [Protocol Flow](protocol-flow.md) for all four scenarios.
 | `too_many_active_rfqs_total` | Platform-wide RFQ limit reached |
 | `too_many_active_rfqs_per_taker` | Per-taker active RFQ limit reached |
 | `too_many_quotes_per_rfq` | Max quotes per RFQ reached |
+| `too_many_failed_orders_per_rfq` | `AcceptQuote` refused: too many failed orders on this RFQ are still unresolved. Create a new RFQ |
 | `too_many_sessions_per_user` | Too many concurrent sessions |
 
 ### CapError (in typed `cap` error and `RfqSkipped.reason`)

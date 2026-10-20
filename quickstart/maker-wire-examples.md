@@ -65,7 +65,7 @@ The server verifies the signature by `quote_signing` key.
 {
   "type": "AuthSuccess",
   "data": {
-    "session_id": "sess-123",
+    "session_id": "3a5c7e9b-1d2f-4e60-8a4c-6b8d0f2a4c71",
     "expires_at": 1710086400,
     "maker_pda": "MakerPdaBase58"
   }
@@ -189,26 +189,7 @@ At example time `1710000000`, this quote has 140 seconds of on-chain validity an
 }
 ```
 
-### 8) QuoteFilled
-
-```json
-{
-  "type": "QuoteFilled",
-  "data": {
-    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-    "taker": "TakerPubkeyBase58",
-    "price": 50000000,
-    "quantity": 1000000000,
-    "strike": 160000000000,
-    "position_pda": "PositionPdaBase58",
-    "tx_signature": "5eyk...base58sig",
-    "filled_at": 1710000042
-  }
-}
-```
-
-### 9) RfqClosed
+### 8) RfqClosed
 
 ```json
 {
@@ -222,8 +203,30 @@ At example time `1710000000`, this quote has 140 seconds of on-chain validity an
 }
 ```
 
+### 9) QuoteFilled
+
+```json
+{
+  "type": "QuoteFilled",
+  "data": {
+    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
+    "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "market_pda": "MarketPdaBase58",
+    "expiry_ts": 1710489600,
+    "position_type": "covered_call",
+    "taker": "TakerPubkeyBase58",
+    "price": 50000000,
+    "quantity": 1000000000,
+    "strike": 160000000000,
+    "position_pda": "PositionPdaBase58",
+    "tx_signature": "5eyk...base58sig",
+    "filled_at": 1710000042
+  }
+}
+```
+
 `RfqClosed` is the terminal RFQ event for maker-side state.
-For successful fills, the winning maker receives `QuoteFilled` before `RfqClosed`.
+For successful fills, the winning maker receives `RfqClosed`, then `QuoteFilled`; `expiry_ts` is `null` when the server no longer knows the market.
 `QuoteFilled` is the fill-details event; RFQ closure should still be keyed by `RfqClosed`.
 
 ## Additional scenarios
@@ -249,17 +252,17 @@ If the quote remains active instead of being selected, refresh fires at `1710000
 Send maker-private recovery reads on `/maker/data`:
 
 ```json
-{ "type": "GetMyQuotes", "data": { "request_id": "a1b2c3d4-0001", "scope": "live" } }
-{ "type": "GetMakerPositions", "data": { "request_id": "a1b2c3d4-0002" } }
-{ "type": "GetMyTrades", "data": { "request_id": "a1b2c3d4-0003" } }
-{ "type": "GetMmSummary", "data": { "request_id": "a1b2c3d4-0005" } }
+{ "type": "GetMyQuotes", "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000001", "scope": "live" } }
+{ "type": "GetMakerPositions", "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000002" } }
+{ "type": "GetMyTrades", "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000003" } }
+{ "type": "GetMmSummary", "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000005" } }
 ```
 
 `GetSubscriptions` stays on the quote connection because it reports `/maker`
 subscription state:
 
 ```json
-{ "type": "GetSubscriptions", "data": { "request_id": "a1b2c3d4-0004" } }
+{ "type": "GetSubscriptions", "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000004" } }
 ```
 
 `GetMyQuotes { scope: "live" }` returns the full, unpaged owner set, including retained and selected quotes; History is queried separately with `scope: "history"`. Keep unresolved orders across reconnect and query `GetOrderStatus`; missing rows do not prove nonexecution.
@@ -273,7 +276,7 @@ historical rows and caps at `1000`.
 {
   "type": "GetMyTrades",
   "data": {
-    "request_id": "a1b2c3d4-0005",
+    "request_id": "a1b2c3d4-0000-4000-8000-000000000006",
     "limit": 50
   }
 }
@@ -285,10 +288,10 @@ Response:
 {
   "type": "MyTrades",
   "data": {
-    "request_id": "a1b2c3d4-0005",
+    "request_id": "a1b2c3d4-0000-4000-8000-000000000006",
     "trades": [
       {
-        "id": "trade-uuid-1",
+        "id": "7c2e9a41-6b3d-4f58-9e1a-0d4b6f8a2c35",
         "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
         "market_pda": "MarketPdaBase58",
         "underlying_mint": "UnderlyingMintBase58",
@@ -318,10 +321,10 @@ Next page (keyset pagination):
 {
   "type": "GetMyTrades",
   "data": {
-    "request_id": "a1b2c3d4-0006",
+    "request_id": "a1b2c3d4-0000-4000-8000-000000000007",
     "limit": 50,
     "cursor": 1710000042,
-    "cursor_id": "trade-uuid-1"
+    "cursor_id": "7c2e9a41-6b3d-4f58-9e1a-0d4b6f8a2c35"
   }
 }
 ```

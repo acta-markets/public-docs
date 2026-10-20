@@ -120,7 +120,7 @@ server configuration and change only on restart.
 
 | Field | Meaning |
 |---|---|
-| `min_quote_validity_seconds` | Minimum `valid_until - now` accepted on a quote (`settlement_buffer_seconds + quote_refresh_lead_seconds`) |
+| `min_quote_validity_seconds` | Minimum `valid_until - now` accepted on a quote; at least `settlement_buffer_seconds + quote_refresh_lead_seconds`. Use this value, not the sum |
 | `settlement_buffer_seconds` | A quote stops being acceptable at `valid_until - settlement_buffer_seconds` |
 | `quote_refresh_lead_seconds` | How long before that cutoff the server sends `QuoteRefreshRequested` |
 | `min_rfq_timeout_seconds` / `max_rfq_timeout_seconds` | Accepted range for `RfqRequest.timeout_seconds` |
@@ -259,8 +259,8 @@ decimal string.
 `/vaults` and `/vaults/{pda}` are served from memory, work without a database and share the light
 per-IP rate limit (30 req/s, burst 60). All other vault and depositor routes query the database
 per request and share the heavy per-IP limit (10 req/s, burst 20). IPv6 clients are grouped by /64.
-Successful `/vaults`, `/vaults/{pda}`, `/vaults/{pda}/cycles`, `/vaults/{pda}/positions` and the
-request-list routes carry `Cache-Control: public, max-age=5`; per-wallet routes carry no cache header.
+Successful `/vaults`, `/vaults/{pda}`, `/vaults/{pda}/cycles`, `/vaults/{pda}/positions`,
+The request-list routes carry `Cache-Control: public, max-age=5`; `/vaults/{pda}/exposure` is `no-store`; per-wallet routes carry no cache header.
 
 Every per-vault route returns `404` `not_found` for an unknown vault or a PDA that is not base58.
 `GET /vaults` and `GET /vaults/{pda}` list open vaults only; a closed vault returns `404` there, while
@@ -317,6 +317,7 @@ Optional query: `delegate=<pubkey>` returns only vaults that key can operate as 
       "last_hwm_reset_ts": "0",
       "last_settlement_ts": "1710000000",
       "cap_limit": "0",
+      "capacity": { "cap_limit": "0", "remaining": null },
       "capital_fallback_delay_secs": "43200",
       "deposit_window_set_ts": "1709990000",
       "main_balance": "1000000",
@@ -337,13 +338,46 @@ Optional query: `delegate=<pubkey>` returns only vaults that key can operate as 
         "signature": "TxSignatureBase58",
         "event_index": 0
       },
+      "created_at": "1700000000",
+      "generation_started_at": "1700000100",
+      "tvl_usd_1e9": "1000000000000",
+      "price_time": "1710000050",
+      "premium": [
+        {
+          "quote_mint": "QuoteMintBase58",
+          "cycle": { "received": "5000000", "paid": "0" },
+          "generation": { "received": "50000000", "paid": "7000000" }
+        }
+      ],
+      "fees": {
+        "management_fee_assessed": "3000",
+        "performance_fee_assessed": "4000",
+        "realized_fee_value": "6000"
+      },
+      "depositors_in_generation": 11,
       "performance": {
-        "status": "annualized",
-        "cycles_completed": 12,
-        "last_cycle_return_pct": 0.8,
-        "cumulative_return_pct": 12.4,
-        "annualized_return_pct": 23.4,
-        "track_record_secs": "7257600"
+        "capital_generation": "4",
+        "computed_at": "1710000060",
+        "covered": true,
+        "returns": {
+          "7d": { "return_pct": 0.4, "from_time": "1709395200", "to_time": "1710000000" },
+          "30d": { "return_pct": 1.5, "from_time": "1707408000", "to_time": "1710000000" },
+          "90d": null,
+          "all": { "return_pct": 2.0, "from_time": "1700000100", "to_time": "1710000000" }
+        },
+        "apy_30d": 19.9,
+        "apy_90d": null,
+        "max_drawdown_pct": 0.5,
+        "worst_cycle_return_pct": -0.25,
+        "losing_cycles": 1,
+        "cycles_completed": 12
+      },
+      "metadata": {
+        "name": "SOL vault",
+        "curator": "Acta",
+        "strategy": "Weekly covered calls on SOL",
+        "website": "https://acta.markets",
+        "twitter": "acta_markets"
       }
     }
   ]
@@ -359,8 +393,13 @@ Optional query: `delegate=<pubkey>` returns only vaults that key can operate as 
 | `main_balance`, `second_balance`, `balance_updated_at`, `live_share_supply`, `observed_manager_stake_shares`, `balance_chain_slot` | All `null` together when no balance observation has landed yet. |
 | `capital_fallback_delay_secs` | Delay (default `43200`, max `259200`) after which anyone, not only the operator, may process a queued request. In `idle` it counts from the request's `created_at`; in `processing_capital` it counts from `active_expiry`. In `idle`, deposits also need priced equity, which a non-operator can only compute with an aged withdraw request; otherwise cancel the deposit. |
 | `deposit_window_set_ts` | Chain time of the last `SetAcceptingDeposits`, or `null` if the window was never set. |
-| `projection` | Position of this row in the listener's event stream. Compare `slot` / `transaction_index` / `event_index` to detect staleness. |
-| `performance` | Tagged by `status`. `unavailable`: the server has not loaded performance yet; show "—", not "new vault". `no_track_record`: no finished cycle yet, no other fields. `short_track_record`: `cycles_completed`, `last_cycle_return_pct`, `cumulative_return_pct`, `track_record_secs`. `annualized`: the same plus `annualized_return_pct`, once `track_record_secs` is at least 30 days. `track_record_secs` is the calendar span from the start of the first finished cycle to the end of the last one, idle gaps included. Returns are percentages (`1.0` = 1%), after fees, compounded from finished cycles. Refreshed in the background every 15 s. |
+| `projection` | Position of this row in the venue's on-chain event history. Compare `slot` / `transaction_index` / `event_index` to detect staleness. |
+| `capacity` | `remaining = max(0, cap_limit − equity − pending_deposit_amount)` in main atoms; `null` when `cap_limit` is `0` (uncapped). |
+| `created_at` | Chain time of the vault's creation; `null` until the stats snapshot has loaded. |
+| `tvl_usd_1e9`, `price_time` | Indicative: `equity` at the main mint's USD oracle price (1e9 scale) and that price's time; both `null` without a fresh price. |
+| `generation_started_at`, `premium`, `fees`, `depositors_in_generation` | From one stats snapshot, `null` unless its generation equals `capital_generation` and the generation is covered (see `performance`). `premium`: per quote mint, quote atoms received as writer and paid as holder (gross premium) in the current cycle and the generation. `fees`: assessed management and performance fees and realized fee value of the generation, in main atoms. `depositors_in_generation`: wallets with a processed deposit in the generation. |
+| `performance` | `null` until stats load or when the snapshot is from another generation. `capital_generation` and `computed_at` label the snapshot (refreshed every 60 s). `covered: false` means the generation's history is incomplete: every metric is `null`. `returns` per window (`7d`, `30d`, `90d`, `all`): booked share price return after fees, in percent (`1.0` = 1%), with the checkpoint times it spans; `null` when the generation is younger than the window. `apy_30d`, `apy_90d`: the 30- and 90-day returns annualized by compounding (APY). `max_drawdown_pct`: largest peak-to-trough fall of the booked share price. `worst_cycle_return_pct`, `losing_cycles`, `cycles_completed`: finished cycles of the generation. |
+| `metadata` | Optional display fields curated by the operator: `name`; optional `curator`, `strategy`, `description`, `website` and `logo_url` (`https://` URLs) and `twitter` (a bare handle, no `@`). Omitted when none are set; edits appear within about a minute. Display only; `governance` is the authority, so show it next to the name. |
 
 ### GET `/api/v1/vaults/{pda}`
 
@@ -413,6 +452,49 @@ Query:
 | `next_cursor` | `slot:transaction_index:event_index:position`. Opaque — pass it back verbatim. `null` on the last page. |
 
 A malformed `cursor`, including the legacy position cursor format, returns `400` with code `invalid_cursor`.
+
+### GET `/api/v1/vaults/{pda}/exposure`
+
+Open and funded positions with an indicative spot. Positions are reloaded after 10 s and never served older than 15 s (`as_of` is when they were read; a failed reload past that returns `503`); `spot` is read per request. Needs the database (`503` `db_disabled` without one).
+
+```json
+{
+  "vault_pda": "VaultPdaBase58",
+  "positions": [
+    {
+      "position": "PositionPdaBase58",
+      "market": "MarketPdaBase58",
+      "position_type": "covered_call",
+      "role": "writer",
+      "status": "open",
+      "strike": "140000000000",
+      "quantity": "2000000000",
+      "expiry": "1710000000",
+      "underlying_mint": "UnderlyingMintBase58",
+      "quote_mint": "QuoteMintBase58",
+      "underlying_decimals": 9,
+      "quote_decimals": 6,
+      "spot": "150000000000",
+      "spot_time": "1709990000",
+      "distance_pct": -6.666666666666667,
+      "itm": true,
+      "intrinsic": "-20000000"
+    }
+  ],
+  "totals": [
+    { "quote_mint": "QuoteMintBase58", "notional_at_strike": "280000000", "outstanding_intrinsic": "-20000000" }
+  ]
+}
+```
+
+| Field | Values / meaning |
+|---|---|
+| `spot`, `spot_time` | Underlying price in quote, 1e9 scale, from the oracle cache; `null` when a leg is stale or retired |
+| `distance_pct` | Call `100 × (strike − spot) / spot`, put `100 × (spot − strike) / spot`; positive is out of the money |
+| `itm` | `spot` past the strike; equality is out of the money |
+| `intrinsic` | Value moved if the position expired at `spot`, in quote atoms: `0` out of the money, positive for `holder`, negative for `writer`. Not a cash flow or fair value (time value is ignored). |
+| `underlying_decimals`, `quote_decimals` | `null` when market metadata is missing; `intrinsic` is then `null` |
+| `totals` | Per quote mint: `notional_at_strike` and `outstanding_intrinsic` (signed); `null` when any of its positions lacks the value |
 
 ### GET `/api/v1/vaults/{pda}/cycles`
 

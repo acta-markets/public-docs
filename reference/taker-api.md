@@ -212,12 +212,11 @@ scopes are unchanged. Use `AddMints`/`RemoveMints` for incremental updates.
 
 `PositionUpdated` is **not** delivered to takers — it is a maker-owner-only push. Track your position state via `ChainEvent` (position settled/liquidated on the `chain_events` channel) plus `GetPositions`.
 
-`GetPositions.price` is returned only from the maker-signed gross price in the
-canonical `OpenPosition` epoch. A GPA-only net-premium observation is not
-converted into a synthetic gross price; incomplete rows fail closed with
-`gross_price_proof` missing.
-Snapshot-to-epoch binding additionally requires finalized audit coverage
-through the observation slot; a later audit-gap retraction fails the read closed.
+`GetPositions.price` is the gross price the maker signed, taken from the on-chain event that
+opened the position; it is never derived from the net premium. If the server has not verified
+that event for a position, or later finds a gap in its verified chain history up to it, the whole
+read fails with a `RequestError` (`Generic` code `temporarily_unavailable`). Retry with backoff;
+it clears once the server has reconciled the chain history.
 
 ---
 
@@ -344,7 +343,7 @@ executable quotes remain.
 }
 ```
 
-Cancels an active RFQ. `request_id` is required on the wire. The server responds with `RfqClosed` and `reason: "taker_cancelled"`.
+Cancels an RFQ. `request_id` is required on the wire. Success has no `CommandAccepted`: the RFQ, active or awaiting your signature, closes with `RfqClosed { reason: "taker_cancelled" }`. Cancelling an RFQ of yours that is already closed gets no reply. A failure is a `RequestError` with the same `request_id`: `RfqNotFound`, or `Generic` `order_already_submitted` once your signed transaction is queued (resolve it with `GetOrderStatus`).
 
 ### SponsoredTxToSign (server -> taker)
 
@@ -354,10 +353,13 @@ Cancels an active RFQ. `request_id` is required on the wire. The server responds
   "data": {
     "order_id": "0x...64chars",
     "tx_base64": "...",
+    "last_valid_block_height": 312456789,
     "signature_deadline": 1710000040
   }
 }
 ```
+
+`last_valid_block_height` is the block height the transaction's blockhash is valid through; a transaction that has not landed by then can no longer execute. `signature_deadline` is Unix seconds.
 
 ### SubmitSignedSponsoredTx (taker -> server)
 
@@ -1063,6 +1065,7 @@ Common typed `ServerError` variants (PascalCase on the wire):
 |-------|---------|
 | `too_many_active_rfqs_total` | Platform-wide RFQ limit reached |
 | `too_many_active_rfqs_per_taker` | Per-taker RFQ limit reached |
+| `too_many_failed_orders_per_rfq` | `AcceptQuote` refused: too many failed orders on this RFQ are still unresolved. Create a new RFQ |
 | `too_many_sessions_per_user` | Too many concurrent sessions |
 
 ---

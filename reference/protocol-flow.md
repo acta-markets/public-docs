@@ -69,7 +69,7 @@ Defaults below are rendered from the server's config defaults by a test in `rfq-
 | `settlement_buffer` | 90 s | The trailing window reserved for settlement confirmation. A quote's effective trading cutoff is `valid_until - settlement_buffer`; quotes whose `valid_until` is closer than `settlement_buffer + quote_refresh_lead` are rejected. |
 | `quote_refresh_lead` | 10 s | At `effective_expiry - quote_refresh_lead` the server fires `QuoteRefreshRequested` and freezes the quote (unacceptable until re-quoted). |
 | `signature_timeout` | 30 s | Max time the taker has to sign the sponsored tx after `AcceptQuote`. The signature deadline is the minimum of `now + signature_timeout`, the quote's effective expiry, and the RFQ's `expires_at`. |
-| `submitted_watchdog_timeout` | 120 s | The watchdog logs a stalled keeper or listener. The RFQ stays Enqueued until the trade confirms on-chain or the server knows the transaction was never sent. |
+| `submitted_watchdog_timeout` | 120 s | After this the server flags a submitted trade that has not resolved. The RFQ stays Enqueued until the trade confirms on-chain or the server knows the transaction was never sent. |
 | `closed_rfq_ttl` | 300 s | How long a closed RFQ is retained before purge. |
 | `max_quotes_per_rfq` | 50 | Cap on quotes per RFQ across all makers. |
 | `max_rfqs_per_taker / max_active_rfqs` | 50 / 1000 | Concurrency limits (`0` disables the corresponding limit). |
