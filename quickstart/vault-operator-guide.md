@@ -121,7 +121,7 @@ let signed = client.verify_and_sign_sponsored_tx(
 client.submit_signed_sponsored_tx(signed).await?;
 ```
 
-For swaps, `client.swap_quote(request)` returns the quote; pass it with `VaultSwapIntent { vault, request, quote, main_price_update, second_price_update, min_output_floor, router }` to `verify_and_sign_swap`, then `swap_submit`. `router` is required in Rust. The crate's `vault_operator` example (`cargo run --example vault_operator --features vault`) shows verified fill and swap signing.
+For swaps, `client.swap_quote(request)` returns the quote; pass it with `VaultSwapIntent { vault, request, quote, price_feeds: PairPriceFeeds { main, second, shards }, min_output_floor, router }` to `verify_and_sign_swap`, then `swap_submit`. `router` is required in Rust. The crate's `vault_operator` example (`cargo run --example vault_operator --features vault`) shows verified fill and swap signing.
 
 TypeScript:
 
@@ -145,7 +145,7 @@ vault.on("sponsoredTxToSign", async (orderIdHex, txBase64) => {
 
 vault.on("swapQuoteResult", async (quote) => {
   const submit = await verifyAndSignSwap({
-    intent: { vault: planner, request, quote, mainPriceUpdate, secondPriceUpdate, minOutputFloor, router },
+    intent: { vault: planner, request, quote, priceFeeds, minOutputFloor, router },
     tables: await fetchAddressesForLookupTables(flows.servedLookupTableKeys(quote.tx_base64), rpc),
     bounds,
     signer: wallet,
@@ -154,7 +154,7 @@ vault.on("swapQuoteResult", async (quote) => {
 });
 ```
 
-`planner` is `await flows.VaultManagerPlanner.fromVault({ vault, actor, programAddress })`; `request` is the `SwapQuoteData` sent: the arguments to `vault.requestVaultSwapQuote(...)` plus its returned `request_id` and the `vault_pda`; `router` defaults to `JUPITER_V6_PROGRAM`, so set `DEVNET_SWAP_ROUTER` on devnet; `resolveVaultPriceUpdates(rpc, planner)` from `@acta-markets/ts-sdk/chain` returns the two price-update accounts.
+`planner` is `await flows.VaultManagerPlanner.fromVault({ vault, actor, programAddress })`; `request` is the `SwapQuoteData` sent: the arguments to `vault.requestVaultSwapQuote(...)` plus its returned `request_id` and the `vault_pda`; `router` defaults to `JUPITER_V6_PROGRAM`, so set `DEVNET_SWAP_ROUTER` on devnet; `priceFeeds` is `await resolveVaultPriceFeeds(rpc, planner, shards)` from `@acta-markets/ts-sdk/chain`: the pair's Pyth feed ids and the push-oracle shards the deployment posts to (default `[0]`). The quote's `main_price_update` / `second_price_update` must each be one of those shards' accounts for its feed, or verification fails with `priceUpdate`.
 
 ## Funding bought options
 

@@ -217,12 +217,16 @@ Do not modify the message bytes, account order, or any other signature slot.
 Library shortcuts:
 - **Rust** (`solana-sdk`): deserialize with `bincode`, sign `tx.message.serialize()` with the taker `Keypair`, set the taker's index in `tx.signatures`; or operate on the raw bytes as above.
 - **Python** (`solders`): `tx = VersionedTransaction.from_bytes(raw)`, sign `bytes(tx.message)`, assign into the taker's index in `tx.signatures`, re-serialize.
-- **TypeScript**: `signSponsoredTxBase64({ txBase64, taker, expectedMessageBytes })` from `@acta-markets/ts-sdk/ws` (no `@solana/web3.js`) fills slot 1 for maker quotes. For a vault quote use `verifyAndSignSponsoredTx({ orderIdHex, txBase64, intent: { kind: "fill", holder, taker, terms }, tables, bounds, signer })` from the same module; it checks the served transaction against the intent and fills slot 0.
+- **TypeScript**: `verifyAndSignTakerFill({ txBase64, quote, rfq, taker, tables, bounds, signer })` from `@acta-markets/ts-sdk/ws` (no `@solana/web3.js`) fills slot 1 for ordinary maker quotes and slot 0 for vault quotes (pass `makerVault` from `fetchMakerVault(rpc, quote.maker)`).
 
-The TypeScript helper requires an independently constructed expected
-message and checks it before signing. Include the accepted order, configured
-program/accounts, approved blockhash, instructions and resolved ALT references;
-never use bytes copied from the received transaction as the expectation.
+It rebuilds the expected transaction from the accepted quote and
+RFQ terms and refuse to sign on any mismatch: program and market PDA, the order id
+recomputed from the quote (it must equal `order_id`), the maker's Ed25519 check over
+it right before `open_position`, `open_position` accounts and arguments, the fee payer,
+no extra signers or instructions, and a compute budget within `bounds`. The blockhash
+and the relayer's fee payer address come from the server and need no local copy.
+Pass the wallet's `signTransaction` as the helper's `signer` instead of calling it on
+the served transaction directly.
 
 ### 4. Track the order
 
