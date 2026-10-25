@@ -18,6 +18,7 @@ Cold authority operations:
 - rotate the hot wallet immediately
 - set, rotate, or clear the guardian immediately
 - set, rotate, or revoke the settlement attestor through the timelock
+- set or close vault price routes and enable or disable vault swap venues through the timelock
 - toggle pause immediately
 - correct an already published settlement price immediately (`CorrectOraclePrice`)
 - create vaults (`CreateVault`)
@@ -82,6 +83,8 @@ Settlement and liquidation are permissionless. Any signer may settle an expired 
 | Set / rotate settlement attestor (`SetSettlementAttestor`, op 29) | Cold | Timelocked |
 | Revoke settlement attestor (`RevokeSettlementAttestor`, op 30) | Cold | Timelocked |
 | Vault manager-stake floor, capital fallback delay (`SetVaultManagerStakeMinBps`, `SetVaultCapitalFallbackDelay`) | Cold | Timelocked |
+| Vault price route per mint (`SetPriceRoute` op 73, `ClosePriceRoute` op 74); applies to every vault holding that mint | Cold | Timelocked |
+| Vault swap venue allowlist (`SetSwapVenue`, op 75) | Cold | Timelocked |
 | Create vault (`CreateVault`) | Cold | Immediate |
 | Freeze vault (`FreezeVault`) | Cold or guardian | Immediate |
 | Unfreeze vault (`UnfreezeVault`) | Cold | Immediate |

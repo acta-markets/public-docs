@@ -326,6 +326,7 @@ Optional query: `delegate=<pubkey>` returns only vaults that key can operate as 
       "live_share_supply": "1000000000",
       "observed_manager_stake_shares": "50000000",
       "balance_chain_slot": "312000000",
+      "staging": null,
       "policy": {
         "max_open_positions": 8,
         "max_rebalance_drift_bps": 200,
@@ -392,6 +393,7 @@ Optional query: `delegate=<pubkey>` returns only vaults that key can operate as 
 | `total_shares` | Boundary checkpoint adjusted for contract mint/burn — **not** live SPL supply. Use `live_share_supply` for the observed supply. |
 | `main_balance`, `second_balance`, `balance_updated_at`, `live_share_supply`, `observed_manager_stake_shares`, `balance_chain_slot` | All `null` together when no balance observation has landed yet. |
 | `capital_fallback_delay_secs` | Delay (default `43200`, max `259200`) after which anyone, not only the operator, may process a queued request. In `idle` it counts from the request's `created_at`; in `processing_capital` it counts from `active_expiry`. In `idle`, deposits also need priced equity, which a non-operator can only compute with an aged withdraw request; otherwise cancel the deposit. |
+| `staging` | `null` unless half of a [two-transaction swap](../quickstart/vault-operator-guide.md#two-transaction-swaps) is open: `{ "mint", "from_leg": "main" \| "second", "amount", "staged_at" }`. `amount` (atoms of `mint`, decimal string) has left `from_leg` for the vault's account of `mint` and is not counted in `equity`. `staged_at` (Unix seconds) is the first stage. Capital processing waits until it is back. |
 | `deposit_window_set_ts` | Chain time of the last `SetAcceptingDeposits`, or `null` if the window was never set. |
 | `projection` | Position of this row in the venue's on-chain event history. Compare `slot` / `transaction_index` / `event_index` to detect staleness. |
 | `capacity` | `remaining = max(0, cap_limit − equity − pending_deposit_amount)` in main atoms; `null` when `cap_limit` is `0` (uncapped). |

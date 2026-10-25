@@ -58,7 +58,7 @@ Receiving premium into second needs no bit. Because funding is checked at open, 
 3. **Settlement.** After the market is finalized, each position settles or is liquidated in its own transaction; settlement is permissionless. The last one moves the vault to `processing_capital`.
 4. **ProcessingCapital.** In order:
    - optional second-to-main rebalance, so main covers withdrawals and the `min_main_liquidity_bps` floor;
-   - `ProcessVaultEquity`: values both legs with live Pyth prices, assesses fees and fixes the boundary price;
+   - `ProcessVaultEquity`: values both legs at their [price routes](#prices), assesses fees and fixes the boundary price;
    - `ProcessDeposits` / `ProcessWithdrawals`, at most 3 users per instruction;
    - `FinalizeVaultCycle`: needs empty queues and returns the vault to `idle`.
 
@@ -82,7 +82,7 @@ One WebSocket connection on `/vault` (same host as `/maker` and `/taker`) serves
 
 - **Selling** (vault is writer, `OPEN_TAKER`): send `RfqRequest` and `AcceptQuote` as a taker. The server returns `SponsoredTxToSign`; the operator is fee payer and signs slot 0.
 - **Buying** (vault is holder, `SIGN_MAKER_QUOTES`): answer `RfqBroadcast` with a quote whose `maker_owner` is the vault PDA, signed by the operator key. The external taker signs the transaction; the vault pays the premium from its quote-mint leg.
-- **Swaps** (`REBALANCE`; `recovery` and `closing` need governance and accept only `direction: "second_to_main"`): `SwapQuote` returns a server-built transaction with one route through the swap router the program build pins (Jupiter v6 on mainnet, a mock router on devnet). Rebalance works in `active` before expiry in either direction while the vault has at least one open position, and in `processing_capital` before equity only second-to-main.
+- **Swaps** (`REBALANCE`; `recovery` and `closing` need governance and accept only `direction: "second_to_main"`): `SwapQuote` returns a server-built transaction. The swap runs as 1–4 hops, each a CPI into a program that Acta cold registered as a swap venue: Jupiter v6, plus Exponent's Generic SY and CLMM programs for PT purchases, on mainnet; a mock router on devnet. Rebalance works in `active` before expiry in either direction while the vault has at least one open position, and in `processing_capital` before equity only second-to-main.
 
 A swap quote is exact-in: `amount` is the input in raw atoms of the source leg, as a decimal string. `slippage_bps` is optional (default 50). `vault_pda` must be the authenticated vault.
 
@@ -112,14 +112,12 @@ A swap quote is exact-in: `amount` is the input in raw atoms of the source leg, 
     "in_amount": "250000000",
     "quoted_out_amount": "1503221",
     "minimum_out_amount": "1495705",
-    "valid_until": "1710000060",
-    "main_price_update": "MainPriceUpdatePubkeyBase58",
-    "second_price_update": "SecondPriceUpdatePubkeyBase58"
+    "valid_until": "1710000060"
   }
 }
 ```
 
-Amounts and `valid_until` (Unix seconds) are decimal strings; `last_valid_block_height` is a number, the block height the transaction's blockhash is valid through. `main_price_update` / `second_price_update` are the Pyth price-update accounts the transaction reads. `execution_id` names this swap in every later message. A failed quote returns a `RequestError` with a `Generic` code from the [WS error code catalog](../reference/ws-common.md#ws-error-codes) (usually a `vault_*` or `vault_swap_*` row, also general codes such as `invalid_amount`; `vault_swap_oracle_stale` is retryable within seconds, `vault_swap_route_unavailable` and `vault_swap_service_unavailable` later).
+Amounts and `valid_until` (Unix seconds) are decimal strings; `last_valid_block_height` is a number, the block height the transaction's blockhash is valid through. The transaction carries the vault's [price section](#prices). `execution_id` names this swap in every later message. A failed quote returns a `RequestError` with a `Generic` code from the [WS error code catalog](../reference/ws-common.md#ws-error-codes) (usually a `vault_*` or `vault_swap_*` row, also general codes such as `invalid_amount`; `vault_swap_oracle_stale` is retryable within seconds, `vault_swap_route_unavailable` and `vault_swap_service_unavailable` later).
 
 Sign it and send `SwapSubmit`:
 
@@ -170,18 +168,36 @@ Sign it and send `SwapSubmit`:
 
 A push missed during a reconnect is not replayed, so poll `GetSwapStatus` after reconnecting.
 
+#### Two-transaction swaps
+
+A Solana transaction can lock at most 64 accounts. Some paths do not fit in one transaction, such as buying an Exponent PT with USDC (USDC → hyloSOL → SY → PT). The server then splits the swap in two, and the quote carries `staging`:
+
+- `"stage"`: this transaction swaps the input leg into the vault's account of an intermediate mint, the staging mint (for example hyloSOL). The vault records the staged amount.
+- `"unstage"`: this transaction swaps the staged balance into the output leg.
+
+`staging` is absent for a one-transaction swap. After a `stage` is finalized, send the same `SwapQuote` again with a new `request_id`: as long as the vault has something staged, every swap quote is the `unstage` of the whole staged amount into the requested output leg. `in_amount` is the staged amount, not your original `amount`. Each half is a full swap: it has its own `execution_id`, status and `SwapSettled`, its own minimum output, and its own oracle drift check.
+
+While something is staged, the vault's `staging` field (HTTP) is set. Equity processing, cycle finalization, final withdrawal, starting Closing, recovery, manager top-ups, fee updates and closing the vault all wait until it is unstaged. A delegate can unstage into main while the vault is `normal`. From 300 s after the first stage, governance can unstage into main in any safety mode. The server splits a swap only in `rebalance` mode.
+
 Respect the venue limits: quantity on `size_rule`, strikes on `strike_tick` (`GET /api/v1/tokens`), quote validity, RFQ timeouts, per-taker RFQ limit and trading cutoff (`GET /api/v1/venue`). Vault sessions receive `ReferenceChanged` like maker and taker sessions (Rust `VaultOperatorClient::subscribe_reference_changes()`); on it, re-read those routes with `If-None-Match`.
 
 ### Checked signing
 
-Never sign a served transaction blind. The checked helpers rebuild the expected instructions from what you agreed to and sign only on an exact match. They compare fee payer, signers, compute budget within your bounds, every account with its flags, instruction data, ATA creates, the maker's Ed25519 quote check and the order id. Router accounts are allowed only in the swap's route tail: at most 64, no signers, no payer, no read-only vault account made writable. The swap intent names the router: the one the target program build pins. A swap whose `minimum_out_amount` is below your `min_output_floor` is rejected even if it fits the quote's slippage. Compute the floor from your own oracle price, not from the server's quote.
+Never sign a served transaction blind. The checked helpers rebuild the expected instructions from what you agreed to and sign only on an exact match. They compare fee payer, signers, compute budget within your bounds, every account with its flags, instruction data, ATA creates, the maker's Ed25519 quote check and the order id. For swaps they also check:
+
+- **Price section.** Each leg must be the vault's `PriceRoute` followed by that route's accounts, with Pyth feeds read on one of your shards.
+- **Hops.** 1–4 hops, each through its venue PDA, chaining the input leg through the vault's own transit accounts to the output leg. Hop accounts carry no signers and no payer, and make no fixed, price, venue or program account writable. Each hop has at most 64 CPI accounts; the path has at most 128 account slots and 1,024 data bytes.
+- **Setup.** Allowed setup is only idempotent creation of the vault's transit accounts and a stake-pool balance update for a pool one of the vault's routes reads.
+- **Staging.** A `stage` must use a staging mint whose route you listed.
+
+A swap whose `minimum_out_amount` is below your `min_output_floor` is rejected even if it fits the quote's slippage. The floor does not apply to a `stage`. Compute the floor from your own oracle price, not from the server's quote.
 
 | | Rust (`acta-maker-sdk`, feature `vault`) | TypeScript (`@acta-markets/ts-sdk/ws`) |
 |---|---|---|
 | Position open | `VaultOperatorClient::verify_and_sign_sponsored_tx` | `verifyAndSignSponsoredTx` |
 | Swap | `VaultOperatorClient::verify_and_sign_swap` | `verifyAndSignSwap` |
 | Verify only | `chain::vault::verify_vault_open` / `verify_vault_swap` | `flows.verifyVaultOpen` / `flows.verifyVaultSwap` from `/chain` |
-| Swap router | `chain::vault::JUPITER_V6_PROGRAM_ID` / `DEVNET_SWAP_ROUTER_ID` | `JUPITER_V6_PROGRAM` / `DEVNET_SWAP_ROUTER` from `/chain` |
+| Price routes | `PriceRoute::from_account` at `VaultAddresses::{main,second}_price_route` | `fetchVaultPriceRoutes` / `decodePriceRouteAccount` + `findPriceRoutePda` from `/chain` |
 
 Open intents: `Sale` / `"sale"` (vault writes for an external maker), `BetweenVaults` / `"betweenVaults"`, `Fill` / `"fill"` (an external taker writes against the vault's quote; for that taker's check). `terms` are the RFQ and quote terms. `maker_quote_signer` is the maker's `quote_signing` key (`GET /api/v1/makers` or its on-chain Maker account).
 
@@ -207,7 +223,7 @@ let signed = client.verify_and_sign_sponsored_tx(
 client.submit_signed_sponsored_tx(signed).await?;
 ```
 
-For swaps, `client.swap_quote(request)` returns the quote; pass it with `VaultSwapIntent { vault, request, quote, price_feeds: PairPriceFeeds { main, second, shards }, min_output_floor, router }` to `verify_and_sign_swap`, then `swap_submit_in_epoch(payload, epoch, gate)`: `epoch` is the connection epoch `wait_until_ready()` returned, and the swap is sent only on that connection and only if `gate` admits it (`Ungated` admits every send). `router` is required in Rust. The crate's `vault_operator` example (`cargo run --example vault_operator --features vault`) shows verified fill and swap signing.
+For swaps, `client.swap_quote(request)` returns the quote. Pass it with `VaultSwapIntent { vault, request, quote, price_routes: PairPriceRoutes { main, second, staging, shards }, min_output_floor }` to `verify_and_sign_swap`, then send it with `swap_submit_in_epoch(payload, epoch, gate)`. `epoch` is the connection epoch `wait_until_ready()` returned; the swap is sent only on that connection, and only if `gate` admits it (`Ungated` admits every send). `main` and `second` are the vault's decoded `PriceRoute`s. `staging` lists the routes of the mints you accept as a staging mint; pass `&[]` to refuse two-transaction swaps. `shards` lists the Pyth push-oracle shards you accept. The crate's `vault_operator` example (`cargo run --example vault_operator --features vault`) shows verified fill and swap signing.
 
 TypeScript:
 
@@ -231,7 +247,7 @@ vault.on("sponsoredTxToSign", async (orderIdHex, txBase64) => {
 
 vault.on("swapQuoteResult", async (quote) => {
   const submit = await verifyAndSignSwap({
-    intent: { vault: planner, request, quote, priceFeeds, minOutputFloor, router },
+    intent: { vault: planner, request, quote, priceRoutes, minOutputFloor },
     tables: await fetchAddressesForLookupTables(flows.servedLookupTableKeys(quote.tx_base64), rpc),
     bounds,
     signer: wallet,
@@ -240,7 +256,17 @@ vault.on("swapQuoteResult", async (quote) => {
 });
 ```
 
-`planner` is `await flows.VaultManagerPlanner.fromVault({ vault, actor, programAddress })`; `request` is the `SwapQuoteData` sent: the arguments to `vault.requestVaultSwapQuote(...)` plus its returned `request_id` and the `vault_pda`; `router` defaults to `JUPITER_V6_PROGRAM`, so set `DEVNET_SWAP_ROUTER` on devnet; `priceFeeds` is `await resolveVaultPriceFeeds(rpc, planner, shards)` from `@acta-markets/ts-sdk/chain`: the pair's Pyth feed ids and the push-oracle shards the deployment posts to (default `[0]`). The quote's `main_price_update` / `second_price_update` must each be one of those shards' accounts for its feed, or verification fails with `priceUpdate`.
+`planner` is `await flows.VaultManagerPlanner.fromVault({ vault, actor, programAddress })`; `request` is the `SwapQuoteData` sent: the arguments to `vault.requestVaultSwapQuote(...)` plus its returned `request_id` and the `vault_pda`; `priceRoutes` is `{ ...(await fetchVaultPriceRoutes(rpc, planner)), staging, shards }`. `fetchVaultPriceRoutes` comes from `@acta-markets/ts-sdk/chain`. `staging` lists the decoded routes of the mints you accept as a staging mint (`[]` refuses two-transaction swaps). `shards` lists the push-oracle shards the deployment posts to (default `[0]`). If the served price section differs from the routes on one of those shards, verification fails with `{ kind: "priceSection", leg }`.
+
+### Building swaps yourself
+
+A manager can also build a swap without the Acta server. In Rust, use `VaultManager::swap(kind, &VaultSwapPlan { price_section, amount_in, minimum_out, valid_until, hops })` with `VaultSwapKind::{Rebalance, Recovery, Closing, Staging}`. In TS, use `planner.swaps.spotRebalance(plan)`, `recoveryConvertToMain`, `closingConvertToMain` or `stagingSwap`. A Jupiter route from `GET /swap/v2/build` goes in as one hop with its accounts and data unchanged. The hop's program must be a registered venue (`["swap_venue", program]`). On the wire each hop is:
+
+```text
+account_count u8 | data_len u16 | amount_offset u16 (0xFFFF = none) | [scale_num u64 | scale_den u64] | data
+```
+
+The accounts are `venue PDA, program, source, destination`, followed by the hop's own accounts. A hop after the first may set `amount_offset`: the program then writes `floor(((received + 1) × num − 1) / den)` as a u64 at that byte offset of the hop's data, where `received` is how much the hop's source got earlier in the same swap. With `num == den` it writes `received` itself; a hop into Exponent's Generic SY `mint` uses `num` = SY index and `den` = 1e12. `amount_in` is the most the input leg may spend; the minimum output and drift apply to what was actually spent and received.
 
 ## Funding bought options
 
@@ -260,23 +286,26 @@ let fund = vault.fund_maker_position(&VaultPositionRef {
 let tx = Transaction::new_signed_with_payer(&[fund], Some(&operator.pubkey()), &[&operator], recent_blockhash);
 ```
 
-## Pyth freshness
+## Prices
 
-`ProcessVaultEquity`, `FinalizeVaultShutdown`, `EmergencyFinalizeWithdrawOnly`, manager top-ups and every swap read both legs' Pyth `PriceUpdateV2` accounts. The two finalizations skip the Pyth reads when the vault holds none of the second asset. Each account read must:
+Each vault mint is priced by its on-chain `PriceRoute` (`["price_route", mint]`), registered by Acta cold through the timelock. A route is a Pyth push feed, optionally multiplied by one on-chain rate:
 
-- carry the feed id of the vault's `OracleSource` and be fully verified;
-- be at most **60 s** old on the mainnet program (900 s on the devnet build) and at most 5 s in the future;
-- have publish times within 10 s of each other (900 s on the devnet build);
+- SOL, USDC: the mint's Pyth USD feed.
+- An LST: the stake pool's rate (SOL per LST) × SOL/USD.
+- An Exponent PT: the PT's value in SOL × SOL/USD. The value in SOL is `(1 + apy)^−τ × min(1, backing)`, where τ is the time to maturity, `apy` is set by Acta governance in the route, and backing is the SOL value per PT held in the Exponent vault. This is a policy valuation, not the market price.
+
+`ProcessVaultEquity`, `FinalizeVaultShutdown`, `EmergencyFinalizeWithdrawOnly`, manager top-ups and every swap carry a price section: each leg's route followed by the accounts the route reads. The two finalizations read prices only when the vault holds some of the second asset. A Pyth update must:
+
+- carry the route's feed id and be fully verified;
+- be no older than the route's `max_age` (60 s by default) and at most 5 s in the future;
 - have confidence at most 5% of price.
 
-Pyth's sponsored mainnet feeds update about once a minute, so a sponsored account can be just over 60 s old. If a step fails on staleness, retry after the next update or post your own verified update for the same feed. The feed accounts come from Rust `pyth_price_feed_account` / `oracle_source_pyth_feed`, or TS `resolveVaultPriceUpdates`.
+The two legs' newest Pyth publish times must be within the smaller of the two routes' `max_skew` (10 s by default). A stake-pool rate may lag the current epoch by at most the route's epoch lag (1 epoch for a PT route). Pyth's sponsored mainnet feeds update about once a minute, so a sponsored account can be just over 60 s old. If a step fails on staleness, retry after the next update, or push your own update to the feed. Build the section with Rust `VaultManager::price_section(main, second, shard)` or TS `resolveVaultPriceSection(rpc, planner, shard)`.
 
 ## Devnet differences
 
-The devnet program build differs from mainnet in two places:
-
-- **Swaps** go through a pool-backed mock router (`BtHXpaAvhaKYk9pR4vNpuMZLTR8XeXnZ4iTy2Q1NzuCz`), not Jupiter, which has no devnet deployment. Pass `DEVNET_SWAP_ROUTER` (TS) or `DEVNET_SWAP_ROUTER_ID` (Rust) as the swap intent's router; with the Jupiter default, verification rejects the served transaction.
-- **Pyth tolerances** are wider because devnet feeds publish less often and on independent cadences: up to 900 s staleness and 900 s between the two legs' publish times.
+- **Swaps** go through a pool-backed mock router (`BtHXpaAvhaKYk9pR4vNpuMZLTR8XeXnZ4iTy2Q1NzuCz`), registered as the devnet swap venue, not through Jupiter, which has no devnet deployment. The checked helpers need no router setting: they verify the served venue PDA.
+- **Price routes** are registered with wider Pyth tolerances, because devnet feeds publish less often and on independent cadences: up to 900 s staleness and 900 s between the two legs' publish times.
 
 ## If the operator disappears
 

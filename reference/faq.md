@@ -14,7 +14,7 @@ Events in flight during disconnect can be delivered again after recovery, for ex
 
 ### Can multiple maker bots share a single key?
 
-No. Only one active quote WebSocket per maker pubkey is allowed, alongside the separate data connection. A second quote connection replaces the first; the displaced session receives `Error` with `generic.code = "session_replaced"` and is closed. Use separate maker keys for parallel bots.
+No. Each maker pubkey gets one quote WebSocket on `/maker`. A second replaces the first with `Error` (`generic.code = "session_replaced"`); cancel-on-disconnect can cancel its quotes. Up to four `/maker/data` sessions may share the owner without replacing the quote session. After `GetMmSummary` recovery they receive `PositionUpdated`, `MakerCapsUpdated` and `TradeExecuted`. A fifth data session receives `AuthError` (`reason = "session_limit_exceeded"`). Use data sessions for monitoring, funding and standby; open the quote session only when taking over. Use separate maker keys for parallel quoting bots.
 
 ### Why was a quote rejected?
 
@@ -36,7 +36,7 @@ The server pre-filters RFQs against the maker's caps before broadcast. When a pr
 
 ### What is the appropriate value for `valid_until`?
 
-The hard floor is `now + min_quote_validity_seconds` (from `GET /api/v1/venue`, currently 100); lower values are rejected with `quote_expiry_too_short`. The hard ceiling is the market's `expiry_ts`; later values are rejected with `market_expired`. The server reserves the trailing `settlement_buffer_seconds` (currently 90) as the settlement buffer, so the trading cutoff is `valid_until` minus that buffer. Size the quote against the auction you are quoting into: `rfq.expires_at + min_quote_validity_seconds` covers the whole auction plus the settlement buffer and the refresh lead. Add a few seconds of slack for clock skew, and stay at or below market expiry. Longer windows leave stale quotes live without helping fills, because the taker cannot accept after `rfq.expires_at`. Track server clock offset from `Welcome.server_time_unix_ms` and `Pong.server_time_unix_ms`.
+The hard floor is `now + min_quote_validity_seconds` (from `Welcome` or `GET /api/v1/venue`, currently 100); lower values are rejected with `quote_expiry_too_short`. The hard ceiling is the market's `expiry_ts`; later values are rejected with `market_expired`. The server reserves the trailing `settlement_buffer_seconds` (currently 90) as the settlement buffer, so the trading cutoff is `valid_until` minus that buffer. Size the quote against the auction you are quoting into: `rfq.expires_at + min_quote_validity_seconds` covers the whole auction plus the settlement buffer and the refresh lead. Add a few seconds of slack for clock skew, and stay at or below market expiry. Longer windows leave stale quotes live without helping fills, because the taker cannot accept after `rfq.expires_at`. Track server clock offset from `Welcome.server_time_unix_ms` and `Pong.server_time_unix_ms`.
 
 ## Troubleshooting
 

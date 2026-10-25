@@ -33,7 +33,9 @@ All pubkeys/mints are base58, `order_id` is 64-char hex (optional `0x`), amounts
     "server_version": "0.1.0",
     "min_supported_version": "1.0.0",
     "enabled_features": [],
-    "server_time_unix_ms": 1710000000000
+    "server_time_unix_ms": 1710000000000,
+    "min_quote_validity_seconds": 100,
+    "settlement_buffer_seconds": 90
   }
 }
 ```
