@@ -519,6 +519,7 @@ branch for codes added later.
 | `internal_error` | Generic | Unexpected server failure; the message is sanitized |
 | `temporarily_unavailable` | Generic, AuthError | A dependency (database, Core, registry) is not ready; retry with backoff |
 | `clock_error` | Generic, AuthError | The server clock is before the Unix epoch |
+| `time_overflow` | Generic | The requested deadline cannot be represented |
 | `trading_paused` | Generic | Venue trading is paused; order-path messages are rejected |
 | `batch_quotes_too_large` | Generic | `BatchQuotes` exceeds `max_batch_quotes` |
 | `session_replaced` | Generic | A newer connection took over this session; do not reconnect automatically |
