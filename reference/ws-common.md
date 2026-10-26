@@ -554,6 +554,7 @@ branch for codes added later.
 | `invalid_query_scope` | Generic | `limit` or `cursor` sent with `scope: live` |
 | `market_not_found` | Generic | The market is not in the registry |
 | `invalid_program_id` | Generic | The server program id is misconfigured |
+| `insufficient_collateral` | Generic | Wallet taker cannot fund the RFQ collateral. `RfqRequest` is rejected before maker broadcast; `message` includes `required` and `available` in collateral atoms. |
 | `invalid_strike_notional` | Generic | Strike × quantity is zero or not representable on chain |
 | `invalid_quantity_size_rule` | Generic | The quantity is outside the size rule |
 | `missing_size_rule_for_underlying_mint` | Generic | No size rule is configured for the underlying |
