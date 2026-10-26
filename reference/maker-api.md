@@ -77,8 +77,8 @@ Protocol constraints:
     "min_supported_version": "1.0.0",
     "enabled_features": [],
     "server_time_unix_ms": 1710000000000,
-    "min_quote_validity_seconds": 100,
-    "settlement_buffer_seconds": 90
+    "min_quote_validity_seconds": 60,
+    "settlement_buffer_seconds": 50
   }
 }
 ```
@@ -308,7 +308,7 @@ Sent instead of `RfqBroadcast` when cap limits pre-filter the maker. `reason` is
 Rules:
 - `valid_until` MUST be >= `now + 100` seconds (server rejects shorter expiries with `quote_expiry_too_short`)
 - `valid_until` MUST be <= the market's `expiry_ts` (later expiries are rejected with `market_expired`)
-- The server applies a **settlement buffer** (`settlement_buffer_seconds` from `GET /api/v1/venue`, currently 90). Your quote is active for trading until `valid_until` minus that buffer. Set `valid_until` to at least `rfq.expires_at + min_quote_validity_seconds` (currently 100) so the quote stays tradable for the whole auction; the accepted floor is `now + min_quote_validity_seconds`.
+- The server applies a **settlement buffer** (`settlement_buffer_seconds` from `GET /api/v1/venue`, currently 50). Your quote is active for trading until `valid_until` minus that buffer. Set `valid_until` to at least `rfq.expires_at + min_quote_validity_seconds` (currently 60) so the quote stays tradable for the whole auction; the accepted floor is `now + min_quote_validity_seconds`.
 - `order_id = sha256(preimage182)`
 - maker signs only 32-byte `order_id`
 - if `order_options` is present, strike must be from that set

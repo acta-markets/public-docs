@@ -106,8 +106,8 @@ server configuration and change only on restart.
 ```json
 {
   "program_id": "ProgramIdBase58",
-  "min_quote_validity_seconds": 100,
-  "settlement_buffer_seconds": 90,
+  "min_quote_validity_seconds": 60,
+  "settlement_buffer_seconds": 50,
   "quote_refresh_lead_seconds": 10,
   "min_rfq_timeout_seconds": 5,
   "max_rfq_timeout_seconds": 120,

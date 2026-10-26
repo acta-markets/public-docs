@@ -717,12 +717,12 @@ rfq.signature_deadline
 - **`rfq.expires_at`** controls how long makers can submit quotes and the taker can accept. After this time new quoting/acceptance stops; an enqueued order remains unresolved until execution evidence arrives.
 - **`quote.valid_until`** is the cryptographic expiry the maker signs into the order. The on-chain program rejects settlement if `valid_until` has passed.
 
-Makers should normally choose `valid_until` beyond `expires_at` to cover settlement; this relationship is not a Core invariant. A taker might accept a quote at second 59 of a 60-second auction. After that, the server builds a sponsored tx, the taker signs it, and the tx confirms on Solana. This can take up to 90 seconds. If `valid_until` equaled `expires_at`, the on-chain order would expire before the tx lands.
+Makers should normally choose `valid_until` beyond `expires_at` to cover settlement; this relationship is not a Core invariant. A taker might accept a quote at second 59 of a 60-second auction. After that, the server builds a sponsored tx, the taker signs it, and the tx confirms on Solana. This can take up to 50 seconds. If `valid_until` equaled `expires_at`, the on-chain order would expire before the tx lands.
 
 ### Recommended `valid_until` range
 
 ```
-min:  now + min_signature_expiry_seconds          (default 100s)
+min:  now + min_signature_expiry_seconds          (default 60s)
 max:  rfq.expires_at + settlement_buffer_seconds  (recommended upper bound)
 hard max: market.expiry_ts
 ```
@@ -734,10 +734,10 @@ only increases the maker's exposure window without enabling additional trades.
 Values later than `market.expiry_ts` are rejected with
 `QuoteRejected.reason = "market_expired"`.
 
-Example: RFQ with `expires_at = now + 60s`, settlement buffer 90s:
+Example: RFQ with `expires_at = now + 60s`, settlement buffer 50s:
 
 ```
-valid_until range: [now + 100s, now + 150s]
+valid_until range: [now + 60s, now + 110s]
 effective_expiry:  [now + 10s,  now + 60s]
 ```
 
@@ -746,9 +746,9 @@ and the on-chain order is valid long enough for settlement to land.
 
 ### Invariants
 
-- `quote.valid_until >= now + min_signature_expiry_seconds` (default 100s; server rejects shorter expiries)
+- `quote.valid_until >= now + min_signature_expiry_seconds` (default 60s; server rejects shorter expiries)
 - `quote.valid_until <= market.expiry_ts` (hard server-side bound)
-- `effective_expiry = quote.valid_until - settlement_buffer` (default 90s)
+- `effective_expiry = quote.valid_until - settlement_buffer` (default 50s)
 - `rfq.expires_at < market.expiry_ts` (recommended client-side validation)
 - `signature_deadline <= min(effective_expiry, rfq.expires_at)`
 
