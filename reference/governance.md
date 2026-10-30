@@ -36,7 +36,7 @@ Hot wallet operations:
 - create, finalize, and close markets
 - create and close concrete oracle accounts from already-approved oracle sources
 - publish a post-expiry scalar settlement price to an oracle account. `UpdateOraclePrice` checks the live `hot_authority`, and works for the hot wallet only while no settlement attestor is configured: once `GlobalConfig.settlement_attestor` is set, direct hot publication is rejected on-chain (`SettlementAttestationRequired`) and settlement requires `UpdateOraclePriceAttested` with an Ed25519 attestation from that key — a 2-of-2 of hot key and attestor key. The cold authority retains a break-glass direct path
-- co-sign `OpenPosition`
+- co-sign every position open (`OpenPosition`, `OpenSpread` and the vault open instructions)
 - withdraw collected protocol fees
 
 The hot wallet cannot modify cold configuration, rotate itself, bypass maker quote signatures, or bypass taker transaction signatures.
@@ -54,7 +54,7 @@ The guardian cannot queue pending actions, rotate itself, rotate the hot wallet,
 
 ### Permissionless exits
 
-Settlement and liquidation are permissionless. Any signer may settle an expired position or liquidate an ITM unfunded position. Pause does not block exits.
+Settlement and liquidation are permissionless. Any signer may settle a position once its market is finalized. Any signer may liquidate an ITM, unfunded physical position (covered call or cash-secured put) after finalization. Call spreads, put spreads and cash puts settle in cash and have no liquidation path. Pause does not block exits.
 
 ## Authority Matrix
 
@@ -90,9 +90,9 @@ Settlement and liquidation are permissionless. Any signer may settle an expired 
 | Unfreeze vault (`UnfreezeVault`) | Cold | Immediate |
 | Start vault emergency unwind (`EmergencyStartUnwind`, irreversible) | Cold | Immediate |
 | Withdraw protocol fees | Hot wallet | Immediate |
-| Open position | Hot wallet + taker tx signer + maker Ed25519 quote | Immediate |
-| Settle position | Permissionless | After market finalization |
-| Liquidate position | Permissionless | ITM + unfunded |
+| Open position (`OpenPosition` op 7, `OpenSpread` op 77; vault variants ops 41, 42, 61, 78, 79, 80) | Hot wallet + taker tx signer + maker Ed25519 quote | Immediate; rejected while paused |
+| Settle position (all products) | Permissionless | After market finalization |
+| Liquidate position (physical only) | Permissionless | After finalization; ITM + unfunded |
 
 ## Timelock
 
@@ -117,6 +117,9 @@ Timelockable wrapped opcodes:
 | 29 | `SetSettlementAttestor` |
 | 30 | `RevokeSettlementAttestor` |
 | 26 | `UpdateActionTimelock` |
+| 73 | `SetPriceRoute` |
+| 74 | `ClosePriceRoute` |
+| 75 | `SetSwapVenue` |
 | 70 | `SetVaultManagerStakeMinBps` |
 | 71 | `SetVaultCapitalFallbackDelay` |
 
@@ -149,7 +152,7 @@ While paused, `OpenPosition`, the vault position opens, `VaultSpotRebalance` and
 
 ## Settlement Attestation
 
-`GlobalConfig.settlement_attestor` optionally names an independent Ed25519 second signer for hot settlement publication. While it is unset (all-zero), `UpdateOraclePrice` behaves as described above. Once set (`SetSettlementAttestor`, cold-only), the hot wallet's direct call fails with `SettlementAttestationRequired`; settlement then requires `UpdateOraclePriceAttested`, where an Ed25519 verify instruction signed by the attestor over a domain-separated message must immediately precede the update in the same transaction. The cold authority keeps the direct path as break-glass (Ed25519 precompile instructions cannot be produced through Squads CPI). `RevokeSettlementAttestor` (cold-only) clears the key and deliberately returns hot settlement to direct mode; the 32-byte replay domain is retained so signatures can never be replayed across deployments.
+`GlobalConfig.settlement_attestor` optionally names an independent Ed25519 second signer for hot settlement publication. The attestor signs a price it computes itself from Pyth Benchmarks history; the contract verifies the signature and message binding, not the computation. The policy is described in [Protocol flow](protocol-flow.md#settlement-fixing). While it is unset (all-zero), `UpdateOraclePrice` behaves as described above. Once set (`SetSettlementAttestor`, cold-only), the hot wallet's direct call fails with `SettlementAttestationRequired`; settlement then requires `UpdateOraclePriceAttested`, where an Ed25519 verify instruction signed by the attestor over a domain-separated message must immediately precede the update in the same transaction. The message binds the program, global config, oracle, price, expiry, `issued_at`, `valid_until` and calculation version. `issued_at` must be at or after the expiry, the window may not exceed 300 s, and the current time must lie inside it. The cold authority keeps the direct path as break-glass (Ed25519 precompile instructions cannot be produced through Squads CPI). `RevokeSettlementAttestor` (cold-only) clears the key and deliberately returns hot settlement to direct mode; the 32-byte replay domain is retained so signatures can never be replayed across deployments.
 
 `CorrectOraclePrice` (cold-only, immediate, not timelocked) overwrites a settlement price that has already been published. It fails if no price is set yet (`OraclePriceNotSet`) and rejects a zero, out-of-range or unchanged price (`OracleInvalidPrice`). Markets copy the price when they are finalized, so a correction only affects markets on that oracle that are not yet finalized. Once a price is published, by any path, further hot or attested publication fails with `OracleAlreadyUpdated`, so this is the only way to change it.
 

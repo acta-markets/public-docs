@@ -2,7 +2,7 @@
 
 ## Overview
 
-- [Protocol flow](reference/protocol-flow.md) — actors, RFQ mechanics, trade lifecycle, economics, fees, risk
+- [Protocol flow](reference/protocol-flow.md) — products and lifecycles, RFQ mechanics, economics and fees, funding deadline, settlement fixing, expiries, risk
 
 ## Quickstart
 
@@ -15,7 +15,7 @@
 
 ## Vaults
 
-- [Vault operator guide](quickstart/vault-operator-guide.md) — roles, cycle, trading and checked signing, funding, fallbacks
+- [Vault operator guide](quickstart/vault-operator-guide.md) — roles, cycle, trading options and spreads, checked signing, funding, fallbacks
 - [Vault HTTP endpoints](reference/http-api.md#vaults) — vault, position, cycle and depositor reads
 
 ## Reference
@@ -25,6 +25,6 @@
 - [WS common conventions](reference/ws-common.md) — encodings, units, collateral formulas, timeouts
 - [HTTP API](reference/http-api.md) — REST endpoints, reference data (venue, tokens, markets), vaults
 - [Capacity limits](reference/caps.md) — OI caps, maker limits, monitoring
-- [Governance and security](reference/governance.md) — cold/hot authority split, authority matrix, on-chain timelock
+- [Governance and security](reference/governance.md) — cold/hot authority split, authority matrix, on-chain timelock, settlement attestation
 - [Sandbox / Devnet](reference/sandbox.md) — test environment, endpoints, program addresses
 - [FAQ](reference/faq.md) — common questions and troubleshooting

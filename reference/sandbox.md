@@ -83,8 +83,8 @@ Authentication uses the same Ed25519 challenge-response as production.
 
 | Feature | Details |
 |---------|---------|
-| Markets | Created by the Acta team; SOL/USDC pairs are typical |
-| Rate limits | 30 msg/s sustained, 60 burst (same as production) |
+| Markets | Created by the Acta team; SOL/USDC pairs are typical. Each market row lists the `products` it accepts, including spreads and cash puts |
+| Rate limits | Same as production: 30 msg/s, burst 60 per connection; quote messages use a separate bucket of 50/s, burst 100. See [Rate limits and admission](ws-common.md#rate-limits-and-admission) |
 | Caps | Test values; may differ from production |
 | Indicative pricing | Supported |
 | Sponsored tx signing | Supported |
@@ -112,7 +112,7 @@ Browsers obtain current reference prices from the selected backend through [`Get
 
 | Address | Value |
 |---------|-------|
-| Program ID | `33Ezs5eoa16QyPW8wifnyz2nCyMEcq2crqkVBNjnTE8U` |
+| Program ID | `33Ezs5eoa16QyPW8wifnyz2nCyMEcq2crqkVBNjnTE8U` (the same on devnet and mainnet) |
 
 ### PDA derivation
 
@@ -120,7 +120,7 @@ Browsers obtain current reference prices from the selected backend through [`Get
 |-----|-------|
 | Maker account | `["maker", maker_owner_pubkey]` |
 
-PDA derivation follows on-chain program logic. See the [Maker API reference](maker-api.md) and [Maker quickstart](../quickstart/maker-quickstart.md).
+`GET /api/v1/venue` returns `program_id`, which is authoritative. PDA derivation follows on-chain program logic. See the [Maker API reference](maker-api.md) and [Maker quickstart](../quickstart/maker-quickstart.md).
 
 ## Support
 

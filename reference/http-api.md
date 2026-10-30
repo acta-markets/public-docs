@@ -29,9 +29,9 @@ Codes (HTTP status):
 - `db_disabled` (503) — server runs without a database; permanent, do not retry
 - `db_busy` (503) — database pool exhausted or query timed out; retry with backoff
 - `server_busy` (503) — global in-flight limit reached; retry with backoff
-- `unavailable`, `caps_projection_unavailable`, `chain_replay_unavailable`, `position_history_unavailable` (503) — the backing projection is not established yet; retry with backoff
+- `unavailable`, `caps_projection_unavailable`, `chain_replay_unavailable`, `position_history_unavailable`, `venue_unavailable` (503) — the backing projection or program id is not available yet; retry with backoff
 - `token_metadata_incomplete`, `missing_size_rule_for_underlying_mint` (503) — `/tokens` while an active market lacks decimals or a size rule
-- `history_projection_incomplete`, `caps_projection_incomplete`, `data_validation_error`, `schema_error`, `db_error`, `invalid_program_id`, `encode_failed`, `invalid_stats` (500)
+- `history_projection_incomplete`, `caps_projection_incomplete`, `data_validation_error`, `schema_error`, `db_error`, `encode_failed`, `invalid_stats` (500)
 
 WebSocket codes are a separate set; see the [WS error code catalog](ws-common.md#ws-error-codes).
 
@@ -86,7 +86,8 @@ Every response carries a strong `ETag` and `Cache-Control`:
 
 | Route | `Cache-Control` |
 |---|---|
-| `/venue`, `/tokens` | `public, max-age=60` |
+| `/venue` | `public, no-cache` |
+| `/tokens` | `public, max-age=60` |
 | `/markets` | `public, max-age=5` |
 
 Send the last `ETag` back in `If-None-Match`; an unchanged body returns `304 Not Modified` with no
@@ -100,11 +101,14 @@ filtered query, so compare it only with that request.
 
 ### GET `/api/v1/venue`
 
-Program id and the limits the server validates against. `null` means no limit. The values come from
-server configuration and change only on restart.
+Program id, protocol fees and the limits the server validates against. The values come from server
+configuration and change only on restart. `program_id` is authoritative; devnet and mainnet use the
+same program id.
 
 ```json
 {
+  "protocol_fee_bps_premium": 100,
+  "protocol_fee_bps_volume": 10,
   "program_id": "ProgramIdBase58",
   "min_quote_validity_seconds": 60,
   "settlement_buffer_seconds": 50,
@@ -112,26 +116,31 @@ server configuration and change only on restart.
   "min_rfq_timeout_seconds": 5,
   "max_rfq_timeout_seconds": 120,
   "signature_timeout_seconds": 30,
-  "max_quotes_per_rfq": 50,
-  "max_active_rfqs_per_taker": 50,
+  "max_quotes_per_rfq": { "type": "limited", "value": 50 },
+  "max_active_rfqs_per_taker": { "type": "unlimited" },
   "pre_expiry_cutoff_seconds": 10800
 }
 ```
 
 | Field | Meaning |
 |---|---|
+| `protocol_fee_bps_premium` | Premium fee in basis points of the premium. See the [fee model](ws-common.md#fee-model) |
+| `protocol_fee_bps_volume` | Volume fee in basis points of the exposure: strike notional for physical products, width notional for spreads and cash puts. The charged fee is the smaller of the two fees |
+| `program_id` | The Acta program id |
 | `min_quote_validity_seconds` | Minimum `valid_until - now` accepted on a quote; at least `settlement_buffer_seconds + quote_refresh_lead_seconds`. Use this value, not the sum |
 | `settlement_buffer_seconds` | A quote stops being acceptable at `valid_until - settlement_buffer_seconds` |
 | `quote_refresh_lead_seconds` | How long before that cutoff the server sends `QuoteRefreshRequested` |
 | `min_rfq_timeout_seconds` / `max_rfq_timeout_seconds` | Accepted range for `RfqRequest.timeout_seconds` |
 | `signature_timeout_seconds` | Time a taker has to return a signed sponsored transaction |
-| `max_quotes_per_rfq` | Quotes kept per RFQ, or `null` |
-| `max_active_rfqs_per_taker` | Concurrent open RFQs per taker, or `null` |
+| `max_quotes_per_rfq` | `CountLimit`: quotes kept per RFQ |
+| `max_active_rfqs_per_taker` | `CountLimit`: concurrent open RFQs per taker |
 | `pre_expiry_cutoff_seconds` | Default no-trade window before market expiry; a market may override it |
 
-The example shows the server defaults; deployments may differ, so read the live endpoint.
+`CountLimit` is a tagged union: `{ "type": "unlimited" }` or `{ "type": "limited", "value": N }`.
 
-`500` `invalid_program_id` when the server's program id is misconfigured.
+The example shows one configuration; read the live endpoint for the values.
+
+`503` `venue_unavailable` when the program id or protocol fees are not available.
 
 ### GET `/api/v1/tokens`
 
@@ -145,24 +154,30 @@ Every token of the active markets, once, sorted by mint. Markets reference token
       "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
       "symbol": "USDC",
       "decimals": 6,
-      "oracle_feed_ids": ["eaa020c61cc479712813461ce153894a96a6c00b21ed0cfc2798d1f9a9e9c94a"]
+      "oracle_feed_ids": ["eaa020c61cc479712813461ce153894a96a6c00b21ed0cfc2798d1f9a9e9c94a"],
+      "role": { "type": "quote" }
     },
     {
       "mint": "So11111111111111111111111111111111111111112",
       "symbol": "SOL",
       "decimals": 9,
       "oracle_feed_ids": ["ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"],
-      "size_rule": { "min_size": 100000000, "max_size": 1000000000000, "step": 10000000 },
-      "strike_tick": 500000000,
-      "quote_mints": ["EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"]
+      "role": {
+        "type": "underlying",
+        "size_rule": { "min_size": 100000000, "max_size": 1000000000000, "step": 10000000 },
+        "strike_tick": 500000000,
+        "quote_mints": ["EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"]
+      }
     }
   ]
 }
 ```
 
 `TokenInfo` is the same object on WS; field meanings are in
-[WS common conventions](ws-common.md#tokeninfo). `size_rule`, `strike_tick` and `quote_mints` are
-present only on underlyings; `oracle_feed_ids` is omitted when no feed is known.
+[WS common conventions](ws-common.md#tokeninfo). `role` is `quote` or `underlying`; `size_rule`,
+`strike_tick` and `quote_mints` exist only inside the `underlying` role. `strike_tick` is 1e9
+scaled like strikes (`500000000` is 0.5 quote units). `oracle_feed_ids` is `[]` when no feed is
+known.
 
 `503` when token metadata is inconsistent (for example the same mint with two decimal values) or an
 underlying has no configured size rule (`code: "missing_size_rule_for_underlying_mint"`, as on WS).
@@ -192,7 +207,8 @@ Query (all optional):
       "expiry_ts": 1767225600,
       "is_put": true,
       "status": "finalized",
-      "settlement_price": 150000000000
+      "settlement_price": 150000000000,
+      "products": ["cash_secured_put", "put_spread", "cash_put"]
     },
     {
       "pda": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
@@ -200,11 +216,18 @@ Query (all optional):
       "quote": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
       "expiry_ts": 4102444800,
       "is_put": false,
-      "status": "active"
+      "status": "active",
+      "settlement_price": null,
+      "products": ["covered_call", "call_spread"]
     }
   ]
 }
 ```
+
+`products` lists the products enabled for the pair that fit the market's side: a subset of
+`cash_secured_put`, `put_spread` and `cash_put` on a put market, a subset of `covered_call` and
+`call_spread` on a call market. A market with none is not listed. `settlement_price` is `null`
+until the market is settled.
 
 | `status` | Meaning |
 |---|---|
@@ -216,7 +239,7 @@ Query (all optional):
 started, so a market finalized before the last restart is missing. Use your own records or the
 chain for older markets.
 
-There is no single-market route; `GET /api/v1/markets/{pda}` was removed. Filter the list, or use
+There is no single-market route. Filter the list, or use
 `GetMarketDescriptors` on WS for the full descriptor (oracle PDAs, decimals, collateral and
 settlement mints).
 
@@ -234,16 +257,14 @@ settlement mints).
       "owner": "MakerOwnerBase58",
       "quote_signing": "MakerQuoteSigningBase58",
       "total_trades": 12,
-      "total_volume": 1000000,
-      "total_volume_exact": "1000000",
+      "total_volume": "1000000",
       "total_quotes": 55
     }
   ]
 }
 ```
 
-`total_volume_exact` is authoritative and always present. `total_volume` is the same figure as a
-JSON number and is `null` when the total does not fit in a `u64`.
+`total_volume` is a decimal string.
 
 ### GET `/api/v1/makers/{pda}`
 
@@ -289,6 +310,7 @@ Optional query: `delegate=<pubkey>` returns only vaults that key can operate as 
       "primary_delegate": "DelegateBase58",
       "main_mint": "MainMintBase58",
       "second_mint": "SecondMintBase58",
+      "second_leg_generation": "0",
       "share_mint": "ShareMintBase58",
       "main_token_program": "legacy_spl",
       "second_token_program": "legacy_spl",
@@ -316,8 +338,7 @@ Optional query: `delegate=<pubkey>` returns only vaults that key can operate as 
       "last_hwm_update_ts": "1710000000",
       "last_hwm_reset_ts": "0",
       "last_settlement_ts": "1710000000",
-      "cap_limit": "0",
-      "capacity": { "cap_limit": "0", "remaining": null },
+      "capacity": { "type": "limited", "cap_limit": "1000000000", "remaining": "800000000" },
       "capital_fallback_delay_secs": "43200",
       "deposit_window_set_ts": "1709990000",
       "main_balance": "1000000",
@@ -327,6 +348,7 @@ Optional query: `delegate=<pubkey>` returns only vaults that key can operate as 
       "observed_manager_stake_shares": "50000000",
       "balance_chain_slot": "312000000",
       "staging": null,
+      "staged_generation": "0",
       "policy": {
         "max_open_positions": 8,
         "max_rebalance_drift_bps": 200,
@@ -377,8 +399,10 @@ Optional query: `delegate=<pubkey>` returns only vaults that key can operate as 
         "name": "SOL vault",
         "curator": "Acta",
         "strategy": "Weekly covered calls on SOL",
+        "description": null,
         "website": "https://acta.markets",
-        "twitter": "acta_markets"
+        "twitter": "acta_markets",
+        "logo_url": null
       }
     }
   ]
@@ -393,15 +417,16 @@ Optional query: `delegate=<pubkey>` returns only vaults that key can operate as 
 | `total_shares` | Boundary checkpoint adjusted for contract mint/burn — **not** live SPL supply. Use `live_share_supply` for the observed supply. |
 | `main_balance`, `second_balance`, `balance_updated_at`, `live_share_supply`, `observed_manager_stake_shares`, `balance_chain_slot` | All `null` together when no balance observation has landed yet. |
 | `capital_fallback_delay_secs` | Delay (default `43200`, max `259200`) after which anyone, not only the operator, may process a queued request. In `idle` it counts from the request's `created_at`; in `processing_capital` it counts from `active_expiry`. In `idle`, deposits also need priced equity, which a non-operator can only compute with an aged withdraw request; otherwise cancel the deposit. |
-| `staging` | `null` unless half of a [two-transaction swap](../quickstart/vault-operator-guide.md#two-transaction-swaps) is open: `{ "mint", "from_leg": "main" \| "second", "amount", "staged_at" }`. `amount` (atoms of `mint`, decimal string) has left `from_leg` for the vault's account of `mint` and is not counted in `equity`. `staged_at` (Unix seconds) is the first stage. Capital processing waits until it is back. |
+| `staging` | `null` unless half of a [two-transaction swap](../quickstart/vault-operator-guide.md#two-transaction-swaps) is open: `{ "mint", "from_leg": "main" \| "second", "amount", "staged_at", "generation" }`. `amount` (atoms of `mint`, decimal string) has left `from_leg` for the vault's account of `mint` and is not counted in `equity`. `staged_at` (Unix seconds) is the first stage. Capital processing waits until it is back. |
 | `deposit_window_set_ts` | Chain time of the last `SetAcceptingDeposits`, or `null` if the window was never set. |
 | `projection` | Position of this row in the venue's on-chain event history. Compare `slot` / `transaction_index` / `event_index` to detect staleness. |
-| `capacity` | `remaining = max(0, cap_limit − equity − pending_deposit_amount)` in main atoms; `null` when `cap_limit` is `0` (uncapped). |
+| `second_leg_generation`, `staged_generation` | Generation counters, decimal strings. |
+| `capacity` | Tagged union. `{ "type": "unlimited" }` when the on-chain cap is `0`. Otherwise `{ "type": "limited", "cap_limit", "remaining" }` in main atoms, with `remaining = max(0, cap_limit − equity − pending_deposit_amount)`. |
 | `created_at` | Chain time of the vault's creation; `null` until the stats snapshot has loaded. |
 | `tvl_usd_1e9`, `price_time` | Indicative: `equity` at the main mint's USD oracle price (1e9 scale) and that price's time; both `null` without a fresh price. |
 | `generation_started_at`, `premium`, `fees`, `depositors_in_generation` | From one stats snapshot, `null` unless its generation equals `capital_generation` and the generation is covered (see `performance`). `premium`: per quote mint, quote atoms received as writer and paid as holder (gross premium) in the current cycle and the generation. `fees`: assessed management and performance fees and realized fee value of the generation, in main atoms. `depositors_in_generation`: wallets with a processed deposit in the generation. |
 | `performance` | `null` until stats load or when the snapshot is from another generation. `capital_generation` and `computed_at` label the snapshot (refreshed every 60 s). `covered: false` means the generation's history is incomplete: every metric is `null`. `returns` per window (`7d`, `30d`, `90d`, `all`): booked share price return after fees, in percent (`1.0` = 1%), with the checkpoint times it spans; `null` when the generation is younger than the window. `apy_30d`, `apy_90d`: the 30- and 90-day returns annualized by compounding (APY). `max_drawdown_pct`: largest peak-to-trough fall of the booked share price. `worst_cycle_return_pct`, `losing_cycles`, `cycles_completed`: finished cycles of the generation. |
-| `metadata` | Optional display fields curated by the operator: `name`; optional `curator`, `strategy`, `description`, `website` and `logo_url` (`https://` URLs) and `twitter` (a bare handle, no `@`). Omitted when none are set; edits appear within about a minute. Display only; `governance` is the authority, so show it next to the name. |
+| `metadata` | `null` when the operator set none. Otherwise an object with `name` and the nullable fields `curator`, `strategy`, `description`, `website` and `logo_url` (`https://` URLs) and `twitter` (a bare handle, no `@`); all seven keys are present. Edits appear within about a minute. Display only; `governance` is the authority, so show it next to the name. |
 
 ### GET `/api/v1/vaults/{pda}`
 
@@ -429,6 +454,7 @@ Query:
       "market": "MarketPdaBase58",
       "position_type": "covered_call",
       "strike": "1000000000",
+      "product": { "kind": "physical" },
       "quantity": "1000000",
       "net_premium": "25000000",
       "counterparty": "CounterpartyBase58",
@@ -448,12 +474,15 @@ Query:
 | Field | Values / meaning |
 |---|---|
 | `role` | `writer` (the vault posted collateral) or `holder` (the vault bought the option) |
-| `position_type` | `covered_call`, `cash_secured_put` |
+| `position_type` | `covered_call`, `cash_secured_put`, `call_spread`, `put_spread`, `cash_put` |
+| `strike` | Strike in 1e9 scale. The lower strike for `call_spread` and `put_spread`; `K` for a cash put, equal to its `upper_strike` |
+| `product` | `{ "kind": "physical" }` for covered calls and cash-secured puts. `{ "kind": "spread", "upper_strike", "collateral" }` for spreads and cash puts: the upper strike and the quote atoms the position reserves |
+| `net_premium` | Net premium in quote atoms after the protocol fee; negative for a `holder` row |
 | `status` | `open`, `funded`, `liquidated`, `settled` |
 | `is_otm` | `null` until the market is finalized |
 | `next_cursor` | `slot:transaction_index:event_index:position`. Opaque — pass it back verbatim. `null` on the last page. |
 
-A malformed `cursor`, including the legacy position cursor format, returns `400` with code `invalid_cursor`.
+A malformed `cursor` returns `400` with code `invalid_cursor`.
 
 ### GET `/api/v1/vaults/{pda}/exposure`
 
@@ -655,23 +684,23 @@ authenticated maker/taker session protocols for participant-specific state.
 ```json
 {
   "usd": { "notional_24h": "1500.00", "premium_24h": "49.00", "priced_trades_24h": 149 },
-  "total_volume_24h": 1000000,
-  "total_volume_24h_exact": "1000000",
+  "total_volume_24h": "1000000",
   "total_trades_24h": 150,
+  "spread_trades_24h": 20,
   "active_markets": 12,
   "active_makers": 5,
   "connected_makers": 3
 }
 ```
 
-This differs from WS `GlobalStats` in `Snapshot` and `StatsUpdate`. HTTP includes `connected_makers` (live WS sessions) and omits `total_price_24h` and `active_rfqs`.
+This differs from WS `GlobalStats` in `Snapshot` and `StatsUpdate`. HTTP includes `connected_makers` (live WS sessions) and `spread_trades_24h`, and omits `total_price_24h` and `active_rfqs`. The route needs the database (`503` `db_disabled` without one).
 
 `usd` separates underlying notional from gross paid premium, both as exact decimal
 dollar strings. Prices are captured from the trusted local oracle cache when the
 signed transaction is submitted; only confirmed trades are counted. USDC uses its
 oracle price too. `priced_trades_24h < total_trades_24h` means some confirmed trades
 lack a stored USD valuation; those are not repriced using today's market.
-The legacy `total_volume_24h` fields are raw aggregates, not dollars.
+`total_volume_24h` is a raw aggregate string, not dollars.
 
 ---
 
