@@ -474,7 +474,7 @@ Success has no `CommandAccepted`: the RFQ, active or awaiting your signature, cl
 }
 ```
 
-A failure is a `RequestError` whose `delivery` is `not_forwarded` or `unknown`. Unless every submission you made for the order returned `not_forwarded`, resolve it with `GetOrderStatus` before signing anything new. See [RequestError](ws-common.md#requesterror--request-correlated-errors).
+A failure is a `RequestError` whose `delivery` is `not_forwarded` or `unknown`. Unless every submission you made for the order returned `not_forwarded`, resolve it with `GetOrderStatus` before signing anything new. See [RequestError](ws-common.md#requesterror-request-correlated-errors).
 
 ### OrderAccepted (server -> taker)
 

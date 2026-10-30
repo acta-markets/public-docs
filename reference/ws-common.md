@@ -490,7 +490,7 @@ Endpoint-policy violations use a typed error rather than closing the socket:
 
 Endpoint values are `maker`, `maker_data`, `taker`, and `vault`.
 
-### RequestError — request-correlated errors
+### RequestError: request-correlated errors
 
 Sent when the server can correlate the failure to a specific client request. The `request_id`
 echoes the client's `request_id` from the originating message:
