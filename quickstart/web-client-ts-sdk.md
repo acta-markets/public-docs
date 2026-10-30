@@ -165,7 +165,7 @@ await ws.createRfq({
   market: marketPdaBase58,
   terms: { type: "covered_call", strike: 136_000_000_000 },
   side: "sell",
-  quantity: 5_000_000_000, // 5 SOL in lamports
+  quantity: 1_000_000_000, // 1 SOL in lamports; must satisfy size_rule
   timeoutSeconds: 30,
   requestId: crypto.randomUUID(), // required; also the idempotency key
 });

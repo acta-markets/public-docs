@@ -46,14 +46,15 @@ The hard floor is `now + min_quote_validity_seconds` (from `Welcome` or `GET /ap
 
 ### `order_id_mismatch`
 
-The `order_id` must equal the SHA-256 hash of the order preimage laid out in [`maker-api.md`](maker-api.md) (Quote rules): 182 bytes for covered calls and cash-secured puts, 190 bytes for spreads and cash puts. Common causes:
+The `order_id` must equal the SHA-256 hash of the order preimage laid out under [Order id preimage](maker-api.md#order-id-preimage): 182 bytes for covered calls and cash-secured puts, 190 bytes for spreads and cash puts. Common causes:
 
 - **Endianness.** All `u64` fields are written little-endian in the binary preimage.
 - **Field offsets.** Offsets are exact (`domain_tag` at byte 0, `chain_id` at byte 4, `program_id` at byte 12, etc.). A single-byte misalignment cascades through the remainder of the preimage.
+- **`maker` field.** It is the `maker_owner` pubkey, not the maker PDA and not the `quote_signing` key. A vault operator's quote uses the vault PDA.
 - **`taker` field.** The `taker` field in the preimage carries the taker's pubkey from `RfqBroadcast`, not the maker's pubkey.
 - **`is_taker_buy` byte.** It is derived from `side`. Only `sell` is accepted, so the byte is `0`. The taker is always the option writer.
 
-The Rust SDK's `compute_order_id()` builds this preimage. Other languages should test against a known-good preimage and `order_id` pair before deployment.
+The Rust SDK's `compute_order_id()` handles the 182-byte layout and `orders::compute_spread_order_id()` the 190-byte layout. Other languages should test against the [test vectors](maker-api.md#test-vectors) before deployment.
 
 ### `rfq_not_active`
 

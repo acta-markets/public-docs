@@ -164,12 +164,15 @@ The products differ in what the collateral is:
 `quantity` maps directly to the deposit: `quantity = userInput * 10^underlying_decimals`.
 
 **Cash-secured put** — user deposits quote (e.g. USDC).
-The collateral relationship is: `collateral = quantity * strike / 1e9`.
-Convert quote input to underlying quantity before sending:
+The collateral is `floor(strike * quantity * 10^quote_decimals / (1e9 * 10^underlying_decimals))`, in quote atoms.
+To turn a budget in quote atoms into a quantity, round down, then snap to the [size rule](taker-api.md#marketdescriptors-payload):
 
 ```
-quantity = round(quoteAmount * 10^underlying_decimals * 1e9 / strike)
+raw      = floor(quoteAtoms * 1e9 * 10^underlying_decimals / (strike * 10^quote_decimals))
+quantity = min_size + floor((raw - min_size) / step) * step
 ```
+
+Stop if `raw < min_size`, and cap `quantity` at `max_size`. Rounding up would need more collateral than the budget, and a quantity off the step is rejected with `invalid_quantity_size_rule`. For 100 USDC at strike 136 with 9 and 6 decimals, `min_size` 10000000 and `step` 10000000: `raw` is 735294117, `quantity` is 730000000 and the collateral is 99280000.
 
 And to display the deposit back in quote terms:
 
@@ -183,7 +186,8 @@ quoteAmount = quantity * strike / 1e9 / 10^underlying_decimals
 in the quote mint. The width is `upper_strike - lower_strike` for a spread and `strike` for a cash
 put (a put spread with legs `(0, strike)`). The collateral in quote atoms is
 `ceil(width * quantity * 10^quote_decimals / (1e9 * 10^underlying_decimals))`. The gross price
-`G` per underlying unit satisfies `0 < G < width`.
+`G` per underlying unit satisfies `0 < G < width`. To size from a quote budget, use the formulas
+above with `width` in place of `strike`.
 
 ### Size rule display for CSP
 
@@ -206,6 +210,8 @@ Example: SOL/USDC CSP, strike $90 (90e9), `size_rule = {min: 1e9, max: 10e9, ste
 
 The TS SDK provides helpers for these conversions: `quoteAmountToQuantity`,
 `quantityToQuoteAmount`, `sizeRuleInQuoteTerms` (exported from `@acta-markets/ts-sdk/ws`).
+`quoteAmountToQuantity` takes whole quote tokens, rounds to the nearest atom and ignores the size
+rule, so snap its result before sending.
 
 ## Time and clock skew
 
@@ -493,21 +499,22 @@ echoes the client's `request_id` from the originating message:
 {
   "type": "RequestError",
   "data": {
-    "request_id": "uuid",
-    "error": { "type": "RfqNotFound" }
+    "request_id": "1e3a5c7e-9b0d-4f26-8a4c-6e8a0c2e4f93",
+    "error": { "type": "RfqNotFound" },
+    "delivery": null
   }
 }
 ```
 
 The inner `error` has the same `ServerError` shape as `Error.data`.
 
-Failures of `SubmitSignedSponsoredTx` and `SwapSubmit` also carry `delivery`:
+`delivery` is always present. It is `null` except on failures of `SubmitSignedSponsoredTx` and `SwapSubmit`:
 
 ```json
 {
   "type": "RequestError",
   "data": {
-    "request_id": "uuid",
+    "request_id": "1e3a5c7e-9b0d-4f26-8a4c-6e8a0c2e4f93",
     "error": { "type": "Generic", "data": { "code": "vault_swap_quote_expired", "message": "Vault swap quote expired" } },
     "delivery": "not_forwarded"
   }
@@ -518,8 +525,8 @@ Failures of `SubmitSignedSponsoredTx` and `SwapSubmit` also carry `delivery`:
 
 - `not_forwarded`: this request was rejected before it was handed to the keeper (routing gates,
   validation, a pre-enqueue rejection).
-- `unknown`: this request may have reached the keeper pipeline (timeouts, queue errors, Core
-  timeout, `order_already_submitted`). Resolve it with `GetOrderStatus` (orders) or
+- `unknown`: this request may have reached the keeper pipeline (timeouts, queue errors,
+  `kernel_timeout`, `order_already_submitted`). Resolve it with `GetOrderStatus` (orders) or
   `GetSwapStatus` / `SwapSettled` (Vault swaps).
 
 It says nothing about earlier attempts with the same signed transaction. Treat an order or swap as
@@ -565,6 +572,76 @@ Typed variant examples:
 
 Generic codes and `AuthError` reasons are listed in the [WS error code catalog](#ws-error-codes).
 
+### ServerError catalog
+
+This is the closed set of `type` values. A variant without `data` has no `data` key: `{ "type": "RfqNotFound" }`. Enum values are lowercase snake_case strings.
+
+| `type` | `data` | Meaning |
+|---|---|---|
+| `Unauthenticated` | `{ action }` | The action needs an authenticated session |
+| `Unauthorized` | `{ role, action }` | Only `role` may do this |
+| `RfqNotFound` | none | The RFQ does not exist |
+| `RfqNotActive` | none | The RFQ is not accepting quotes |
+| `RfqAlreadyLocked` | none | Another order holds the RFQ |
+| `InvalidState` | `{ state }` | The RFQ is in the wrong state for this command |
+| `QuoteLocked` | `{ reason }` | The quote cannot be changed |
+| `QuoteNotFound` | none | The quote does not exist or is already gone |
+| `QuoteExpired` | none | The quote has expired |
+| `QuoteExpiryTooShort` | `{ min_seconds }` | `valid_until` is less than `min_seconds` from now |
+| `InvalidStrike` | none | The strike is not allowed on this RFQ |
+| `InvalidValidUntil` | none | `valid_until` is invalid |
+| `OrderIdMismatch` | none | `order_id` does not match the order |
+| `UnknownOrder` | none | The server does not know this `order_id` |
+| `SignatureTimeout` | none | The signature window closed; select another quote |
+| `OracleNotReady` | none | The underlying oracle is not available yet; retry |
+| `OraclePriceStale` | `{ age_seconds }` | The oracle price is `age_seconds` old |
+| `OraclePriceNotReady` | none | The oracle has no usable price yet |
+| `InvalidPositionType` | none | The product does not fit the market's side |
+| `InvalidMarket` | `{ pubkey }` | `pubkey` is not a valid market |
+| `MarketMetadataIncomplete` | `{ details }` | Active markets lack oracle PDAs or decimals |
+| `TokenMetadataIncomplete` | `{ details }` | Active markets lack token decimals |
+| `RateLimit` | a `RateLimitReason` string | A resource limit was hit |
+| `Cap` | a `CapError` object | A cap was hit. See [`caps.md`](caps.md) |
+| `InternalError` | none | Unexpected server failure |
+| `KernelNotAvailable` | none | The matching engine is not available; retry |
+| `DbDisabled` | `{ feature }` | This read needs a database and the server has none |
+| `ServerShuttingDown` | none | The server is draining; reconnect |
+| `InviteRequired` | none | The taker wallet must redeem an invite |
+| `Invite` | an `InviteErrorReason` string | The invite was refused |
+| `Claim` | a `ClaimErrorReason` string | The referral code claim was refused |
+| `WrongEndpoint` | `{ endpoint, allowed_endpoints }` | The message is not accepted on this endpoint |
+| `Generic` | `{ code, message }` | `code` is in the [WS error code catalog](#ws-error-codes) |
+
+| Field or string | Values |
+|---|---|
+| `action` | `submit_quotes`, `cancel_quotes`, `create_rfqs`, `accept_quotes`, `submit_signed_tx`, `cancel_rfqs`, `access_rfq`, `request_positions`, `subscribe`, `unsubscribe`, `read_maker_data` |
+| `role` | `maker`, `taker`, `owner` |
+| `state` | `not_active`, `not_pending_signature`, `cannot_be_cancelled` |
+| `reason` | `rfq_locked`, `order_submitted` |
+| `min_seconds`, `age_seconds` | Integer seconds |
+| `feature` | `maker_positions`, `maker_markets`, `market_descriptors`, `expiries`, `tokens`, `mm_summary`, `my_quotes`, `my_trades` |
+| `endpoint`, `allowed_endpoints` | `maker`, `maker_data`, `taker`, `vault` |
+| `InviteErrorReason` | `invalid_code`, `code_exhausted`, `code_expired`, `code_disabled`, `code_owner_inactive`, `code_owner_blacklisted`, `already_registered`, `internal_error` |
+| `ClaimErrorReason` | `not_registered`, `invalid_format`, `code_taken`, `reserved`, `internal_error` |
+
+`RateLimitReason` is in the [Maker](maker-api.md#ratelimitreason-in-typed-rate_limit-error) and [Taker](taker-api.md#ratelimitreason-in-typed-ratelimit-error) references. `CapError` is in [CapError](maker-api.md#caperror).
+
+```json
+{ "type": "Error", "data": { "type": "QuoteLocked", "data": { "reason": "rfq_locked" } } }
+```
+
+```json
+{ "type": "Error", "data": { "type": "QuoteExpiryTooShort", "data": { "min_seconds": 60 } } }
+```
+
+```json
+{ "type": "Error", "data": { "type": "OraclePriceStale", "data": { "age_seconds": 120 } } }
+```
+
+```json
+{ "type": "Error", "data": { "type": "DbDisabled", "data": { "feature": "mm_summary" } } }
+```
+
 JavaScript integrators must preserve integer precision: a wire `u64` can exceed `Number.MAX_SAFE_INTEGER`. TS SDK represents most WS amounts as `number`; for an oversized amount literal it reports `unsafe_integer` and drops the whole frame, so the matching event never fires; recover state with a read (`GetMyActiveRfqs`, `GetOrderStatus`). Inbound nonces have separate lossless handling. For full-range raw JSON amounts, use lossless parsing and bigint arithmetic; `BigInt(JSON.parse(...).amount)` cannot repair precision already lost. This does not change the wire encoding or the `1e9` scale.
 
 ## WS error codes
@@ -585,7 +662,7 @@ receives a code outside this set fails to decode the frame.
 | `server_overloaded` | Generic | The admission limit for this message class is full; retry with backoff. A full connection command queue sends it uncorrelated and closes with `4003` |
 | `server_busy` | Generic, AuthError | A bounded internal queue (auth, RFQ creation) is full; retry |
 | `internal_error` | Generic | Unexpected server failure; the message is sanitized |
-| `temporarily_unavailable` | Generic, AuthError | A dependency (database, Core, registry) is not ready; retry with backoff |
+| `temporarily_unavailable` | Generic, AuthError | A dependency (database, matching engine, registry) is not ready; retry with backoff |
 | `clock_error` | Generic, AuthError | The server clock is before the Unix epoch |
 | `time_overflow` | Generic | The requested deadline cannot be represented |
 | `trading_paused` | Generic | Venue trading is paused; order-path messages are rejected |
@@ -593,7 +670,7 @@ receives a code outside this set fails to decode the frame.
 | `session_replaced` | Generic | A newer connection took over this session; do not reconnect automatically |
 | `session_expired` | Generic, AuthError | The session or resume credential expired; authenticate again |
 | `session_limit_exceeded` | AuthError | Too many concurrent sessions for this identity |
-| `session_conflict` | Generic | Core no longer binds this session to the identity |
+| `session_conflict` | Generic | The server no longer binds this session to the identity |
 | `blacklisted` | Generic, AuthError | The identity is blacklisted; terminal |
 | `maker_unregistered` | Generic | The maker left the registry while connected; the connection closes |
 | `maker_not_registered` | Generic, AuthError | The pubkey is not a registered maker |
@@ -616,6 +693,7 @@ receives a code outside this set fails to decode the frame.
 | `subscription_scope_too_large` | Generic | The subscription mint filter exceeds its limit |
 | `history_projection_incomplete` | Generic | A history read lacks listener metadata; retrying does not help until reconciliation |
 | `invalid_limit` | Generic | Page `limit` outside the accepted range for the query |
+| `invalid_timeout` | Generic | `timeout_seconds` outside the venue's `min_rfq_timeout_seconds` to `max_rfq_timeout_seconds` |
 | `market_not_found` | Generic | The market is not in the registry |
 | `invalid_program_id` | Generic | The server program id is misconfigured |
 | `unsupported_protocol_version` | Generic | `Hello.protocol_version` is not `1.0.0`; followed by close `4006` |
@@ -642,7 +720,7 @@ receives a code outside this set fails to decode the frame.
 | `quote_refresh_required` | Generic | The quote must be refreshed; the maker got `QuoteRefreshRequested` |
 | `duplicate_quote` | Generic | Duplicate quote `order_id` |
 | `resource_limit` | Generic | A per-identity resource limit was reached |
-| `kernel_timeout` | Generic | Core did not answer in time; a submission's outcome is unknown |
+| `kernel_timeout` | Generic | The matching engine did not answer in time; a submission's outcome is unknown |
 | `caps_authority_unavailable` | Generic | Quote risk authority changed; request a new quote |
 | `vault_not_tradable` | Generic | A Vault counterparty cannot take this position now |
 | `invalid_vault_counterparty` | Generic | Writer and holder must be distinct Vaults |
@@ -765,7 +843,7 @@ When your outbound queue is full, the server handles a pushed message in one of 
 
 | Audience | Critical | Best-effort |
 |---|---|---|
-| `/maker` | `RfqBroadcast`, `QuoteReceived`, `QuoteAcknowledged`, `QuoteRefreshRequested`, `OrderAccepted`, `SponsoredTxToSign`, `OrderSubmitted`, `OrderConfirmed`, `OrderFailed`, `MarketCreated`, `MarketFinalized`, `VaultCatalogChanged`, `VaultProjectionAdvanced` | `TradeExecuted`, `ChainEvent`, `StatsUpdate`, `RfqSkipped`, `IndicativePricesRequest` |
+| `/maker` | `RfqBroadcast`, `QuoteAcknowledged`, `QuoteRefreshRequested`, `MarketCreated`, `MarketFinalized`, `VaultCatalogChanged`, `VaultProjectionAdvanced` | `TradeExecuted`, `ChainEvent`, `StatsUpdate`, `RfqSkipped`, `IndicativePricesRequest` |
 | `/taker` | everything except `StatsUpdate` | `StatsUpdate` |
 | `/maker/data`, `/vault` | everything | — |
 
@@ -780,10 +858,10 @@ trade counts or irreversible actions from the number of received frames.
 ```
 market.expiry_ts
   └─ rfq.expires_at                     # Auction window (no new quotes or accepts after this)
-       └─ quote_refresh_lead
 
 quote.valid_until                        # Cryptographic expiry (on-chain enforcement)
   └─ effective_expiry                    # = valid_until - settlement_buffer (server-side trading cutoff)
+       └─ refresh point                  # = effective_expiry - quote_refresh_lead (quote freezes)
 
 rfq.signature_deadline
   └─ tx_submit_timeout
@@ -796,40 +874,41 @@ rfq.signature_deadline
 - **`rfq.expires_at`** controls how long makers can submit quotes and the taker can accept. After this time new quoting/acceptance stops; an enqueued order remains unresolved until execution evidence arrives.
 - **`quote.valid_until`** is the cryptographic expiry the maker signs into the order. The on-chain program rejects settlement if `valid_until` has passed.
 
-Makers should normally choose `valid_until` beyond `expires_at` to cover settlement; this relationship is not a Core invariant. A taker might accept a quote at second 59 of a 60-second auction. After that, the server builds a sponsored tx, the taker signs it, and the tx confirms on Solana. This can take up to 50 seconds. If `valid_until` equaled `expires_at`, the on-chain order would expire before the tx lands.
+Choose `valid_until` beyond `expires_at`. A taker can accept in the last second of an auction. The signature deadline is capped at `expires_at`, and the signed transaction confirms on Solana after that. If `valid_until` equaled `expires_at`, the quote would freeze before the auction ended, and the on-chain order could expire before the transaction lands.
 
 ### Recommended `valid_until` range
 
 ```
-min:  now + min_signature_expiry_seconds          (default 60s)
-max:  rfq.expires_at + settlement_buffer_seconds  (recommended upper bound)
-hard max: market.expiry_ts
+hard min:    now + min_quote_validity_seconds             (default 60 s)
+recommended: rfq.expires_at + min_quote_validity_seconds  (plus a little slack)
+hard max:    market.expiry_ts
 ```
 
-Setting `valid_until` above the recommended max but no later than
-`market.expiry_ts` is accepted, but provides no benefit: after
-`rfq.expires_at` the server will not allow accepts, so extra on-chain validity
-only increases the maker's exposure window without enabling additional trades.
-Values later than `market.expiry_ts` are rejected with
-`QuoteRejected.reason = "market_expired"`.
+`min_quote_validity_seconds` comes from `Welcome` or `GET /api/v1/venue`. It covers the settlement
+buffer and the refresh lead. At `valid_until - settlement_buffer_seconds - quote_refresh_lead` the
+server freezes the quote and sends `QuoteRefreshRequested`. The recommended value keeps that point
+at or after `rfq.expires_at`, so the quote stays acceptable for the whole auction.
 
-Example: RFQ with `expires_at = now + 60s`, settlement buffer 50s:
+Values below the hard min are rejected with `quote_expiry_too_short`. Values later than
+`market.expiry_ts` are rejected with `market_expired`. A value far above the recommended one is
+accepted, but after `rfq.expires_at` the server allows no accepts, so it only widens the maker's
+exposure window.
+
+Example: RFQ with `expires_at = now + 60s`, settlement buffer 50 s, refresh lead 10 s:
 
 ```
-valid_until range: [now + 60s, now + 110s]
-effective_expiry:  [now + 10s,  now + 60s]
+valid_until:      now + 120s
+effective_expiry: now + 70s
+refresh point:    now + 60s
 ```
-
-The maker's quote is tradeable for up to 60 seconds (the full RFQ lifetime)
-and the on-chain order is valid long enough for settlement to land.
 
 ### Invariants
 
-- `quote.valid_until >= now + min_signature_expiry_seconds` (default 60s; server rejects shorter expiries)
+- `quote.valid_until >= now + min_quote_validity_seconds` (default 60 s; the server rejects shorter expiries)
 - `quote.valid_until <= market.expiry_ts` (hard server-side bound)
-- `effective_expiry = quote.valid_until - settlement_buffer` (default 50s)
+- `effective_expiry = quote.valid_until - settlement_buffer_seconds` (default 50 s)
 - `rfq.expires_at < market.expiry_ts` (recommended client-side validation)
-- `signature_deadline <= min(effective_expiry, rfq.expires_at)`
+- `signature_deadline = min(accept time + signature_timeout, effective_expiry, rfq.expires_at)`
 
 `signature_deadline` appears in `QuoteSelected` (server -> maker; see [maker-api.md](maker-api.md)) and `SponsoredTxToSign` (server -> taker; see [taker-api.md](taker-api.md)).
 

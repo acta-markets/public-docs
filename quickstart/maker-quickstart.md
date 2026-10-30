@@ -93,7 +93,7 @@ On `RfqBroadcast`, first verify the [market PDA and terms](../reference/maker-ap
 - Covered call and cash-secured put: the strike of `rfq.terms` or of an entry in `rfq.order_options`.
 - Spread and cash put: exactly `rfq.terms`.
 
-Compute the premium, set `now + min_quote_validity_seconds <= valid_until <= market.expiry_ts` (read `min_quote_validity_seconds` from `GET /api/v1/venue` at startup; do not hardcode it) and keep `valid_until − settlement_buffer_seconds` after now. Build the order preimage from [`../reference/maker-api.md`](../reference/maker-api.md) (Quote rules): 182 bytes for covered calls and cash-secured puts, 190 bytes for spreads and cash puts. Hash it to `order_id`, sign the 32-byte hash with `quote_signing`, and send `Quote`:
+Compute the premium, set `now + min_quote_validity_seconds <= valid_until <= market.expiry_ts` (read `min_quote_validity_seconds` from `GET /api/v1/venue` at startup; do not hardcode it) and keep `valid_until − settlement_buffer_seconds` after now. Build the [order preimage](../reference/maker-api.md#order-id-preimage): 182 bytes for covered calls and cash-secured puts, 190 bytes for spreads and cash puts. Its `maker` field is the `maker_owner` pubkey. Check your builder against the [test vectors](../reference/maker-api.md#test-vectors). Hash it to `order_id`, sign the 32-byte hash with `quote_signing`, and send `Quote`:
 
 ```json
 {
@@ -131,7 +131,7 @@ A spread quote repeats the RFQ's two strikes:
 
 Spread and cash-put prices must satisfy `0 < price < width`, where `width` is `upper_strike − lower_strike` (`strike` for a cash put). The gross premium in quote atoms must be positive and below the collateral `C = ceil(width * quantity * 10^quote_decimals / (1e9 * 10^underlying_decimals))`. Otherwise the quote is rejected with `spread_premium_invalid`. For the 100/120 call spread above with 1 SOL (`quantity` 1000000000, 9 and 6 decimals), `C` is 20000000 and the gross premium is 5000000.
 
-The protocol fee is `min(premium fee, volume fee)`. The venue publishes `protocol_fee_bps_premium` and `protocol_fee_bps_volume` on `GET /api/v1/venue`. The formulas are under [Cash settlement and fees](../reference/maker-api.md#cash-settlement-and-fees). The authoritative net premium for a fill is `total_premium` on its position row.
+The protocol fee is `min(premium fee, volume fee)`. The venue publishes `protocol_fee_bps_premium` and `protocol_fee_bps_volume` on `GET /api/v1/venue`. The formulas are under [Cash settlement and fees](../reference/maker-api.md#cash-settlement-and-fees). The authoritative net premium for a fill is `total_premium` on its position row. The maker's cost is the gross premium, and the fee is that cost minus `total_premium`.
 
 When an RFQ permits several strikes, each strike requires a distinct quote. Prefer `BatchQuotes` for several strikes or RFQs: one frame and one `BatchQuotesAck` instead of one message per quote. Each quote requires its own `order_id` and `nonce`. A new quote on the same `(rfq_id, terms)` replaces the prior quote for that pair.
 
@@ -159,14 +159,14 @@ Lifecycle events are keyed by `order_id`. `RfqClosed` is the terminal event for 
 | `RfqAvailableAgain` | Settlement reverted; the auction has reopened. The maker may re-quote with a fresh `order_id`. |
 | `RfqClosed` | Terminal RFQ event. Drop per-RFQ state. |
 
-Book money from the position row, not from the fill. `PositionUpdated` carries the full row with `total_premium`, the net premium in quote atoms after the protocol fee. Each row has a `revision`; apply a row only if its revision is newer than the stored one for the same `pda`. Position `state` is `open`, `funded`, `liquidated` or `settled`. A settled row carries `settlement`, either `physical` or `cash`.
+Book money from the position row, not from the fill. `PositionUpdated` carries the full row with `total_premium`, the net premium the taker received, in quote atoms. The maker's cost is the gross premium `floor(price * quantity * 10^quote_decimals / (1e9 * 10^underlying_decimals))`, and the fee is that cost minus `total_premium`. Each row has a `revision`; apply a row only if its revision is newer than the stored one for the same `pda`. Position `state` is `open`, `funded`, `liquidated` or `settled`. A settled row carries `settlement`, either `physical` or `cash`.
 
 ## On-chain responsibilities
 
 Quoting and the lifecycle above are entirely off-chain (WebSocket). Your only on-chain actions as a maker are funding-related:
 
-- `DepositPremium` — deposit program quote balance; **required before quoting** (the fill's premium debit draws from it). `WithdrawPremium` retrieves idle balance.
-- `DepositFundsToPosition` — optional, after a covered-call or cash-secured-put fill: fund the settlement leg (`open` → `funded`) to avoid the ITM-unfunded liquidation loss. Spreads and cash puts have no funded step.
+- `DepositPremium` — deposit program quote balance; **required before quoting** (the fill's premium debit draws from it). [Layout](../reference/sandbox.md#on-chain-maker-instructions). `WithdrawPremium` retrieves idle balance.
+- `DepositFundsToPosition` — optional, after a covered-call or cash-secured-put fill: fund the settlement leg (`open` → `funded`) to avoid the ITM-unfunded liquidation loss. Spreads and cash puts have no funded step. [Layout](../reference/sandbox.md#on-chain-maker-instructions).
 
 You do **not** settle or liquidate. Publishing the settlement price and finalizing markets is operator-side; settlement is keeper-driven; liquidating ITM-unfunded physical positions is permissionless. Your downside is bounded — fund the settlement leg of a physical position, or a third party liquidates and fronts the taker payout. See [`../reference/protocol-flow.md`](../reference/protocol-flow.md) for the risk model.
 
@@ -215,7 +215,7 @@ Recover in this order after reauthentication. Use `/maker/data` for the data rea
 
 **3. Position book.** Apply `MmSummary.positions` by revision. The summary holds the newest 500 positions. If `positions_has_more` is `true`, page `GetMakerPositions` to the end.
 
-**4. Money.** Book premium from `total_premium` on the position rows.
+**4. Money.** Book net premium from `total_premium` on the position rows. The maker's cost is the gross premium; the fee is that cost minus `total_premium`.
 
 **5. Unfinished orders.** For each local order that has no terminal outcome and is not in the Live set, send `GetOrderStatus` and wait for the response before the next one. Stop at the first rejection (`RequestError`), fix the cause, and resume from that order.
 
@@ -281,10 +281,8 @@ Discovery returns tradable markets only (non-finalized, non-disabled, before the
 | `valid_until` margin | `rfq.expires_at + min_quote_validity_seconds` plus a little slack, capped at `market.expiry_ts`, with `min_quote_validity_seconds` from `GET /api/v1/venue`. Values below `now + min_quote_validity_seconds` or after market expiry are rejected; going far beyond the auction plus the settlement buffer only widens the maker's exposure window. |
 | Clock skew | Track `offset = server_time − local_time` from `Welcome` and `Pong`. Apply when computing `valid_until`. |
 | Quote concurrency | One active quote per `(rfq_id, terms)`. Repricing via `ReplaceQuote`. |
-| Quote rate | `50` quote tokens/s sustained, `100` burst per connection. `Quote`, `ReplaceQuote`, `CancelQuote` and `CancelAllQuotes` cost one token each; `BatchQuotes` costs one token per quote. Over it, quotes are rejected with `rate_limited` and cancels get a `RequestError`; the connection stays up. |
-| Message rate | `30 msg/s` sustained, `60` burst per WebSocket connection for all other messages. Over it the server sends a `rate_limited` error (a `RequestError` when the message carried a `request_id`) and closes with `4003 rate_limited`; on `/maker` with `on_disconnect: "cancel_quotes"` the disconnect then removes active and retained non-winning quotes (selected/executing orders survive). |
-| Query rate | `20 query tokens/s` sustained, `40` burst per WebSocket connection. |
+| Rate limits | [Rate limits and admission](../reference/ws-common.md#rate-limits-and-admission). A breach of the message rate closes the connection with `4003`; on `/maker` with `on_disconnect: "cancel_quotes"` the disconnect then removes active and retained non-winning quotes. |
 | Message size | `32 KiB` inbound WS message limit. |
-| Batch quotes | Hard max `50` quote elements; cost is `max(1, quotes.length)` quote tokens. Prefer one `BatchQuotes` over many single `Quote` messages. |
+| Batch quotes | Prefer one `BatchQuotes` over many single `Quote` messages. |
 
 The server sends WebSocket protocol pings every 30 seconds and closes idle connections after 90 seconds. WebSocket libraries that do not answer protocol pings will disconnect. If a correct client still drops, check proxies or firewalls that close idle TCP connections.

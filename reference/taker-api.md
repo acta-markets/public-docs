@@ -79,16 +79,7 @@ Auth is one of:
 - max message size: `32 KiB`
 - max connections per IP: `50`
 
-Rate limits (token buckets, per connection unless stated):
-
-| Bucket | Sustained | Burst | Covers | On breach |
-|---|---|---|---|---|
-| Message | `30 msg/s` | `60` | every client message | `rate_limited`, then close `4003` |
-| Wallet | `50 msg/s` | `100` | all connections of the same wallet | `rate_limited`, then close `4003` |
-| RFQ | `10 msg/s` | `20` | `RfqRequest`, `AcceptQuote`, `CancelRfq` | `rate_limited`, connection stays open |
-| Query | `20 msg/s` | `40` | `Get*` and subscription messages | `rate_limited`, connection stays open |
-
-Retry with exponential backoff and jitter. Full table: [Rate limits and admission](ws-common.md#rate-limits-and-admission).
+Rate limits: [Rate limits and admission](ws-common.md#rate-limits-and-admission). Retry with exponential backoff and jitter.
 
 ### Taker auth lifecycle
 
@@ -286,7 +277,7 @@ Admission rules for `RfqRequest`:
 
 - The product's side must match the market: a put product on a call market (or the reverse) fails with the typed error `InvalidPositionType`.
 - The product must be enabled for the pair, otherwise `product_not_allowed`. `MarketInfo.products` lists the enabled products.
-- Spreads need `lower_strike < upper_strike`, and a call spread needs `lower_strike > 0`; otherwise `spread_invalid_strikes`. A cash put needs `strike > 0`.
+- Spreads need `0 < lower_strike < upper_strike`, otherwise `spread_invalid_strikes`. A put with a zero lower leg is a `cash_put`, which needs `strike > 0`.
 - Both spread strikes, and the cash put strike, must be multiples of the underlying's `strike_tick` (a `TokenInfo` field, `1e9`-scaled); otherwise `spread_tick_violation`. A missing tick fails with `missing_tick_for_underlying_mint`.
 - `covered_call` and `cash_secured_put` strikes must give a positive collateral amount that fits on chain (`invalid_strike_notional`).
 - `quantity` must satisfy the underlying's size rule (`invalid_quantity_size_rule`).
@@ -298,11 +289,11 @@ Spreads and cash puts are cash-settled in the quote mint. Their lifecycle is Ope
 - **Width** `W` is `upper_strike - lower_strike` for a spread and `strike` for a cash put.
 - **Collateral** `C = ceil(W * quantity * 10^quote_decimals / (1e9 * 10^underlying_decimals))`, in quote atoms. The taker posts `C`.
 - **Gross price** `G` is per underlying unit, `1e9`-scaled, and satisfies `0 < G < W`. A maker quote outside that range is rejected with `spread_premium_invalid`, so a taker never receives one.
-- **Protocol fee** is `min(premium_fee, volume_fee)`. `premium_fee` is `protocol_fee_bps_premium` of the gross premium. `volume_fee` is `protocol_fee_bps_volume` of the exposure, which is the width notional `ceil(W * quantity ...)` for spreads and cash puts and the strike notional for physical products. Read both values from `GET /api/v1/venue`.
+- **Protocol fee** is `min(premium_fee, volume_fee)`. With `quote(x) = floor(x * quantity * 10^quote_decimals / (1e9 * 10^underlying_decimals))`, `premium_fee` is `quote(G) - quote(G - floor(G * protocol_fee_bps_premium / 10000))`. `volume_fee` is `floor(quote(exposure) * protocol_fee_bps_volume / 10000)`, where `exposure` is `W` for spreads and cash puts and `strike` for physical products. Read both rates from `GET /api/v1/venue`.
 - **Net premium** is gross premium minus the fee, in quote atoms. The taker receives it at open. It is the `total_premium` of the position row.
 - **At expiry** the maker receives `ceil(min(intrinsic, W) * quantity ...)` in quote atoms, capped at `C`. The taker receives the rest of `C`. `intrinsic` is `max(settlement_price - lower_strike, 0)` for a call spread, `max(upper_strike - settlement_price, 0)` for a put spread, and `max(strike - settlement_price, 0)` for a cash put.
 
-Example: put spread `(130, 140)`, 5 SOL (`quantity = 5000000000`), SOL has 9 decimals and USDC has 6.
+Example: put spread `(130, 140)`, 5 SOL (`quantity = 5000000000`), SOL has 9 decimals and USDC has 6. The 5 SOL in these examples may exceed a deployment's `max_size`; read `size_rule` first.
 
 | Quantity | Value |
 |---|---|
@@ -337,9 +328,15 @@ The fee bps in the example are illustrative. `QuoteReceived.net_price` is `null`
 }
 ```
 
-`request_id` correlates the reply and is the idempotency key: repeating it returns the RFQ it created. The reply is exactly one `CommandAccepted { request_id }` or `RequestError { request_id, error, delivery }`; see [correlation semantics](ws-common.md#correlation-semantics). `quantity` is in underlying atoms for every product. `timeout_seconds` is clamped to the venue range `min_rfq_timeout_seconds` .. `max_rfq_timeout_seconds` published at `GET /api/v1/venue`.
+`request_id` correlates the reply and is the idempotency key: repeating it returns the RFQ it created. The reply is exactly one `CommandAccepted { request_id }` or `RequestError { request_id, error, delivery }`; see [correlation semantics](ws-common.md#correlation-semantics). `quantity` is in underlying atoms for every product. `timeout_seconds` must be within the venue range `min_rfq_timeout_seconds` to `max_rfq_timeout_seconds`; a value outside it is rejected with `invalid_timeout`.
 
-A wallet taker whose collateral balance cannot fund the RFQ is rejected before broadcast with `insufficient_collateral`.
+A wallet taker's collateral is checked before broadcast. The wallet's token account must hold the full amount, or the RFQ is rejected with `insufficient_collateral`. If the server cannot read the balance, the RFQ goes ahead and an underfunded fill fails on chain:
+
+- covered call: `quantity` of the underlying;
+- cash-secured put: the strike notional at the highest strike in `terms` and `order_options`;
+- spread or cash put: `C`.
+
+The premium does not count, although it reaches the wallet in the same transaction, before the collateral leaves. For a covered call on wSOL, native SOL counts too: the wSOL balance plus the wallet's SOL, less `1200000` lamports. The transaction wraps the shortfall. The keeper pays the transaction fee and the rent of new accounts.
 
 ### CommandAccepted (server -> client)
 
@@ -481,7 +478,7 @@ A failure is a `RequestError` whose `delivery` is `not_forwarded` or `unknown`. 
 
 ### OrderAccepted (server -> taker)
 
-Sent when `SubmitSignedSponsoredTx` is accepted into Core's `Enqueued` state. It is not chain confirmation. An exact `AcceptQuote` retry on a locked order may also receive this liveness ACK while its signing payload is being built, or after enqueueing. The initial `AcceptQuote` locks the quote and starts building `SponsoredTxToSign`.
+Sent when `SubmitSignedSponsoredTx` is accepted and queued for execution. It is not chain confirmation. An exact `AcceptQuote` retry on a locked order may also receive this liveness ACK while its signing payload is being built, or after enqueueing. The initial `AcceptQuote` locks the quote and starts building `SponsoredTxToSign`.
 
 ```json
 {
@@ -561,7 +558,7 @@ The response has no `order_version`, `rfq_id` or `tx_signature`. Lookup failures
 
 No `OrderFailed` reason authorizes a client-side replay. Treat every one as non-retryable and reconcile execution instead.
 
-The keeper retries retryable submission failures within a five-attempt budget. Exhausting it does not prove nonexecution or guarantee a WebSocket `OrderFailed` or `RfqAvailableAgain`. An uncertain keeper failure leaves Core `Enqueued`; only a locally proven-unforwarded failure can reopen or close the RFQ. Follow `RfqAvailableAgain` and `RfqClosed`, and query `GetOrderStatus` for unresolved execution. Rollback discards the winner; refresh the available quotes instead of replaying that order.
+The keeper retries retryable submission failures within a five-attempt budget. Exhausting it does not prove nonexecution or guarantee a WebSocket `OrderFailed` or `RfqAvailableAgain`. An uncertain keeper failure leaves the order queued; only a locally proven-unforwarded failure can reopen or close the RFQ. Follow `RfqAvailableAgain` and `RfqClosed`, and query `GetOrderStatus` for unresolved execution. Rollback discards the winner; refresh the available quotes instead of replaying that order.
 
 ### RfqAvailableAgain (server -> taker)
 
@@ -798,9 +795,9 @@ See [Protocol Flow](protocol-flow.md) for the settlement scenarios.
 
 Delivery is best-effort, with loss surfaced as a disconnect. Everything a taker receives except `StatsUpdate` is critical: owner-direct pushes (`RfqCreated`, `QuoteReceived`, `QuotesUpdate`, `RfqClosed`, `PositionUpdated`, `TradeExecuted`, and the order lifecycle `OrderAccepted`, `SponsoredTxToSign`, `OrderSubmitted`, `OrderConfirmed`, `OrderFailed`) and subscribed broadcasts (`ChainEvent`, market events). Each is delivered reliably or, if it cannot be delivered under backpressure, dropped, after which the server closes the connection. A lost critical message therefore always surfaces as a disconnect. Only `StatsUpdate` may drop silently.
 
-After `AuthSuccess`, re-read `GetMyActiveRfqs`, `GetPositions` and `GetOrderStatus` for unresolved orders. These reads have different authorities: live RFQs come from Core; positions are a chain-derived database projection; the execution lookup combines pending obligations and execution evidence. They are not one atomic snapshot, and absence from a single response does not prove nonexecution.
+After `AuthSuccess`, re-read `GetMyActiveRfqs`, `GetPositions` and `GetOrderStatus` for unresolved orders. These reads have different authorities: live RFQs come from live server state; positions are a chain-derived database projection; the execution lookup combines pending obligations and execution evidence. They are not one atomic snapshot, and absence from a single response does not prove nonexecution.
 
-A successful `ResumeAuth` completes the Core handoff before `AuthSuccess`: ownership transfers from the previous physical connection of the same auth session. A fresh credential for the same wallet does not perform that transfer.
+A successful `ResumeAuth` completes the handoff before `AuthSuccess`: ownership transfers from the previous physical connection of the same auth session. A fresh credential for the same wallet does not perform that transfer.
 
 | Recovered state | Client action |
 |---|---|
@@ -1299,7 +1296,7 @@ Two error message types: `Error` (connection-level) and `RequestError` (request-
 }
 ```
 
-`delivery` is `null` except for `SubmitSignedSponsoredTx` failures, where it is `not_forwarded` or `unknown`.
+`delivery` is `null` except for `SubmitSignedSponsoredTx` and `SwapSubmit` failures, where it is `not_forwarded` or `unknown`.
 
 Parsing rule for taker integrations:
 
@@ -1310,23 +1307,9 @@ Parsing rule for taker integrations:
 
 `WsErrorCode` is a closed set. Every code is in the [WS error code catalog](ws-common.md#ws-error-codes).
 
-`ServerError` variants (PascalCase on the wire; variants without data are `{ "type": "RfqNotFound" }`):
-- `RfqNotFound`, `RfqNotActive`, `RfqAlreadyLocked`
-- `QuoteNotFound`, `QuoteExpired`
-- `SignatureTimeout`
-- `InvalidPositionType`, `InvalidMarket`
-- `OracleNotReady`, `OraclePriceNotReady`, `OraclePriceStale`
-- `MarketMetadataIncomplete`, `TokenMetadataIncomplete`
-- `Cap` (position, notional, liability or balance cap exceeded)
-- `RateLimit` (data is a reason code)
-- `KernelNotAvailable`
-- `ServerShuttingDown`
-- `Unauthenticated`, `Unauthorized`
-- `InviteRequired` (taker not registered; redeem an invite)
-- `Invite` (data is an `InviteErrorReason` string, for example `"invalid_code"`)
-- `Claim` (data is a `ClaimErrorReason` string, for example `"code_taken"`)
+Every typed `ServerError` variant and its `data` is in the [ServerError catalog](ws-common.md#servererror-catalog).
 
-`Generic` codes a taker meets on `RfqRequest`: `taker_buy_unsupported`, `product_not_allowed`, `spread_invalid_strikes`, `spread_tick_violation`, `missing_tick_for_underlying_mint`, `invalid_strike_notional`, `invalid_quantity_size_rule`, `missing_size_rule_for_underlying_mint`, `insufficient_collateral`. The catalog lists the market-state and server-state codes.
+`Generic` codes a taker meets on `RfqRequest`: `invalid_timeout`, `taker_buy_unsupported`, `product_not_allowed`, `spread_invalid_strikes`, `spread_tick_violation`, `missing_tick_for_underlying_mint`, `invalid_strike_notional`, `invalid_quantity_size_rule`, `missing_size_rule_for_underlying_mint`, `insufficient_collateral`. The catalog lists the market-state and server-state codes.
 
 ### RateLimitReason (in typed `RateLimit` error)
 

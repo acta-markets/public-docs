@@ -22,6 +22,8 @@ https://beta-api.acta.markets
 { "error": "Human-readable message", "code": "error_code" }
 ```
 
+A query string that cannot be parsed, for example `?active=maybe`, gets a plain-text `400` without this body.
+
 Codes (HTTP status):
 - `invalid_request`, `invalid_cursor`, `invalid_limit`, `invalid_delegate`, `invalid_wallet` (400)
 - `not_found` (404)
@@ -281,7 +283,7 @@ decimal string.
 per-IP rate limit (30 req/s, burst 60). All other vault and depositor routes query the database
 per request and share the heavy per-IP limit (10 req/s, burst 20). IPv6 clients are grouped by /64.
 Successful `/vaults`, `/vaults/{pda}`, `/vaults/{pda}/cycles`, `/vaults/{pda}/positions`,
-The request-list routes carry `Cache-Control: public, max-age=5`; `/vaults/{pda}/exposure` is `no-store`; per-wallet routes carry no cache header.
+`/vaults/{pda}/deposit-requests` and `/vaults/{pda}/withdraw-requests` carry `Cache-Control: public, max-age=5`; `/vaults/{pda}/exposure` is `no-store`; per-wallet routes carry no cache header.
 
 Every per-vault route returns `404` `not_found` for an unknown vault or a PDA that is not base58.
 `GET /vaults` and `GET /vaults/{pda}` list open vaults only; a closed vault returns `404` there, while

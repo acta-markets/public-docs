@@ -154,7 +154,7 @@ The server verifies the signature by `quote_signing` key.
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "market": {
       "chain_id": 0,
-      "program_id": "GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq",
+      "program_id": "33Ezs5eoa16QyPW8wifnyz2nCyMEcq2crqkVBNjnTE8U",
       "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
       "underlying_mint": "So11111111111111111111111111111111111111112",
       "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
@@ -197,7 +197,7 @@ The server verifies the signature by `quote_signing` key.
 }
 ```
 
-`price` is the gross premium per underlying unit, scaled by 1e9. The order ID is `sha256` of a 182-byte preimage for covered calls and cash-secured puts.
+`price` is the gross premium per underlying unit, scaled by 1e9. The order ID is `sha256` of a 182-byte [preimage](../reference/maker-api.md#order-id-preimage) for covered calls and cash-secured puts.
 
 ```json
 {
@@ -235,14 +235,22 @@ The server verifies the signature by `quote_signing` key.
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "rfq_version": 3,
     "reason": "filled",
-    "your_quote": null,
-    "winner": null,
+    "your_quote": {
+      "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+      "status": "filled",
+      "price": 5000000000
+    },
+    "winner": {
+      "maker": "A87ysNWAmmqQHafLSQGbYSLhtcV3BjXctR88EWuSobGP",
+      "price": 5000000000,
+      "tx_signature": "<base58 transaction signature>"
+    },
     "closed_at": 1710000042
   }
 }
 ```
 
-`your_quote` and `winner` are always present. They are `null` when there is nothing to report.
+`your_quote` and `winner` are always present. On a fill every recipient gets `winner`, and the session that won gets `your_quote.status` `filled`. See [RfqClosed](../reference/maker-api.md#rfqclosed-server---maker) for the other cases.
 
 ### 9) QuoteFilled
 
@@ -270,7 +278,7 @@ The server verifies the signature by `quote_signing` key.
 For successful fills, the winning maker receives `RfqClosed`, then `QuoteFilled`; `expiry_ts` is `null` when the server no longer knows the market.
 `QuoteFilled` is the fill-details event; RFQ closure should still be keyed by `RfqClosed`.
 
-`QuoteFilled` has no fee or net-premium field. The money figure is `total_premium` on the position row:
+`QuoteFilled` is the fill fact: it carries `price` and `quantity`, with no fee or net-premium field. The authoritative net premium is `total_premium` on the `PositionUpdated` row:
 
 ```json
 {
@@ -298,11 +306,11 @@ For successful fills, the winning maker receives `RfqClosed`, then `QuoteFilled`
 }
 ```
 
-With a premium fee of 50 bps and a volume fee of 10 bps, the gross premium is 5000000 quote atoms. The premium fee is 25000 and the volume fee is 160000. The protocol fee is the smaller one, so `total_premium` is `5000000 - 25000 = 4975000`. Book `4975000`, from the row. Apply the row only if its `revision` is newer than the stored one for the same `pda`.
+With a premium fee of 50 bps and a volume fee of 10 bps, the gross premium is 5000000 quote atoms. The premium fee is 25000 and the volume fee is 160000. The protocol fee is the smaller one, so `total_premium` is `5000000 - 25000 = 4975000`, which is what the taker received. The maker's cost is the gross `5000000`, and the fee is `5000000 - 4975000 = 25000`. Apply the row only if its `revision` is newer than the stored one for the same `pda`. To have the amounts before the row arrives, compute them locally as described under [QuoteFilled](../reference/maker-api.md#quotefilled-server---maker).
 
 ## Spread session
 
-A spread or cash-put RFQ carries both strikes in `terms`. The quote repeats them exactly.
+A spread or cash-put RFQ carries its strikes in `terms`. The quote repeats them exactly. On these RFQs `collateral_mint` and `settlement_mint` are both the quote mint.
 
 ```json
 {
@@ -311,13 +319,13 @@ A spread or cash-put RFQ carries both strikes in `terms`. The quote repeats them
     "rfq_id": "00000000-0000-0000-0000-000000000001",
     "market": {
       "chain_id": 0,
-      "program_id": "GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq",
+      "program_id": "33Ezs5eoa16QyPW8wifnyz2nCyMEcq2crqkVBNjnTE8U",
       "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
       "underlying_mint": "So11111111111111111111111111111111111111112",
       "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-      "expiry_ts": 1800000000,
+      "expiry_ts": 1800086400,
       "is_put": false,
-      "collateral_mint": "So11111111111111111111111111111111111111112",
+      "collateral_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
       "settlement_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
     },
     "terms": { "type": "call_spread", "lower_strike": 100000000000, "upper_strike": 120000000000 },
@@ -384,7 +392,7 @@ Spreads and cash puts go from `open` to `settled` only. A settled row carries th
       "price": 5000000000,
       "total_premium": 4980000,
       "created_at": 1799999770,
-      "expiry_ts": 1800000000
+      "expiry_ts": 1800086400
     },
     "update_type": "settled"
   }
@@ -863,7 +871,7 @@ A refusal is `{ "type": "rejected", "cap_detail": <CapError> }`.
 }
 ```
 
-`CancelAllQuotesAck` follows Core application. This example means no orders were removed, not merely that the command was queued. Selected/executing obligations may remain. The receipt is correlated by `request_id`; lifecycle `QuoteCancelled` messages do not replace it.
+`CancelAllQuotesAck` is sent after the server applied the cancel. This example means no orders were removed, not merely that the command was queued. Selected/executing obligations may remain. The receipt is correlated by `request_id`; lifecycle `QuoteCancelled` messages do not replace it.
 
 ### QuoteBestStatus
 

@@ -1,6 +1,6 @@
 # Acta Taker Wire Examples
 
-Payloads illustrate wire shapes. Replace abbreviated IDs, addresses, signatures and past timestamps with real values. Request, session and RFQ IDs must be UUIDs, and order IDs must decode to 32 bytes. These examples are not transactions to send unchanged.
+Payloads illustrate wire shapes. Replace abbreviated IDs, addresses, signatures and past timestamps with real values. Request, session and RFQ IDs must be UUIDs, and order IDs must decode to 32 bytes. These examples are not transactions to send unchanged. The 5 SOL size may exceed a deployment's `max_size`; read `size_rule` first.
 
 Concrete JSON for a full taker session and the common branch scenarios. Message shapes and field semantics are in [`../reference/taker-api.md`](../reference/taker-api.md). The narrative walkthrough is in [`taker-quickstart.md`](taker-quickstart.md).
 
@@ -566,7 +566,7 @@ A valid session returns `AuthSuccess` (as in step 3, without `AuthRequest` or si
 
 ### Blockhash expiry, reopen and reconcile
 
-The keeper may retry retryable submission failures within five attempts. Exhaustion does not guarantee either message below. An uncertain keeper failure leaves Core `Enqueued`; reconcile with `GetOrderStatus`. A failure observation can look like:
+The keeper may retry retryable submission failures within five attempts. Exhaustion does not guarantee either message below. An uncertain keeper failure leaves the order queued; reconcile with `GetOrderStatus`. A failure observation can look like:
 
 ```json
 {

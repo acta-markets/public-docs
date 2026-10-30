@@ -1,5 +1,11 @@
 # Acta Protocol — Tech Docs
 
+## Start here
+
+- **Maker:** [Sandbox](reference/sandbox.md) (keypairs, registration, premium deposit), [Maker quickstart](quickstart/maker-quickstart.md), [Maker wire examples](quickstart/maker-wire-examples.md), [Maker API](reference/maker-api.md). Rust bots start with the [Rust Maker SDK](quickstart/maker-rust-sdk.md).
+- **Taker:** [Taker quickstart](quickstart/taker-quickstart.md), [Taker wire examples](quickstart/taker-wire-examples.md), [Taker API](reference/taker-api.md). TypeScript apps start with the [Web client SDK](quickstart/web-client-ts-sdk.md).
+- **Vault operator:** [Vault operator guide](quickstart/vault-operator-guide.md).
+
 ## Overview
 
 - [Protocol flow](reference/protocol-flow.md) — products and lifecycles, RFQ mechanics, economics and fees, funding deadline, settlement fixing, expiries, risk
@@ -9,7 +15,7 @@
 - [Taker quickstart](quickstart/taker-quickstart.md) — auth, RFQ, accept, sponsored tx (language-neutral)
 - [Taker wire examples](quickstart/taker-wire-examples.md) — complete JSON session + branch scenarios
 - [Web client SDK (TypeScript)](quickstart/web-client-ts-sdk.md) — taker integration via TS SDK
-- [Maker quickstart](quickstart/maker-quickstart.md) — keypairs, registration, first quote
+- [Maker quickstart](quickstart/maker-quickstart.md) — auth, first quote, fills, reconnect
 - [Maker wire examples](quickstart/maker-wire-examples.md) — complete JSON session
 - [Rust Maker SDK](quickstart/maker-rust-sdk.md) — Rust SDK integration guide
 

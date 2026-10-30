@@ -64,7 +64,7 @@ There is no order book. The taker drives a sealed auction, makers stream signed 
 - Makers reply with signed `Quote`s. Each quote is a `(terms, side, price, valid_until)` against the fixed request. Makers cannot quote partial size or change the terms.
 - The taker selects the winner by sending `AcceptQuote { maker, order_id }`. Whatever `order_id` the taker names wins. The server's "best price" (`QuoteBestStatus` / `QuoteOutbid`) is advisory only and never selects the winner.
 - Winner-take-all: one quote is locked for the full RFQ quantity. No partial fills, no multiple winners. Every live quote reserves full capacity against caps (open interest, notional, position count) for its validity window; the reservation is released on cancel, expiry, or rejection, and converts into position exposure on fill. See [caps.md](caps.md#how-quotes-consume-capacity).
-- A maker's live quote is keyed by `(rfq_id, strike)`. A new quote with the same key replaces the previous one, and `QuoteAcknowledged.replaced_order_id` names it.
+- A maker's live quote is keyed by `(rfq_id, terms)`. A new quote with the same key replaces the previous one, and `QuoteAcknowledged.replaced_order_id` names it.
 - The advisory "best" ranking (used only for `QuoteBestStatus` / `best_price`) is: higher premium wins, ties broken by earlier `received_at`, then by smaller `order_id`.
 
 Indicative pricing: after connecting, makers may receive `IndicativePricesRequest` and reply with non-binding reference prices per strike. Takers see these while browsing, before opening an RFQ.
@@ -102,7 +102,7 @@ The taker sends `AcceptQuote { maker, order_id }`. The backend returns a sponsor
 
 ## Timing and deadlines
 
-Defaults below are rendered from the server's config defaults by a test in `rfq-server-config`; all are configurable.
+Defaults below are the server's configuration defaults; all are configurable.
 
 <!-- generated:rfq-timing-defaults -->
 | Parameter | Default | Meaning |
@@ -111,7 +111,7 @@ Defaults below are rendered from the server's config defaults by a test in `rfq-
 | `settlement_buffer` | 50 s | The trailing window reserved for settlement confirmation. A quote's effective trading cutoff is `valid_until - settlement_buffer`; quotes whose `valid_until` is closer than `settlement_buffer + quote_refresh_lead` are rejected. |
 | `quote_refresh_lead` | 10 s | At `effective_expiry - quote_refresh_lead` the server fires `QuoteRefreshRequested` and freezes the quote (unacceptable until re-quoted). |
 | `signature_timeout` | 30 s | Max time the taker has to sign the sponsored tx after `AcceptQuote`. The signature deadline is the minimum of `now + signature_timeout`, the quote's effective expiry, and the RFQ's `expires_at`. |
-| `submitted_watchdog_timeout` | 120 s | After this the server flags a submitted trade that has not resolved. The RFQ stays Enqueued until the trade confirms on-chain or the server knows the transaction was never sent. |
+| `submitted_watchdog_timeout` | 120 s | After this the server flags a submitted trade that has not resolved. The RFQ stays locked to the selected quote until the trade confirms on-chain or the server knows the transaction was never sent. |
 | `closed_rfq_ttl` | 300 s | How long a closed RFQ is retained before purge. |
 | `max_quotes_per_rfq` | 50 | Cap on quotes per RFQ across all makers. |
 | `max_rfqs_per_taker / max_active_rfqs` | 50 / 1000 | Concurrency limits (`0` disables the corresponding limit). |
@@ -190,7 +190,7 @@ fee_total   = min(premium_fee, volume_fee)
 net_premium = gross_premium - fee_total
 ```
 
-The taker receives `net_premium`; `Position.total_premium` and the wire field `total_premium` hold the same net value in quote atoms. `protocol_fee_bps_premium` and `protocol_fee_bps_volume` are on-chain config set by governance (each ≤ 10000 bps) and are published by `GET /api/v1/venue`. `net_price` in WS payloads is a display estimate only; for accounting use the formula above or `total_premium`.
+The taker receives `net_premium`; `Position.total_premium` and the wire field `total_premium` hold the same net value in quote atoms. The maker pays `gross_premium`, so its cost is `scaled_quote_amount(price, quantity)` and the fee is that cost minus `total_premium`. `protocol_fee_bps_premium` and `protocol_fee_bps_volume` are on-chain config set by governance (each ≤ 10000 bps) and are published by `GET /api/v1/venue`. `net_price` in WS payloads is a display estimate only; for accounting use the formula above or `total_premium`.
 
 ### Spread payoff
 
@@ -332,7 +332,7 @@ Events worth tracking end to end:
 | `ChainEvent(position_settled)` | Assets distributed. |
 | `ChainEvent(position_liquidated)` | Unfunded ITM physical position liquidated. |
 
-`RegisterMaker`, `DepositPremium`, `WithdrawPremium`, and `DepositFundsToPosition` are Solana on-chain instructions, not WebSocket messages; build and submit them as transactions signed by the relevant owner wallet. Contact the Acta team for the program IDL and account layouts.
+`RegisterMaker`, `DepositPremium`, `WithdrawPremium`, and `DepositFundsToPosition` are Solana on-chain instructions, not WebSocket messages; build and submit them as transactions signed by the relevant owner wallet. The layouts of the maker's deposit instructions are in [Sandbox](sandbox.md#on-chain-maker-instructions). The full IDL ships in `@acta-markets/ts-sdk` as `ACTA_IDL`.
 
 ## Related docs
 

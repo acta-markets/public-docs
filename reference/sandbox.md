@@ -68,7 +68,9 @@ If you have trouble claiming tokens, contact the Acta team.
 Deposit quote token (devnet USDC) into the maker PDA via the `DepositPremium` on-chain instruction.
 
 - The `maker_owner` wallet signs this transaction.
-- Ensure `maker_owner` has an associated token account (ATA) for the quote mint.
+- `maker_owner` needs an associated token account (ATA) for the quote mint, and so does the maker PDA.
+
+The layout is under [On-chain maker instructions](#on-chain-maker-instructions).
 
 ### 5. Connect
 
@@ -84,7 +86,7 @@ Authentication uses the same Ed25519 challenge-response as production.
 | Feature | Details |
 |---------|---------|
 | Markets | Created by the Acta team; SOL/USDC pairs are typical. Each market row lists the `products` it accepts, including spreads and cash puts |
-| Rate limits | Same as production: 30 msg/s, burst 60 per connection; quote messages use a separate bucket of 50/s, burst 100. See [Rate limits and admission](ws-common.md#rate-limits-and-admission) |
+| Rate limits | Same as production. See [Rate limits and admission](ws-common.md#rate-limits-and-admission) |
 | Caps | Test values; may differ from production |
 | Indicative pricing | Supported |
 | Sponsored tx signing | Supported |
@@ -119,8 +121,45 @@ Browsers obtain current reference prices from the selected backend through [`Get
 | PDA | Seeds |
 |-----|-------|
 | Maker account | `["maker", maker_owner_pubkey]` |
+| Position | `["position", order_id]` |
 
 `GET /api/v1/venue` returns `program_id`, which is authoritative. PDA derivation follows on-chain program logic. See the [Maker API reference](maker-api.md) and [Maker quickstart](../quickstart/maker-quickstart.md).
+
+## On-chain maker instructions
+
+The instruction data starts with a one-byte discriminant. Integers are little-endian. The full IDL ships in `@acta-markets/ts-sdk` as `ACTA_IDL`, and `ACTA_IDL_SHA256` is its hash.
+
+Builders: `buildDepositPremiumIx` and `buildDepositFundsToPositionIx` from `@acta-markets/ts-sdk/chain`, or `ChainClient::deposit_premium` and `ChainClient::fund_position` in the Rust SDK (`chain-rpc` feature).
+
+### `DepositPremium`
+
+Moves quote tokens from the owner's wallet to the maker PDA's custody account. Fills debit this balance.
+
+Data, 9 bytes: discriminant `4`, then `amount` as `u64`. `amount` must not be `0`.
+
+| # | Account | Writable | Signer | Rule |
+|---|---|---|---|---|
+| 0 | `maker_owner` | no | yes | The registered owner |
+| 1 | `maker_pda` | no | no | `["maker", maker_owner]` |
+| 2 | `maker_owner_premium_ata` | yes | no | Source token account owned by `maker_owner` |
+| 3 | `maker_premium_ata` | yes | no | The maker PDA's ATA for the same mint. It must already exist |
+| 4 | `token_program` | no | no | The mint's token program |
+
+### `DepositFundsToPosition`
+
+Funds the settlement leg of an `open` covered call or cash-secured put. Spreads and cash puts are rejected.
+
+Data, 1 byte: discriminant `9`. There are no arguments: the program computes the amount. A covered call takes `scaled_quote_amount(strike, quantity)` of the quote mint, and a cash-secured put takes `quantity` of the underlying mint.
+
+| # | Account | Writable | Signer | Rule |
+|---|---|---|---|---|
+| 0 | `maker_owner` | no | yes | The position's maker owner |
+| 1 | `maker_pda` | no | no | `["maker", maker_owner]` |
+| 2 | `position_pda` | yes | no | `["position", order_id]` |
+| 3 | `market_pda` | no | no | The position's market |
+| 4 | `maker_funding_ata` | yes | no | Source token account owned by `maker_owner`, for the settlement mint |
+| 5 | `pos_settlement_ata` | yes | no | The position PDA's ATA for the settlement mint. It must already exist |
+| 6 | `settlement_token_program` | no | no | The settlement mint's token program |
 
 ## Support
 

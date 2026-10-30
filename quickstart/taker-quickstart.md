@@ -123,7 +123,7 @@ RfqRequest -> RfqCreated -> QuoteReceived (0..N) -> AcceptQuote
 | Put spread | `{ "type": "put_spread", "lower_strike": 130000000000, "upper_strike": 140000000000 }` |
 | Cash put | `{ "type": "cash_put", "strike": 136000000000 }` |
 
-`quantity` is always in underlying atoms, for every product. For a UI that collects a quote amount (for example USDC), convert first: `quantity = round(quoteAmount * 10^underlying_decimals * 1e9 / strike)` (see [Quantity and collateral by product](../reference/ws-common.md#quantity-and-collateral-by-product)).
+`quantity` is always in underlying atoms, for every product, and must satisfy `size_rule`. For a UI that collects a quote amount (for example USDC), convert it and snap it to the size rule: see [Quantity and collateral by product](../reference/ws-common.md#quantity-and-collateral-by-product). The wallet must hold the [full collateral](../reference/taker-api.md#rfqrequest-taker---server) when it sends the RFQ.
 
 ```json
 {
@@ -133,7 +133,7 @@ RfqRequest -> RfqCreated -> QuoteReceived (0..N) -> AcceptQuote
     "market": "<market PDA, base58>",
     "terms": { "type": "covered_call", "strike": 136000000000 },
     "side": "sell",
-    "quantity": 5000000000,
+    "quantity": 1000000000,
     "timeout_seconds": 30
   }
 }
@@ -231,7 +231,7 @@ The server locks the quote and builds a transaction to sign:
 
 ### Sponsored transaction: raw signing
 
-The TypeScript SDK provides a signing helper that verifies the served transaction. Before signing with any other tool, verify the program, market, product terms, quantity, price, accounts and all instructions against your accepted order. For a custom byte-level signer you do not need to reconstruct a `VersionedTransaction`. `tx_base64` decodes to Solana's wire transaction format:
+The TypeScript SDK provides a signing helper that verifies the served transaction. Before signing with any other tool, verify the program, market, product terms, quantity, price, accounts and all instructions against your accepted order. The [expected instructions](#expected-instructions) are listed below. For a custom byte-level signer you do not need to reconstruct a `VersionedTransaction`. `tx_base64` decodes to Solana's wire transaction format:
 
 ```
 <shortvec(sig_count)> | sig[0..64] | sig[1..64] | … | <message bytes>
@@ -263,13 +263,42 @@ Library shortcuts:
 
 `verifyAndSignTakerFill` rebuilds the expected transaction from the accepted quote and the RFQ terms and refuses to sign on any mismatch. It checks the program and market PDA, the order ID recomputed from the quote (it must equal `order_id`), the maker's Ed25519 check over it right before the open instruction, the open instruction's accounts and arguments, the keeper fee payer, no extra signers or instructions, and a compute budget within `bounds`. For a spread or cash put it checks the spread open instruction with the quote-mint collateral. `keeper` is the `GlobalConfig.hot_authority` address. Pass the wallet's `signTransaction` as the helper's `signer` instead of calling it on the served transaction directly. Details: [`web-client-ts-sdk.md`](web-client-ts-sdk.md).
 
+### Expected instructions
+
+The keeper is the fee payer. It also pays the rent of the position and of every ATA created here. The taker pays only the wrap transfer. In order:
+
+| # | Program | Instruction | When |
+|---|---|---|---|
+| 1 | Compute Budget | `SetComputeUnitLimit` | Always |
+| 2 | Compute Budget | `SetComputeUnitPrice` | Always |
+| 3 | Associated Token | `CreateIdempotent`: the taker's wSOL ATA | Covered call on wSOL, when wSOL falls short |
+| 4 | System | `Transfer` from the taker to that ATA: collateral minus existing wSOL | Same |
+| 5 | SPL Token | `SyncNative` on that ATA | Same |
+| 6 | Associated Token | `CreateIdempotent`: the taker's quote ATA | Always |
+| 7 | Associated Token | `CreateIdempotent`: the position's collateral ATA | Always |
+| 8 | Ed25519 | Verify the maker's `quote_signing` signature over `order_id` | Always |
+| 9 | Acta | The open instruction | Always |
+
+The open instruction depends on the product and the maker:
+
+| Quote | Instruction | Discriminant |
+|---|---|---|
+| Covered call or cash-secured put, ordinary maker | `OpenPosition` | `7` |
+| Spread or cash put, ordinary maker | `OpenSpread` | `77` |
+| Covered call or cash-secured put, vault maker | `OpenPositionForVaultAsMaker` | `42` |
+| Spread or cash put, vault maker | `OpenSpreadForVaultAsMaker` | `79` |
+
+A vault maker's transaction has no steps 3 to 5.
+
+The data of `OpenPosition` is the discriminant, `position_type` (`u8`), then `strike`, `quantity`, `price`, `valid_until` and `nonce` (each `u64`, little-endian), then `order_id` (32 bytes). `OpenSpread` adds `upper_strike` (`u64`) at the end, and its `strike` is the lower strike; a cash put has `position_type` `3` and `strike` `0`. Compare these fields with the order. The accounts are in the IDL, `ACTA_IDL` in `@acta-markets/ts-sdk`.
+
 ### 4. Track the order
 
 The server relays keeper progress:
 
 | Event | Meaning |
 |---|---|
-| `OrderAccepted` | Signed transaction accepted into Core's Enqueued state. An exact `AcceptQuote` retry may also receive it as a liveness ACK. It does not confirm chain execution. |
+| `OrderAccepted` | Signed transaction accepted and queued for execution. An exact `AcceptQuote` retry may also receive it as a liveness ACK. It does not confirm chain execution. |
 | `OrderSubmitted` | Transaction sent to Solana. Carries `tx_signature`, `order_version`. |
 | `OrderConfirmed` | Position opened on chain. Carries `position_pda`, `order_version`. |
 | `OrderFailed` | Execution failed. Carries `reason`, `order_version`. |
@@ -340,6 +369,10 @@ Subscriptions do not persist across disconnects, and the server does not replay 
 
 Lifecycle events can be redelivered after recovery. Process them idempotently by `order_id` and gate on `*_version`.
 
+After `AuthSuccess`, reconcile `GetMyActiveRfqs`, `GetPositions` and `GetOrderStatus`. Only a successful resume of the same credential transfers ownership of an unfinished signature. For the same pending order whose signature was not sent, repeat the exact `AcceptQuote` to retrieve the signing payload. For a submitted or enqueued order, query status without replaying trading commands.
+
+`OrderStatus` carries `{ request_id, order_id, state }`, with `state` equal to `{ "type": "pending" }`, `{ "type": "confirmed", "position_pda": "..." }` or `{ "type": "unknown" }`. It has no `order_version`; versions apply to lifecycle pushes. `unknown`, missing positions and timeouts leave the outcome unresolved. See [Delivery and recovery](../reference/taker-api.md#delivery-and-recovery).
+
 ## Invite gating (closed mainnet)
 
 On closed mainnet the server sends `RequireInvite` after auth if the wallet is not registered, and `RfqRequest` returns `InviteRequired` until an invite is redeemed:
@@ -384,9 +417,3 @@ The RFQ flow itself needs no RPC: markets, quotes, positions and the sponsored t
 - [Capacity limits](../reference/caps.md): OI, notional and liability caps
 - [Sandbox / Devnet](../reference/sandbox.md): endpoints, faucets, program addresses
 - [FAQ](../reference/faq.md)
-
-## Recovery after reconnect
-
-After `AuthSuccess`, reconcile `GetMyActiveRfqs`, `GetPositions` and `GetOrderStatus`. Only a successful resume of the same credential transfers ownership of an unfinished signature. For the same pending order whose signature was not sent, repeat the exact `AcceptQuote` to retrieve the signing payload. For a submitted or enqueued order, query status without replaying trading commands.
-
-`OrderStatus` carries `{ request_id, order_id, state }`, with `state` equal to `{ "type": "pending" }`, `{ "type": "confirmed", "position_pda": "..." }` or `{ "type": "unknown" }`. It has no `order_version`; versions apply to lifecycle pushes. `unknown`, missing positions and timeouts leave the outcome unresolved. See [Delivery and recovery](../reference/taker-api.md#delivery-and-recovery).

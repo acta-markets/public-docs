@@ -125,7 +125,7 @@ The builder takes the quote's `terms` and `side` from the RFQ. `QuoteBuilder::si
 
 ### Spreads and cash puts
 
-Spreads and cash puts settle in cash in the quote mint. `SpreadTerms::premium` returns the collateral `C`, the gross premium, the protocol fee, the net premium and `prefunded_quote` (`C` minus the net premium), all in quote atoms. It rejects a price outside `0 < price < width` and a gross premium that is zero or not below `C`. The fee rates come from the venue.
+Spreads and cash puts settle in cash in the quote mint. `SpreadTerms::premium` returns the collateral `C`, the gross premium, the protocol fee, the net premium and `prefunded_quote`, all in quote atoms. It rejects a price outside `0 < price < width` and a gross premium that is zero or not below `C`. The fee rates come from the venue. `prefunded_quote` is `C` minus the net premium: what the open instruction needs beyond the premium it pays first. A wallet taker's RFQ is still [checked against the full `C`](../reference/taker-api.md#rfqrequest-taker---server).
 
 ```rust
 use acta_maker_sdk::spreads::{SpreadTerms, SpreadType};
@@ -214,7 +214,7 @@ Position rows (`MakerPositionInfo`, and `PositionInfo` in `PositionUpdated`) car
 
 - `state`: `Open`, `Funded`, `Liquidated`, or `Settled { settlement }`. `settlement` is `Physical { settlement_price, is_otm }` or `Cash { settlement_price, maker_payoff, taker_return }`.
 - `terms` and `side`.
-- `total_premium`: the net premium in quote atoms after the protocol fee. This is the authoritative money figure for the position. Book PnL from it, not from `QuoteFilled`.
+- `total_premium`: the net premium the taker received, in quote atoms after the protocol fee. This is the authoritative figure for the position, not `QuoteFilled`. The maker's cost is the gross premium, and the fee is that cost minus `total_premium`.
 - `revision`: `PositionRevision { slot, transaction_index, instruction_index }`. It orders lexicographically. Keep a row only when `incoming.revision > stored.revision` for the same PDA.
 
 `PositionUpdated` carries the full row and an `update_type`, and is coalesced per PDA by revision. The managed data client receives it, with `TradeExecuted` and `MakerCapsUpdated`, through `subscribe_messages()` after summary recovery.
@@ -310,7 +310,7 @@ for order_id in unfinished {
 
 ## Reconnection
 
-The SDK reconnects by default. The first handshake is: TCP up -> `Hello` -> `Welcome` + server-issued `AuthRequest` -> challenge signed by `quote_signing` -> `AuthChallenge(maker_owner, signature)` -> authenticated -> subscription acknowledgement and recovery reads -> ready. If no challenge is pending, the SDK sends `StartAuth(maker_owner)`, which maker endpoints ignore. After a disconnect it sends `Hello` and tries `ResumeAuth` with the last session ID; `session_expired` clears that ID and falls back to the full signed-challenge flow on the same connection. Backoff is 250 ms initial, 5 s cap, +/-20% jitter.
+The SDK reconnects by default. The first handshake is: TCP up -> `Hello` -> `Welcome` + server-issued `AuthRequest` -> challenge signed by `quote_signing` -> `AuthChallenge(maker_owner, signature)` -> authenticated -> subscription acknowledgement and recovery reads -> ready. If no challenge is pending, the SDK sends `StartAuth(maker_owner)`, which maker endpoints ignore. After a disconnect it sends `Hello` and tries [`ResumeAuth`](../reference/maker-api.md#resume) with the last session ID; `session_expired` clears that ID and falls back to the full signed-challenge flow on the same connection. Backoff is 250 ms initial, 5 s cap, +/-20% jitter.
 
 `ManagedWsConfig` also bounds the failure modes: configure `connect_timeout`, `max_reconnect_attempts` (`0` means unlimited), and `reconnect_jitter_ratio`. A production supervisor should treat exhaustion or task exit as loss of readiness and restart or alert.
 
@@ -318,7 +318,7 @@ Trading commands are never automatically replayed across a connection boundary. 
 
 The writer keeps Quote, BatchQuotes, ReplaceQuote, CancelQuote and CancelAllQuotes in one FIFO data lane. Control traffic such as ping and authentication uses a separate lane. This preserves `Quote; Cancel` ordering rather than allowing cancellation to overtake an earlier quote.
 
-`write_timeout` bounds one socket write, not total queueing time or Core cancellation latency. `OnDisconnect::CancelQuotes` provides a disconnect fallback, not a bounded-time halt; selected/executing obligations survive it. Queue admission or a successful socket write alone does not prove Core applied a command.
+`write_timeout` bounds one socket write, not total queueing time or how long the server takes to apply a cancel. `OnDisconnect::CancelQuotes` provides a disconnect fallback, not a bounded-time halt; selected/executing obligations survive it. Queue admission or a successful socket write alone does not prove the server applied a command.
 
 An inbound receiver that falls behind reports `ManagedReceiveError::Gap`; the configured gap policy decides whether the session reconnects. Keep the strategy's unresolved orders across this boundary and query `GetOrderStatus` after losing an ACK. `unknown`, timeout and an empty Live result are not proof of nonexecution.
 
