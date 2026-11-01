@@ -17,7 +17,7 @@ The vault trades any Acta market whose `(underlying, quote)` equals `{main, seco
 | Cash-secured put | quote | quote | underlying, before finalization, to exercise |
 | Call spread, put spread, cash put | quote | quote | none |
 
-Spreads and cash puts settle in cash in the quote mint. The holder vault receives `maker_payoff` and the writer vault receives `taker_return` at settlement. Neither side is funded or liquidated.
+Spreads and cash puts settle in cash in the quote mint. A cash put is economically a put spread with lower strike 0; its wire name is `cash_put`. The holder vault receives `maker_payoff` and the writer vault receives `taker_return` at settlement. Neither side is funded or liquidated.
 
 Capital moves in cycles. Every position of one cycle has the same expiry. Deposits and withdrawals are queued in escrow and processed at a share price fixed after the cycle; escrowed deposits never fund trading.
 

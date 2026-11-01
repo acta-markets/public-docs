@@ -10,7 +10,7 @@ Wire messages, errors and enums are in [`../reference/taker-api.md`](../referenc
 npm install @acta-markets/ts-sdk
 ```
 
-This guide covers version 0.3.0. It speaks WS protocol `1.0.0` and targets the program deployed to devnet and mainnet; both use the same program ID, and `GET /api/v1/venue` returns the authoritative `program_id`. Refer to opcodes and errors by name through the generated constants exported from `@acta-markets/ts-sdk` (`*_DISCRIMINATOR` for opcodes, `ACTA_CONTRACT_ERROR__*` for errors), not by number. The package README and changelog cover the vault builders.
+This guide covers version 0.3.1. It speaks WS protocol `1.0.0` and targets the program deployed to devnet and mainnet; both use the same program ID, and `GET /api/v1/venue` returns the authoritative `program_id`. Refer to opcodes and errors by name through the generated constants exported from `@acta-markets/ts-sdk` (`*_DISCRIMINATOR` for opcodes, `ACTA_CONTRACT_ERROR__*` for errors), not by number. The package README and changelog cover the vault builders.
 
 The wire is closed. The client does not dispatch a frame that lacks a required field or carries an unknown enum value. A message whose type the SDK does not know is reported on the `unknownMessage` event. Facts that are absent arrive as explicit `null`, typed `T | null`. State-dependent shapes are tagged unions. Wire addresses are validated when a frame is decoded. `server_time_unix_ms` and `sent_at_unix_ms` use milliseconds, and `expires_at` uses Unix seconds.
 
@@ -148,7 +148,7 @@ ws.getPositions(ALL_POSITIONS);
 
 **Prerequisite:** call `getMarketDescriptors()` and wait for the `marketDescriptors` event before `createRfq`. The SDK validates `quantity` against the market's `size_rule` (`min_size <= quantity <= max_size`, `(quantity - min_size) % step === 0`). Local failures throw before send. A missing server-side rule returns `missing_size_rule_for_underlying_mint`.
 
-`quantity` is always in underlying atoms, including for cash-secured puts, spreads and cash puts. For a UI that takes USDC input, convert with `quoteAmountToQuantity(usdc, strike1e9, underlying_decimals)` from `@acta-markets/ts-sdk/ws` (see [Quantity and collateral by product](../reference/ws-common.md#quantity-and-collateral-by-product)).
+`quantity` is always in underlying atoms, including for cash-secured puts, spreads and cash puts. Convert a quote-token budget to quote atoms (`amount * 10^quote_decimals`), then use the integer floor-and-step calculation in [Quantity and collateral by product](../reference/ws-common.md#quantity-and-collateral-by-product). Use the strike for a cash-secured put or cash put, and `upper_strike - lower_strike` for a spread. `quoteAmountToQuantity` rounds to the nearest atom and does not apply `size_rule`; its result is not a budget-safe RFQ quantity.
 
 `terms` is a tagged union and `side` must be `"sell"`:
 

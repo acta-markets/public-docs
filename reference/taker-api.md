@@ -269,7 +269,7 @@ The server answers with `SubscribeAck { request_id, subscribed }`, where `subscr
 { "type": "cash_put", "strike": 136000000000 }
 ```
 
-`cash_put` executes on chain as a put spread with legs `(0, strike)`. Its width is `strike`.
+A cash put is economically a put spread with lower strike 0 and upper strike `strike`. It executes on chain with those legs and keeps the wire name `cash_put`. Its width is `strike`.
 
 `side` is the taker's side. Takers sell: send `"sell"`. `"buy"` is rejected with `taker_buy_unsupported`.
 
@@ -610,6 +610,8 @@ The keeper retries retryable submission failures within a five-attempt budget. E
 
 ### GetPositions (taker -> server)
 
+Uses [common paging](ws-common.md#paging).
+
 Every filter is required. `[]` for `status` and `unbounded` for `min_expiry_ts` select everything.
 
 ```json
@@ -617,10 +619,20 @@ Every filter is required. `[]` for `status` and `unbounded` for `min_expiry_ts` 
   "type": "GetPositions",
   "data": {
     "request_id": "f1b3d5e7-9a2c-4d84-8e6a-4b6c8d0e2f59",
-    "market": { "type": "all" },
-    "underlying_mint": { "type": "all" },
+    "market": {
+      "type": "all"
+    },
+    "underlying_mint": {
+      "type": "all"
+    },
     "status": [],
-    "min_expiry_ts": { "type": "unbounded" }
+    "min_expiry_ts": {
+      "type": "unbounded"
+    },
+    "limit": 50,
+    "cursor": {
+      "type": "start"
+    }
   }
 }
 ```
@@ -631,11 +643,37 @@ Every filter is required. `[]` for `status` and `unbounded` for `min_expiry_ts` 
 | `status` | list of `open`, `funded`, `liquidated`, `settled`; `[]` means all statuses |
 | `min_expiry_ts` | `{ "type": "unbounded" }` or `{ "type": "bounded", "value": <unix seconds> }`; positions that expire before `value` are excluded |
 
-`GetPositions` has no `limit` or `cursor` field. Pages for the maker queries (`GetMakerPositions`, `GetMyQuotes`, `GetMyTrades`) are described in the [Maker API](maker-api.md).
+`limit` is required and must be 1 to 200. `cursor` is required: use
+`{"type":"start"}` for the first page and `{"type":"after","id":"<next_cursor>"}`
+for the next. `Positions.next_cursor` is always present and is null on the final
+page. Rows are newest first by creation time and PDA, using an indexed keyset.
+Unprojectable rows are logged and skipped; an empty page may still have a cursor.
+Keep the filters unchanged while continuing. Invalid limits and cursors return
+`invalid_limit` and `invalid_cursor`, without clamping.
 
 `GetPositions.price` is the gross price the maker signed, taken from the on-chain event that opened the position. It is never derived from the net premium. If the server has not verified that event for a position, or later finds a gap in its verified chain history up to it, the whole read fails with a `RequestError` (`Generic` code `temporarily_unavailable`). Retry with backoff; it clears once the server has reconciled the chain history.
 
+### GetPositionSummary
+
+Uses [common paging](ws-common.md#paging).
+
+Send `GetPositionSummary` with a request ID and the [common paging fields](ws-common.md#paging).
+The reply is `PositionSummary` with the same `request_id` and `summaries`.
+Each quote-mint group contains `quote_mint`, `quote_decimals`, `premium_all_time`,
+`premium_30d`, `open_positions` and `daily: [{day, premium}]`.
+Premium fields are decimal strings in quote atoms, summed from `total_premium`.
+`daily` contains today and the previous 29 UTC dates in ascending order, including
+zero days. The 30-day premium uses that same window. Open count includes open and
+funded positions across all products: covered calls, cash-secured puts, call
+spreads, put spreads and cash puts. Different quote mints are never combined.
+
+The server caches the SQL aggregate for five seconds per wallet and shares an
+in-flight load. No row history or RPC read is needed. Database or metadata failures
+return `temporarily_unavailable`; they do not become zero income.
+
 ### Positions payload
+
+Uses [common paging](ws-common.md#paging).
 
 `Positions` returns `PositionInfo[]`. Every field is present. `state` is flattened into the row; `settlement` is present only when `state` is `settled`.
 
@@ -648,14 +686,22 @@ Open put spread:
     "request_id": "f1b3d5e7-9a2c-4d84-8e6a-4b6c8d0e2f59",
     "positions": [
       {
-        "revision": { "slot": 312456800, "transaction_index": 14, "instruction_index": 2 },
+        "revision": {
+          "slot": 312456800,
+          "transaction_index": 14,
+          "instruction_index": 2
+        },
         "pda": "PositionPdaBase58",
         "market": "MarketPdaBase58",
         "underlying_mint": "So11111111111111111111111111111111111111112",
         "underlying_decimals": 9,
         "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "quote_decimals": 6,
-        "terms": { "type": "put_spread", "lower_strike": 130000000000, "upper_strike": 140000000000 },
+        "terms": {
+          "type": "put_spread",
+          "lower_strike": 130000000000,
+          "upper_strike": 140000000000
+        },
         "side": "sell",
         "state": "open",
         "quantity": 5000000000,
@@ -664,7 +710,8 @@ Open put spread:
         "created_at": 1710000012,
         "expiry_ts": 1710600000
       }
-    ]
+    ],
+    "next_cursor": null
   }
 }
 ```
@@ -750,6 +797,8 @@ Keep positions by `pda`. Apply a `PositionInfo` from any source (`GetPositions`,
 
 ### MyActiveRfqs payload
 
+Uses [common paging](ws-common.md#paging).
+
 ```json
 {
   "type": "MyActiveRfqs",
@@ -759,7 +808,10 @@ Keep positions by `pda`. Apply a `PositionInfo` from any source (`GetPositions`,
       {
         "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
         "market": "MarketPdaBase58",
-        "terms": { "type": "cash_secured_put", "strike": 136000000000 },
+        "terms": {
+          "type": "cash_secured_put",
+          "strike": 136000000000
+        },
         "side": "sell",
         "quantity": 20000000,
         "expires_at": 1710000030,
@@ -768,7 +820,8 @@ Keep positions by `pda`. Apply a `PositionInfo` from any source (`GetPositions`,
         "quotes_count": 3,
         "best_price": 50000000
       }
-    ]
+    ],
+    "next_cursor": null
   }
 }
 ```
@@ -816,17 +869,126 @@ There is no stream replay cursor. Reconcile entity versions on lifecycle pushes,
 Taker discovery requests. `request_id` is required on each.
 
 ```json
-{ "type": "GetMarkets", "data": { "request_id": "uuid" } }
-{ "type": "GetMarketDescriptors", "data": { "request_id": "uuid" } }
-{ "type": "GetExpiries", "data": { "request_id": "uuid", "underlying_mint": { "type": "all" }, "quote_mint": { "type": "all" }, "is_put": { "type": "all" } } }
-{ "type": "GetTokens", "data": { "request_id": "uuid" } }
-{ "type": "GetMyActiveRfqs", "data": { "request_id": "uuid" } }
-{ "type": "GetOrderStatus", "data": { "request_id": "uuid", "order_id": "0x...64chars" } }
-{ "type": "GetSubscriptions", "data": { "request_id": "uuid" } }
-{ "type": "GetIndicativePrices", "data": { "request_id": "uuid", "market": "MarketPdaBase58", "position_type": "covered_call" } }
-{ "type": "GetTokenCaps", "data": { "request_id": "uuid", "include_markets": true } }
-{ "type": "GetEarnSummary", "data": { "request_id": "uuid" } }
-{ "type": "GetTokenMarketsInfo", "data": { "request_id": "uuid", "underlying_mint": "UnderlyingMintBase58" } }
+{
+  "type": "GetMarkets",
+  "data": {
+    "request_id": "uuid",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
+{
+  "type": "GetMarketDescriptors",
+  "data": {
+    "request_id": "uuid",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
+{
+  "type": "GetExpiries",
+  "data": {
+    "request_id": "uuid",
+    "underlying_mint": {
+      "type": "all"
+    },
+    "quote_mint": {
+      "type": "all"
+    },
+    "is_put": {
+      "type": "all"
+    },
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
+{
+  "type": "GetTokens",
+  "data": {
+    "request_id": "uuid",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
+{
+  "type": "GetMyActiveRfqs",
+  "data": {
+    "request_id": "uuid",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
+{
+  "type": "GetOrderStatus",
+  "data": {
+    "request_id": "uuid",
+    "order_id": "0x...64chars"
+  }
+}
+{
+  "type": "GetSubscriptions",
+  "data": {
+    "request_id": "uuid",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
+{
+  "type": "GetIndicativePrices",
+  "data": {
+    "request_id": "uuid",
+    "market": "MarketPdaBase58",
+    "position_type": "covered_call",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
+{
+  "type": "GetTokenCaps",
+  "data": {
+    "request_id": "uuid",
+    "include_markets": true,
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
+{
+  "type": "GetEarnSummary",
+  "data": {
+    "request_id": "uuid",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
+{
+  "type": "GetTokenMarketsInfo",
+  "data": {
+    "request_id": "uuid",
+    "underlying_mint": "UnderlyingMintBase58",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
 ```
 
 `GetExpiries` filters take `{ "type": "all" }` or `{ "type": "only", "value": ... }` (a base58 mint for the mint filters, a boolean for `is_put`). `GetPositions` is described above.
@@ -836,7 +998,17 @@ Responses echo the same `request_id`: `Markets`, `MarketDescriptors`, `Expiries`
 `GetMarkets`, `GetMarketDescriptors`, `GetExpiries` and `GetTokens` answer from the server's [reference snapshot](ws-common.md#reference-data): tradable markets only, meaning non-finalized, non-disabled and before the pre-expiry trading cutoff. Closed and finalized markets are on HTTP `GET /api/v1/markets?active=false`. Re-read on [`ReferenceChanged`](ws-common.md#referencechanged).
 
 ```json
-{ "type": "Expiries", "data": { "request_id": "uuid", "expiries_ts": [1710600000, 1711200000] } }
+{
+  "type": "Expiries",
+  "data": {
+    "request_id": "uuid",
+    "expiries_ts": [
+      1710600000,
+      1711200000
+    ],
+    "next_cursor": null
+  }
+}
 ```
 
 ### Discovery strict policy
@@ -845,6 +1017,8 @@ Responses echo the same `request_id`: `Markets`, `MarketDescriptors`, `Expiries`
 - `GetMarketDescriptors` also fails as a whole (`MarketMetadataIncomplete`) when an active market has no oracle PDA. Partial discovery is not supported.
 
 ### MarketDescriptors payload
+
+Uses [common paging](ws-common.md#paging).
 
 `MarketDescriptors` returns `markets: MarketDescriptorInfo[]`:
 
@@ -886,6 +1060,8 @@ type MarketDescriptorInfo = {
 `program_id` is the same on devnet and mainnet. `GET /api/v1/venue` returns the authoritative `program_id`.
 
 ### Tokens payload
+
+Uses [common paging](ws-common.md#paging).
 
 ```jsonc
 { "type": "Tokens", "data": { "request_id": "uuid", "tokens": [ /* TokenInfo */ ] } }
@@ -956,12 +1132,12 @@ The authenticated taker session proves wallet ownership; `RedeemInvite` carries 
   "type": "InviteRedeemed",
   "data": {
     "request_id": "c8e2a4f6-3b5d-4a71-9c0e-5f7a9b1d3e26",
-    "referral_code": "mycode"
+    "referral_code": "MYCODE"
   }
 }
 ```
 
-After redemption, the taker receives a personal `referral_code` it can share.
+After redemption, the taker receives a personal `referral_code` it can share. Response codes use uppercase ASCII letters and digits.
 
 ### ClaimReferralCode (taker -> server)
 
@@ -982,7 +1158,7 @@ Claims a custom referral code and replaces the auto-assigned one. The reply is `
   "type": "ReferralCodeClaimed",
   "data": {
     "request_id": "uuid",
-    "referral_code": "mypreferred"
+    "referral_code": "MYPREFERRED"
   }
 }
 ```
@@ -998,7 +1174,7 @@ Claims a custom referral code and replaces the auto-assigned one. The reply is `
   "type": "MyReferralInfo",
   "data": {
     "request_id": "uuid",
-    "referral_code": "mycode",
+    "referral_code": "MYCODE",
     "status": "active",
     "total_invited": 3,
     "invited_this_period": 1,
@@ -1045,13 +1221,27 @@ Platform-level open interest, notional and spread-liability caps. Use them to sh
 
 ### GetTokenCaps (taker -> server)
 
+Uses [common paging](ws-common.md#paging).
+
 ```json
-{ "type": "GetTokenCaps", "data": { "request_id": "uuid", "include_markets": true } }
+{
+  "type": "GetTokenCaps",
+  "data": {
+    "request_id": "uuid",
+    "include_markets": true,
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
 ```
 
 `include_markets` is required. The server ignores it and always returns every configured cap.
 
 ### TokenCaps (server -> taker)
+
+Uses [common paging](ws-common.md#paging).
 
 ```json
 {
@@ -1089,9 +1279,14 @@ Platform-level open interest, notional and spread-liability caps. Use them to sh
         "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "symbol": "USDC",
         "current_liability": 120000000,
-        "policy": { "type": "limited", "max_liability": 1000000000, "headroom": 880000000 }
+        "policy": {
+          "type": "limited",
+          "max_liability": 1000000000,
+          "headroom": 880000000
+        }
       }
-    ]
+    ],
+    "next_cursor": null
   }
 }
 ```
@@ -1113,20 +1308,37 @@ All four arrays are always present and may be empty. Amounts are `u64`: underlyi
     "underlying_decimals": 9,
     "quote_symbol": "USDC",
     "quote_decimals": 6,
-    "size_rule": { "min_size": 100000000, "max_size": 10000000000, "step": 100000000 },
+    "size_rule": {
+      "min_size": 100000000,
+      "max_size": 10000000000,
+      "step": 100000000
+    },
     "reference_price": 150000000000,
-    "markets": [{
-      "products": ["covered_call", "call_spread"],
-      "market_pda": "MarketPdaBase58",
-      "expiry_ts": 1710600000,
-      "is_put": false,
-      "indicatives": [{
-        "position_type": "covered_call",
-        "updated_at": 1710000000,
-        "is_stale": false,
-        "strikes": [{ "strike": 160000000000, "best_price": 50000000 }]
-      }]
-    }]
+    "markets": [
+      {
+        "products": [
+          "covered_call",
+          "call_spread"
+        ],
+        "market_pda": "MarketPdaBase58",
+        "expiry_ts": 1710600000,
+        "is_put": false,
+        "indicatives": [
+          {
+            "position_type": "covered_call",
+            "updated_at": 1710000000,
+            "is_stale": false,
+            "strikes": [
+              {
+                "strike": 160000000000,
+                "best_price": 50000000
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "next_cursor": null
   }
 }
 ```
@@ -1145,18 +1357,26 @@ Indicative prices exist for `covered_call` and `cash_secured_put` only. `GetIndi
 
 ### GetIndicativePrices (taker -> server)
 
+Uses [common paging](ws-common.md#paging).
+
 ```json
 {
   "type": "GetIndicativePrices",
   "data": {
     "request_id": "uuid",
     "market": "MarketPdaBase58",
-    "position_type": "covered_call"
+    "position_type": "covered_call",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
   }
 }
 ```
 
 ### IndicativePrices (server -> taker)
+
+Uses [common paging](ws-common.md#paging).
 
 ```json
 {
@@ -1168,9 +1388,16 @@ Indicative prices exist for `covered_call` and `cash_secured_put` only. `GetIndi
     "updated_at": 1710000000,
     "is_stale": false,
     "strikes": [
-      { "strike": 450000000000, "best_price": 5000000 },
-      { "strike": 460000000000, "best_price": null }
-    ]
+      {
+        "strike": 450000000000,
+        "best_price": 5000000
+      },
+      {
+        "strike": 460000000000,
+        "best_price": null
+      }
+    ],
+    "next_cursor": null
   }
 }
 ```
@@ -1183,11 +1410,24 @@ Aggregated earn data per asset: APR range, capacity utilization, nearest market.
 
 ### GetEarnSummary (taker -> server)
 
+Uses [common paging](ws-common.md#paging).
+
 ```json
-{ "type": "GetEarnSummary", "data": { "request_id": "uuid" } }
+{
+  "type": "GetEarnSummary",
+  "data": {
+    "request_id": "uuid",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
 ```
 
 ### EarnSummary (server -> taker)
+
+Uses [common paging](ws-common.md#paging).
 
 ```json
 {
@@ -1201,7 +1441,11 @@ Aggregated earn data per asset: APR range, capacity utilization, nearest market.
         "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "quote_symbol": "USDC",
         "position_type": "covered_call",
-        "apr": { "type": "available", "min": 5.2, "max": 18.7 },
+        "apr": {
+          "type": "available",
+          "min": 5.2,
+          "max": 18.7
+        },
         "cap_filled_pct": 0.45,
         "cap_total": 100000000000,
         "cap_used": 45000000000,
@@ -1211,7 +1455,8 @@ Aggregated earn data per asset: APR range, capacity utilization, nearest market.
         "nearest_expiry_ts": 1710600000
       }
     ],
-    "computed_at": 1710000000
+    "computed_at": 1710000000,
+    "next_cursor": null
   }
 }
 ```
@@ -1333,3 +1578,34 @@ Every typed `ServerError` variant and its `data` is in the [ServerError catalog]
 - [Capacity limits](caps.md): OI, notional and liability caps
 - [Sandbox / Devnet](sandbox.md): endpoints, faucets, program addresses
 - [FAQ](faq.md)
+
+
+`GetMyActiveRfqs` uses [common paging](ws-common.md#paging) over live memory without SQL.
+
+Position summaries use [common paging](ws-common.md#paging) over the cached quote-mint aggregates:
+
+```json
+{
+  "type": "GetPositionSummary",
+  "data": {
+    "request_id": "00000000-0000-4000-8000-000000000001",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
+```
+
+```json
+{
+  "type": "PositionSummary",
+  "data": {
+    "request_id": "00000000-0000-4000-8000-000000000001",
+    "summaries": [],
+    "next_cursor": null
+  }
+}
+```
+
+An empty `summaries` array means the wallet has no qualifying positions. A failed query returns an error. The per-wallet cache retains one coherent authoritative snapshot for five seconds, including its authority check. Concurrent misses share one SQL load. Data and authority changes become visible at the next cache refresh. An expired result is never returned after a failed refresh.

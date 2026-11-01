@@ -118,7 +118,16 @@ Sent automatically after `AuthSuccess`. `markets` lists the active markets in th
 Full descriptors carry `size_rule`, decimals and oracle PDAs, which you need to validate `quantity` and render prices. Call this before `RfqRequest`.
 
 ```json
-{ "type": "GetMarketDescriptors", "data": { "request_id": "2c7e4a91-5d3b-4f60-9a8e-1b4c6d2f7e05" } }
+{
+  "type": "GetMarketDescriptors",
+  "data": {
+    "request_id": "2c7e4a91-5d3b-4f60-9a8e-1b4c6d2f7e05",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
 ```
 
 ```json
@@ -128,7 +137,10 @@ Full descriptors carry `size_rule`, decimals and oracle PDAs, which you need to 
     "request_id": "2c7e4a91-5d3b-4f60-9a8e-1b4c6d2f7e05",
     "markets": [
       {
-        "products": ["covered_call", "call_spread"],
+        "products": [
+          "covered_call",
+          "call_spread"
+        ],
         "market": {
           "chain_id": 0,
           "program_id": "33Ezs5eoa16QyPW8wifnyz2nCyMEcq2crqkVBNjnTE8U",
@@ -144,11 +156,16 @@ Full descriptors carry `size_rule`, decimals and oracle PDAs, which you need to 
         "quote_oracle_pda": "QuoteOraclePdaBase58",
         "underlying_decimals": 9,
         "quote_decimals": 6,
-        "size_rule": { "min_size": 1000000000, "max_size": 100000000000, "step": 1000000000 },
+        "size_rule": {
+          "min_size": 1000000000,
+          "max_size": 100000000000,
+          "step": 1000000000
+        },
         "underlying_symbol": "SOL",
         "quote_symbol": "USDC"
       }
-    ]
+    ],
+    "next_cursor": null
   }
 }
 ```
@@ -495,7 +512,7 @@ At settlement price `133` the intrinsic value is `7`. The maker receives `350000
 
 ### Cash put
 
-A cash put carries one strike `K`. It executes as a put spread with legs `(0, K)`, so its width is `K`. Only a put market whose `products` include `cash_put` accepts it.
+A cash put carries one strike `K`. It is economically a put spread with lower strike 0 and upper strike `K`, so its width is `K`. Its wire name is `cash_put`. Only a put market whose `products` include `cash_put` accepts it.
 
 ```json
 {
@@ -649,7 +666,7 @@ Redeem before trading:
 ```json
 {
   "type": "InviteRedeemed",
-  "data": { "request_id": "c8e2a4f6-3b5d-4a71-9c0e-5f7a9b1d3e26", "referral_code": "mycode" }
+  "data": { "request_id": "c8e2a4f6-3b5d-4a71-9c0e-5f7a9b1d3e26", "referral_code": "MYCODE" }
 }
 ```
 
@@ -675,16 +692,41 @@ An `RfqRequest` before redemption fails with a typed `InviteRequired` error in a
 Subscriptions and in-flight state are not replayed. Re-authenticate, resubscribe, then query:
 
 ```json
-{ "type": "GetMyActiveRfqs", "data": { "request_id": "d2f4a6c8-7e9b-4b13-8d5f-0a2c4e6a8b37" } }
-{ "type": "GetOrderStatus", "data": { "request_id": "e5a7c9e1-2b4d-4c68-9f1a-3c5e7a9b1d48", "order_id": "0x2222222222222222222222222222222222222222222222222222222222222222" } }
+{
+  "type": "GetMyActiveRfqs",
+  "data": {
+    "request_id": "d2f4a6c8-7e9b-4b13-8d5f-0a2c4e6a8b37",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
+{
+  "type": "GetOrderStatus",
+  "data": {
+    "request_id": "e5a7c9e1-2b4d-4c68-9f1a-3c5e7a9b1d48",
+    "order_id": "0x2222222222222222222222222222222222222222222222222222222222222222"
+  }
+}
 {
   "type": "GetPositions",
   "data": {
     "request_id": "f1b3d5e7-9a2c-4d84-8e6a-4b6c8d0e2f59",
-    "market": { "type": "all" },
-    "underlying_mint": { "type": "all" },
+    "market": {
+      "type": "all"
+    },
+    "underlying_mint": {
+      "type": "all"
+    },
     "status": [],
-    "min_expiry_ts": { "type": "unbounded" }
+    "min_expiry_ts": {
+      "type": "unbounded"
+    },
+    "limit": 50,
+    "cursor": {
+      "type": "start"
+    }
   }
 }
 ```
@@ -696,14 +738,21 @@ Subscriptions and in-flight state are not replayed. Re-authenticate, resubscribe
     "request_id": "f1b3d5e7-9a2c-4d84-8e6a-4b6c8d0e2f59",
     "positions": [
       {
-        "revision": { "slot": 312456800, "transaction_index": 14, "instruction_index": 2 },
+        "revision": {
+          "slot": 312456800,
+          "transaction_index": 14,
+          "instruction_index": 2
+        },
         "pda": "PositionPdaBase58",
         "market": "MarketPdaBase58",
         "underlying_mint": "So11111111111111111111111111111111111111112",
         "underlying_decimals": 9,
         "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "quote_decimals": 6,
-        "terms": { "type": "covered_call", "strike": 136000000000 },
+        "terms": {
+          "type": "covered_call",
+          "strike": 136000000000
+        },
         "side": "sell",
         "state": "open",
         "quantity": 5000000000,
@@ -712,7 +761,8 @@ Subscriptions and in-flight state are not replayed. Re-authenticate, resubscribe
         "created_at": 1710000012,
         "expiry_ts": 1710600000
       }
-    ]
+    ],
+    "next_cursor": null
   }
 }
 ```

@@ -4,11 +4,11 @@
 
 All WS messages use:
 
-```json
+```text
 { "type": "MessageType", "data": { ... } }
 ```
 
-Unit variants may omit `data`, for example:
+Unit variants have no `data` field, for example:
 
 ```json
 { "type": "Logout" }
@@ -285,7 +285,7 @@ Validate the entire challenge **before invoking the signer**. Require the exact 
 
 After validation, sign the original UTF-8 bytes without normalization, additional prefix or hashing. The fixed text already supplies the authentication domain. Signing arbitrary endpoint text with the order key can authorize an order instead of authentication.
 
-Rust SDK (`acta-maker-sdk` 0.6.0) and TS SDK (`@acta-markets/ts-sdk` 0.3.0) validate authentication messages before invoking signers in their managed clients. Raw Rust clients use `validate_maker_auth_challenge`, or `validate_vault_auth_challenge(challenge, operator, vault)` for a vault session; raw TS clients use `validateAuthChallenge`, which checks the grammar of the maker and taker formats and rejects the vault format, and `assertVaultAuthChallenge(challenge, operator, vault)` for a vault session. This does not establish endpoint trust or prevent relay of a genuine server challenge.
+Rust SDK (`acta-maker-sdk` 0.6.1) and TS SDK (`@acta-markets/ts-sdk` 0.3.1) validate authentication messages before invoking signers in their managed clients. Raw Rust clients use `validate_maker_auth_challenge`, or `validate_vault_auth_challenge(challenge, operator, vault)` for a vault session; raw TS clients use `validateAuthChallenge`, which checks the grammar of the maker and taker formats and rejects the vault format, and `assertVaultAuthChallenge(challenge, operator, vault)` for a vault session. This does not establish endpoint trust or prevent relay of a genuine server challenge.
 
 ### AuthChallenge (client -> server)
 
@@ -690,9 +690,10 @@ receives a code outside this set fails to decode the frame.
 | `vault_session_invalidated` | Generic | The Vault grant changed or was revoked; the session closes |
 | `invalid_vault_subscription` | Generic | The subscription is not allowed for a Vault session |
 | `invalid_products` | Generic | `Subscribe.products` is empty |
-| `subscription_scope_too_large` | Generic | The subscription mint filter exceeds its limit |
+| `subscription_scope_too_large` | Generic | The two mint lists exceed 1024 entries after each is deduplicated; the existing scope stays unchanged. See [Subscribe](maker-api.md#subscribe) |
 | `history_projection_incomplete` | Generic | A history read lacks listener metadata; retrying does not help until reconciliation |
 | `invalid_limit` | Generic | Page `limit` outside the accepted range for the query |
+| `invalid_cursor` | Generic | Page cursor is malformed or does not match the requested cursor format |
 | `invalid_timeout` | Generic | `timeout_seconds` outside the venue's `min_rfq_timeout_seconds` to `max_rfq_timeout_seconds` |
 | `market_not_found` | Generic | The market is not in the registry |
 | `invalid_program_id` | Generic | The server program id is misconfigured |
@@ -860,8 +861,8 @@ market.expiry_ts
   └─ rfq.expires_at                     # Auction window (no new quotes or accepts after this)
 
 quote.valid_until                        # Cryptographic expiry (on-chain enforcement)
-  └─ effective_expiry                    # = valid_until - settlement_buffer (server-side trading cutoff)
-       └─ refresh point                  # = effective_expiry - quote_refresh_lead (quote freezes)
+  └─ effective_expiry                    # = valid_until - settlement_buffer_seconds (server-side trading cutoff)
+       └─ refresh point                  # = effective_expiry - quote_refresh_lead_seconds (quote freezes)
 
 rfq.signature_deadline
   └─ tx_submit_timeout
@@ -871,8 +872,8 @@ rfq.signature_deadline
 
 `expires_at` is the auction deadline. `valid_until` is the on-chain order validity.
 
-- **`rfq.expires_at`** controls how long makers can submit quotes and the taker can accept. After this time new quoting/acceptance stops; an enqueued order remains unresolved until execution evidence arrives.
-- **`quote.valid_until`** is the cryptographic expiry the maker signs into the order. The on-chain program rejects settlement if `valid_until` has passed.
+- `rfq.expires_at` controls how long makers can submit quotes and the taker can accept. After this time new quoting/acceptance stops; an enqueued order remains unresolved until execution evidence arrives.
+- `quote.valid_until` is the signed-order expiry. The on-chain program rejects opening the position at or after `valid_until`. It does not govern later settlement of an open position.
 
 Choose `valid_until` beyond `expires_at`. A taker can accept in the last second of an auction. The signature deadline is capped at `expires_at`, and the signed transaction confirms on Solana after that. If `valid_until` equaled `expires_at`, the quote would freeze before the auction ended, and the on-chain order could expire before the transaction lands.
 
@@ -884,8 +885,7 @@ recommended: rfq.expires_at + min_quote_validity_seconds  (plus a little slack)
 hard max:    market.expiry_ts
 ```
 
-`min_quote_validity_seconds` comes from `Welcome` or `GET /api/v1/venue`. It covers the settlement
-buffer and the refresh lead. At `valid_until - settlement_buffer_seconds - quote_refresh_lead` the
+`min_quote_validity_seconds` and `settlement_buffer_seconds` come from `Welcome` or `GET /api/v1/venue`. The minimum validity covers the settlement buffer and the refresh lead. To calculate the refresh point, read `quote_refresh_lead_seconds` from `GET /api/v1/venue`; `Welcome` does not carry it. At `valid_until - settlement_buffer_seconds - quote_refresh_lead_seconds` the
 server freezes the quote and sends `QuoteRefreshRequested`. The recommended value keeps that point
 at or after `rfq.expires_at`, so the quote stays acceptable for the whole auction.
 
@@ -931,3 +931,40 @@ On client side:
 - apply update only if `new_version > current_version`
 - ignore stale updates (`new_version < current_version`)
 - treat equal versions as idempotent replay
+
+## Paging
+
+Every WS list request requires `limit` (1 through 200) and `cursor`. Start with
+`{"type":"start"}`. Each response includes `next_cursor`, an opaque string or
+null. For the next page, send `{"type":"after","id":"<next_cursor>"}` with the
+same filters. Stop at null. Never construct a cursor from a returned row.
+
+```json
+{"type":"GetMarkets","data":{"request_id":"00000000-0000-4000-8000-000000000001","limit":200,"cursor":{"type":"start"}}}
+```
+
+REST uses optional `limit` and `cursor` query parameters. `limit` defaults to 50
+and allows 1 through 200. Omit `cursor` for the first page, then pass the opaque
+`next_cursor` string directly as its value, URL-encoded as a query parameter.
+Do not wrap a REST cursor in JSON. For example, request
+`GET /api/v1/vaults?limit=100`, then
+`GET /api/v1/vaults?limit=100&cursor=abc` if `next_cursor` is `abc`.
+Vault deposit and withdrawal request routes allow at most 100 rows.
+Out-of-range limits return `invalid_limit`; malformed cursors return
+`invalid_cursor`. WS messages missing required fields fail decoding. Limits are
+rejected, never clamped. Compound replies share one page budget across their
+collections. Scalars repeat on each page. Token-market strike lists can span
+pages; merge fragments by market PDA and position type.
+
+Rust SDK `0.6.1` and TypeScript SDK `0.3.1` use one shared `fetch_all` or
+`fetchAllPages` helper. Their normal list methods collect every page. Use an
+explicit page method for incremental UI loading, such as
+`getPositionsPageAsync` in TypeScript. Raw WS `request` methods return one page.
+Keep push updates received during a read and apply position revisions before
+replacing local state. Paged reads are recovery and history reads, not polling.
+
+Public and admin Hello remain `1.0.0`. There is no compatibility layer. Old
+clients can complete Hello but changed list calls fail request decoding or
+response decoding. Previous limits of 500 or 1000 now return `invalid_limit`.
+Push and cancellation acknowledgement shapes are unchanged and retain their
+server hard bounds.

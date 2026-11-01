@@ -71,7 +71,17 @@ Maximum cash-settled liability per quote mint. The liability of a spread or cash
 Send `GetTokenCaps` for platform-level caps. `request_id` and `include_markets` are required. The backend returns token, market, quote-mint and quote-liability caps regardless of the value of `include_markets`.
 
 ```json
-{ "type": "GetTokenCaps", "data": { "request_id": "uuid", "include_markets": true } }
+{
+  "type": "GetTokenCaps",
+  "data": {
+    "request_id": "uuid",
+    "include_markets": true,
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
 ```
 
 Response `TokenCaps`:
@@ -112,9 +122,14 @@ Response `TokenCaps`:
         "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "symbol": "USDC",
         "current_liability": 50000000,
-        "policy": { "type": "limited", "max_liability": 100000000, "headroom": 50000000 }
+        "policy": {
+          "type": "limited",
+          "max_liability": 100000000,
+          "headroom": 50000000
+        }
       }
-    ]
+    ],
+    "next_cursor": null
   }
 }
 ```
@@ -165,7 +180,16 @@ Maximum spread liability per quote mint for your maker account. Same fields as t
 Send `GetMyCaps` for your maker-specific limits. `request_id` is required.
 
 ```json
-{ "type": "GetMyCaps", "data": { "request_id": "uuid" } }
+{
+  "type": "GetMyCaps",
+  "data": {
+    "request_id": "uuid",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
 ```
 
 Response `MyCaps`:
@@ -202,9 +226,14 @@ Response `MyCaps`:
         "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "symbol": "USDC",
         "current_liability": 20000000,
-        "policy": { "type": "limited", "max_liability": 100000000, "headroom": 80000000 }
+        "policy": {
+          "type": "limited",
+          "max_liability": 100000000,
+          "headroom": 80000000
+        }
       }
-    ]
+    ],
+    "next_cursor": null
   }
 }
 ```

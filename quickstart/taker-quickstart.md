@@ -81,9 +81,45 @@ A valid session returns `AuthSuccess`. An invalid, expired or revoked one return
 Fetch market metadata before opening an RFQ. `GetMarketDescriptors` returns the descriptor: `products`, `size_rule`, decimals, oracle PDAs and symbols.
 
 ```json
-{ "type": "GetMarketDescriptors", "data": { "request_id": "<uuid>" } }
-{ "type": "GetTokens",            "data": { "request_id": "<uuid>" } }
-{ "type": "GetExpiries",          "data": { "request_id": "<uuid>", "underlying_mint": { "type": "all" }, "quote_mint": { "type": "all" }, "is_put": { "type": "all" } } }
+{
+  "type": "GetMarketDescriptors",
+  "data": {
+    "request_id": "<uuid>",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
+{
+  "type": "GetTokens",
+  "data": {
+    "request_id": "<uuid>",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
+{
+  "type": "GetExpiries",
+  "data": {
+    "request_id": "<uuid>",
+    "underlying_mint": {
+      "type": "all"
+    },
+    "quote_mint": {
+      "type": "all"
+    },
+    "is_put": {
+      "type": "all"
+    },
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
 ```
 
 Query requests require `request_id`, and responses echo it. Discovery returns tradable markets only. Cache descriptors and re-read them when an authenticated session receives `ReferenceChanged`, which also covers a market passing its trading cutoff. Before auth, or without WebSocket, read `GET /api/v1/tokens` and `GET /api/v1/markets` with `If-None-Match` (see [HTTP API](../reference/http-api.md#reference-data)).
@@ -170,7 +206,7 @@ You pick the winner; the server's ranking is advisory. One quote fills the full 
 
 ### Economics of spreads and cash puts
 
-Call spreads, put spreads and cash puts are cash-settled in the quote mint. Their lifecycle is Open -> Settled; they are never funded or liquidated.
+Call spreads, put spreads and cash puts are cash-settled in the quote mint. A cash put is economically a put spread with lower strike 0; its wire name is `cash_put`. Their lifecycle is Open -> Settled; they are never funded or liquidated.
 
 - Width `W` is `upper_strike - lower_strike` for a spread and `strike` for a cash put.
 - The taker posts collateral `C = ceil(W * quantity * 10^quote_decimals / (1e9 * 10^underlying_decimals))` in quote atoms and receives the net premium.
@@ -347,10 +383,20 @@ Every position row carries `revision { slot, transaction_index, instruction_inde
   "type": "GetPositions",
   "data": {
     "request_id": "<uuid>",
-    "market": { "type": "all" },
-    "underlying_mint": { "type": "all" },
+    "market": {
+      "type": "all"
+    },
+    "underlying_mint": {
+      "type": "all"
+    },
     "status": [],
-    "min_expiry_ts": { "type": "unbounded" }
+    "min_expiry_ts": {
+      "type": "unbounded"
+    },
+    "limit": 50,
+    "cursor": {
+      "type": "start"
+    }
   }
 }
 ```
@@ -362,9 +408,43 @@ Subscribing to `chain_events` additionally delivers `ChainEvent` frames such as 
 Subscriptions do not persist across disconnects, and the server does not replay missed events. After reconnect, re-authenticate (resume or fresh), resubscribe, then rehydrate:
 
 ```json
-{ "type": "GetMyActiveRfqs", "data": { "request_id": "<uuid>" } }
-{ "type": "GetOrderStatus",  "data": { "request_id": "<uuid>", "order_id": "0x<64 hex>" } }
-{ "type": "GetPositions",    "data": { "request_id": "<uuid>", "market": { "type": "all" }, "underlying_mint": { "type": "all" }, "status": [], "min_expiry_ts": { "type": "unbounded" } } }
+{
+  "type": "GetMyActiveRfqs",
+  "data": {
+    "request_id": "<uuid>",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
+{
+  "type": "GetOrderStatus",
+  "data": {
+    "request_id": "<uuid>",
+    "order_id": "0x<64 hex>"
+  }
+}
+{
+  "type": "GetPositions",
+  "data": {
+    "request_id": "<uuid>",
+    "market": {
+      "type": "all"
+    },
+    "underlying_mint": {
+      "type": "all"
+    },
+    "status": [],
+    "min_expiry_ts": {
+      "type": "unbounded"
+    },
+    "limit": 50,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
 ```
 
 Lifecycle events can be redelivered after recovery. Process them idempotently by `order_id` and gate on `*_version`.
@@ -392,7 +472,7 @@ The authenticated session proves wallet ownership; no separate signature is need
 | Reconnect backoff | Exponential with jitter, for example 1s initial, 30s cap, ±20%. |
 | Clock skew | Track `offset = server_time − local_time` from `Welcome` and `Pong`. Apply it to `expires_at` and `signature_deadline`. |
 | Signature deadline | `min(now + 30s, quote effective_expiry, rfq.expires_at)`. Sign promptly after `AcceptQuote`. |
-| Rate limits | Concurrent unfinished RFQs: 50 per taker, 50 per source IP, 1000 platform-wide (defaults). `RateLimit` errors carry a reason code. |
+| Rate limits | See [Rate limits and admission](../reference/ws-common.md#rate-limits-and-admission). `RateLimit` errors carry a reason code. |
 
 `valid_until` (on-chain order validity) is the maker's concern. The taker never sets it.
 

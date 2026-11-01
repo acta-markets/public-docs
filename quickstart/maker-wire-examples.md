@@ -439,7 +439,16 @@ If the quote remains active instead of being selected, the refresh timer fires a
 After authentication, restore the quote plane on `/maker`. Ask what the server holds, then replace the subscription with the desired target:
 
 ```json
-{ "type": "GetSubscriptions", "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000004" } }
+{
+  "type": "GetSubscriptions",
+  "data": {
+    "request_id": "a1b2c3d4-0000-4000-8000-000000000004",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
 ```
 
 ```json
@@ -447,9 +456,13 @@ After authentication, restore the quote plane on `/maker`. Ask what the server h
   "type": "Subscriptions",
   "data": {
     "request_id": "a1b2c3d4-0000-4000-8000-000000000004",
-    "channels": ["rfqs", "trades"],
+    "channels": [
+      "rfqs",
+      "trades"
+    ],
     "underlying_mints": [],
-    "quote_mints": []
+    "quote_mints": [],
+    "next_cursor": null
   }
 }
 ```
@@ -476,35 +489,73 @@ The server holds `trades`, which the client does not want. Remove it, then subsc
 Then read the open RFQs and the live quotes:
 
 ```json
-{ "type": "GetActiveRfqs", "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000001" } }
-{ "type": "GetMyQuotes", "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000002", "scope": { "type": "live" } } }
+{
+  "type": "GetActiveRfqs",
+  "data": {
+    "request_id": "a1b2c3d4-0000-4000-8000-000000000001",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
+{
+  "type": "GetMyQuotes",
+  "data": {
+    "request_id": "a1b2c3d4-0000-4000-8000-000000000002",
+    "scope": {
+      "type": "live"
+    },
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
 ```
 
 On `/maker/data`, read the summary. Owner pushes start after it:
 
 ```json
-{ "type": "GetMmSummary", "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000003" } }
+{
+  "type": "GetMmSummary",
+  "data": {
+    "request_id": "a1b2c3d4-0000-4000-8000-000000000003",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
 ```
 
 Then the strategy rebuilds its position book and settles unfinished orders. The steps are in [Delivery and recovery](../reference/maker-api.md#delivery-and-recovery).
 
-`GetMyQuotes` with `scope.type = "live"` returns the full, unpaged owner set, including retained and selected quotes. History is a separate request with `scope.type = "history"`. Use `GetMmSummary` for dashboard bootstrap or recovery, not as a polling request.
+`GetMyQuotes` with `scope.type = "live"` pages the owner set, including retained and selected quotes. History is a separate request with `scope.type = "history"`. Use `GetMmSummary` for dashboard bootstrap or recovery, not as a polling request.
 
 ### Page the position book
 
-If `MmSummary.positions_has_more` is `true`, read the rest from `GetMakerPositions`. `limit` is required and must be in `1..=500`. Start with `cursor.type = "start"`:
+Use [common paging](../reference/ws-common.md#paging) for maker positions. Start with the following request:
 
 ```json
 {
   "type": "GetMakerPositions",
   "data": {
     "request_id": "a1b2c3d4-0000-4000-8000-000000000011",
-    "market": { "type": "all" },
-    "underlying_mint": { "type": "all" },
+    "market": {
+      "type": "all"
+    },
+    "underlying_mint": {
+      "type": "all"
+    },
     "status": [],
-    "min_expiry_ts": { "type": "unbounded" },
-    "limit": 500,
-    "cursor": { "type": "start" }
+    "min_expiry_ts": {
+      "type": "unbounded"
+    },
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
   }
 }
 ```
@@ -518,7 +569,11 @@ If `MmSummary.positions_has_more` is `true`, read the rest from `GetMakerPositio
     "request_id": "a1b2c3d4-0000-4000-8000-000000000011",
     "positions": [
       {
-        "revision": { "slot": 250000000, "transaction_index": 12, "instruction_index": 1 },
+        "revision": {
+          "slot": 250000000,
+          "transaction_index": 12,
+          "instruction_index": 1
+        },
         "pda": "75NqraLLofiLUpNQg2wUPG6CJpxcaGEZUwuNrnAgvcTP",
         "market": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
         "underlying_mint": "So11111111111111111111111111111111111111112",
@@ -527,7 +582,10 @@ If `MmSummary.positions_has_more` is `true`, read the rest from `GetMakerPositio
         "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "quote_symbol": "USDC",
         "quote_decimals": 6,
-        "terms": { "type": "covered_call", "strike": 160000000000 },
+        "terms": {
+          "type": "covered_call",
+          "strike": 160000000000
+        },
         "side": "sell",
         "state": "open",
         "quantity": 1000000000,
@@ -538,33 +596,37 @@ If `MmSummary.positions_has_more` is `true`, read the rest from `GetMakerPositio
       }
     ],
     "unrenderable": [],
-    "has_more": true
+    "next_cursor": null
   }
 }
 ```
 
-`has_more` is `true`, so request the next page. Set `cursor` to `after` the last row: `at` is its `created_at` and `id` is its `pda`.
+When `next_cursor` is non-null, wrap that opaque string in an `after` cursor. The following frame shows the first-page shape:
 
 ```json
 {
   "type": "GetMakerPositions",
   "data": {
     "request_id": "a1b2c3d4-0000-4000-8000-000000000012",
-    "market": { "type": "all" },
-    "underlying_mint": { "type": "all" },
+    "market": {
+      "type": "all"
+    },
+    "underlying_mint": {
+      "type": "all"
+    },
     "status": [],
-    "min_expiry_ts": { "type": "unbounded" },
-    "limit": 500,
+    "min_expiry_ts": {
+      "type": "unbounded"
+    },
+    "limit": 200,
     "cursor": {
-      "type": "after",
-      "at": 1710000042,
-      "id": "75NqraLLofiLUpNQg2wUPG6CJpxcaGEZUwuNrnAgvcTP"
+      "type": "start"
     }
   }
 }
 ```
 
-Stop when `has_more` is `false`. To read only rows that can still change, set `min_expiry_ts` to `{ "type": "bounded", "value": <unix seconds> }`. It keeps positions whose market expiry is at or after the value.
+Stop when `next_cursor` is null. Keep the same filters throughout a read.
 
 ### Reconcile unfinished orders
 
@@ -643,7 +705,10 @@ Response:
         "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "quote_symbol": "USDC",
         "quote_decimals": 6,
-        "terms": { "type": "covered_call", "strike": 160000000000 },
+        "terms": {
+          "type": "covered_call",
+          "strike": 160000000000
+        },
         "side": "sell",
         "taker": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
         "quantity": 1000000000,
@@ -653,7 +718,7 @@ Response:
         "confirmed_at": 1710000042
       }
     ],
-    "has_more": true
+    "next_cursor": null
   }
 }
 ```
@@ -667,32 +732,38 @@ Next page (keyset pagination). `at` is the last trade's `confirmed_at` and `id` 
     "request_id": "a1b2c3d4-0000-4000-8000-000000000032",
     "limit": 50,
     "cursor": {
-      "type": "after",
-      "at": 1710000042,
-      "id": "7c2e9a41-6b3d-4f58-9e1a-0d4b6f8a2c35"
+      "type": "start"
     },
-    "market": { "type": "all" }
+    "market": {
+      "type": "all"
+    }
   }
 }
 ```
 
 ### Quote history (paginated)
 
-History pages with the `scope` cursor. `limit` is in `1..=1000`:
+History uses top-level paging fields. See [common paging](../reference/ws-common.md#paging):
 
 ```json
 {
   "type": "GetMyQuotes",
   "data": {
     "request_id": "a1b2c3d4-0000-4000-8000-000000000041",
-    "scope": { "type": "history", "limit": 200, "cursor": { "type": "start" } }
+    "scope": {
+      "type": "history"
+    },
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
   }
 }
 ```
 
 The next page uses `cursor.type = "after"` with the last row's `created_at` as `at` and its `order_id` as `id`.
 
-A limit outside the range is rejected, not clamped:
+Normal SDK list calls collect all pages through one helper. Live quotes and catalogs are paged too. Do not use query reads as polling paths.
 
 ```json
 {
@@ -701,7 +772,7 @@ A limit outside the range is rejected, not clamped:
     "request_id": "a1b2c3d4-0000-4000-8000-000000000042",
     "error": {
       "type": "Generic",
-      "data": { "code": "invalid_limit", "message": "limit must be within 1..=1000" }
+      "data": { "code": "invalid_limit", "message": "limit must be within 1..=200" }
     },
     "delivery": null
   }

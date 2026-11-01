@@ -161,6 +161,8 @@ All fields are required. The server answers with `SubscribeAck` echoing `request
 - `underlying_mints` and `quote_mints` filter market broadcasts. `[]` means every mint.
 - Each `Subscribe` replaces the product selection and both mint lists. Channels are additive.
 
+The two mint lists may contain at most 1024 entries in total after each list is deduplicated. A mint present in both lists counts twice. An oversized `Subscribe` or `AddMints` returns a correlated `RequestError` with code `subscription_scope_too_large`; the existing scope and channels stay unchanged.
+
 ### Connection policy defaults
 
 - Auth deadline (after challenge issued): `15s`
@@ -299,7 +301,7 @@ Every RFQ, quote, position and trade carries two required fields: `terms` and `s
 
 - Strikes are integers scaled by 1e9 per underlying token, independent of mint decimals. `strike_tick` from `GetTokens` is on the same scale.
 - `side` describes the taker: `sell` or `buy`. Only `sell` is executable. A `buy` quote is rejected with `taker_buy_unsupported`.
-- `cash_put` is a put with strike K that settles in cash. On chain it executes as a put spread with legs `(0, K)`. It is signed with the put-spread product byte, lower strike `0` and upper strike K.
+- `cash_put` is economically a put spread with lower strike 0 and upper strike K. It settles in cash and executes on chain with those legs. It is signed with the put-spread product byte, lower strike `0` and upper strike K.
 - Public `call_spread` and `put_spread` terms require `0 < lower_strike < upper_strike`. Both strikes are chosen by the taker. For puts the short strike is the upper strike.
 - A put with a zero lower leg is a `cash_put`. A `put_spread` with `lower_strike` `0` is rejected with `spread_invalid_strikes`. On chain a position with legs `(0, K)` reads back as `cash_put`.
 - Both strikes of a spread, and the strike of a `cash_put`, must be multiples of the underlying mint's `strike_tick`. A mint without a tick is rejected with `missing_tick_for_underlying_mint`.
@@ -497,7 +499,7 @@ Spread layout (call spread, put spread, cash put), 190 bytes. Offsets 0 to 181 a
 - `78,8` -> `lower_strike` (`u64`)
 - `182,8` -> `upper_strike` (`u64`)
 
-A `cash_put` with strike K uses `position_type` `3`, `lower_strike` `0` and `upper_strike` K.
+A cash put is economically a put spread with lower strike 0. The wire name is `cash_put`; a strike K uses `position_type` `3`, `lower_strike` `0` and `upper_strike` K in the preimage.
 
 `gross_price` is the same value as `price` in the `Quote` message.
 
@@ -505,7 +507,7 @@ A `cash_put` with strike K uses `position_type` `3`, `lower_strike` `0` and `upp
 
 #### Test vectors
 
-Test your builder against these values before quoting. All three use `chain_id` 0, `program_id` 32 bytes of `0x04`, `market` 32 bytes of `0x01`, `maker` 32 bytes of `0x02`, `taker` 32 bytes of `0x03`, side `sell`, `quantity` 1000000, `gross_price` 1000000000, `valid_until` 123 and `nonce` 999. `order_id` here is plain hex; the wire adds `0x`.
+These vectors come from the Rust SDK fixture `tests/fixtures/order_preimage_vectors.json`: `physical_covered_call`, `spread_call` and `cash_put_zero_lower`. Test your builder against them before quoting. All three use `chain_id` 0, `program_id` 32 bytes of `0x04`, `market` 32 bytes of `0x01`, `maker` 32 bytes of `0x02`, `taker` 32 bytes of `0x03`, side `sell`, `quantity` 1000000, `gross_price` 1000000000, `valid_until` 123 and `nonce` 999. `order_id` here is plain hex; the wire accepts it with or without a `0x` prefix.
 
 Covered call, 182 bytes: `position_type` 0, `strike` 100000000000.
 
@@ -697,7 +699,7 @@ The value under `cap_exceeded` is a `CapError`: a bare string for
 }
 ```
 
-The refresh timer fires at `valid_until - settlement_buffer_seconds - quote_refresh_lead_seconds`. The quote then stays in the book but cannot be accepted until you send a fresh one. `min_valid_until` is the fire time plus the buffer, the lead and one second.
+The refresh timer fires at `valid_until - settlement_buffer_seconds - quote_refresh_lead_seconds`. The quote then stays in the book but cannot be accepted until you send a fresh one. `min_valid_until` is the authoritative lower bound for the replacement. Use the value in the frame; it also accounts for the configured admission minimum.
 
 Identified by `(rfq_id, terms)`, not `order_id`. If quoting several terms per RFQ, keep a local `(rfq_id, terms) -> order_id` mapping to know which quote to refresh.
 
@@ -1025,53 +1027,144 @@ Unit variant, no `data` field. Server responds with `Pong`.
 All discovery requests require `request_id` (UUID). The server echoes `request_id` in the corresponding response. Maker-private and recovery reads should be sent on `/maker/data`; `GetSubscriptions` stays on `/maker` because it describes the live quote-plane subscription state.
 
 ```json
-{ "type": "GetMyQuotes", "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000001", "scope": { "type": "live" } } }
-{ "type": "GetOrderStatus", "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000002", "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a" } }
-{ "type": "GetMmSummary", "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000003" } }
-{ "type": "GetSubscriptions", "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000004" } }
-{ "type": "GetActiveRfqs", "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000005" } }
-{ "type": "GetTokenCaps", "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000006", "include_markets": true } }
-{ "type": "GetMyCaps", "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000007" } }
-{ "type": "GetMarkets", "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000008" } }
-{ "type": "GetMarketDescriptors", "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000009" } }
-{ "type": "GetTokens", "data": { "request_id": "a1b2c3d4-0000-4000-8000-00000000000a" } }
-{ "type": "GetExpiries", "data": { "request_id": "a1b2c3d4-0000-4000-8000-00000000000b", "underlying_mint": { "type": "all" }, "quote_mint": { "type": "all" }, "is_put": { "type": "all" } } }
+{
+  "type": "GetMyQuotes",
+  "data": {
+    "request_id": "a1b2c3d4-0000-4000-8000-000000000001",
+    "scope": {
+      "type": "live"
+    },
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
+{
+  "type": "GetOrderStatus",
+  "data": {
+    "request_id": "a1b2c3d4-0000-4000-8000-000000000002",
+    "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"
+  }
+}
+{
+  "type": "GetMmSummary",
+  "data": {
+    "request_id": "a1b2c3d4-0000-4000-8000-000000000003",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
+{
+  "type": "GetSubscriptions",
+  "data": {
+    "request_id": "a1b2c3d4-0000-4000-8000-000000000004",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
+{
+  "type": "GetActiveRfqs",
+  "data": {
+    "request_id": "a1b2c3d4-0000-4000-8000-000000000005",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
+{
+  "type": "GetTokenCaps",
+  "data": {
+    "request_id": "a1b2c3d4-0000-4000-8000-000000000006",
+    "include_markets": true,
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
+{
+  "type": "GetMyCaps",
+  "data": {
+    "request_id": "a1b2c3d4-0000-4000-8000-000000000007",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
+{
+  "type": "GetMarkets",
+  "data": {
+    "request_id": "a1b2c3d4-0000-4000-8000-000000000008",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
+{
+  "type": "GetMarketDescriptors",
+  "data": {
+    "request_id": "a1b2c3d4-0000-4000-8000-000000000009",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
+{
+  "type": "GetTokens",
+  "data": {
+    "request_id": "a1b2c3d4-0000-4000-8000-00000000000a",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
+{
+  "type": "GetExpiries",
+  "data": {
+    "request_id": "a1b2c3d4-0000-4000-8000-00000000000b",
+    "underlying_mint": {
+      "type": "all"
+    },
+    "quote_mint": {
+      "type": "all"
+    },
+    "is_put": {
+      "type": "all"
+    },
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
 ```
 
 Request notes:
 - `GetMarkets`, `GetMarketDescriptors`, `GetExpiries` and `GetTokens` answer from the [reference snapshot](ws-common.md#reference-data): **tradable** markets only — non-finalized, non-disabled, and before the pre-expiry trading cutoff. Re-read on [`ReferenceChanged`](ws-common.md#referencechanged).
-- `GetMyQuotes` takes a tagged `scope`: `{ "type": "live" }` or `{ "type": "history", "limit": N, "cursor": PageCursor }`. Live is the complete, unpaged set of this owner's unfinished quotes across previous connections, including retained and selected quotes. A missing/incomplete source returns an error, not a successful partial set. History contains only persisted historical rows and is not a substitute for Live or execution lookup.
+- `GetMyQuotes` takes `scope: { "type": "live" }` or `{ "type": "history" }`, with top-level `limit` and `cursor`. Live reads unfinished owner quotes across connections, including retained and selected quotes. History reads persisted historical rows. Both use [common paging](ws-common.md#paging).
 - `GetMarketsForMaker` uses the wider active set (non-finalized, non-disabled, `expiry_ts > now`), so it still lists a market during its final pre-expiry no-trade window.
 
 ### Filters and pages
 
-Single-value filters, time bounds and page cursors are tagged unions. List filters are required lists where `[]` means every value.
-
-```json
-{ "type": "all" }
-{ "type": "only", "value": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi" }
-{ "type": "unbounded" }
-{ "type": "bounded", "value": 1710000000 }
-{ "type": "start" }
-{ "type": "after", "at": 1710000042, "id": "75NqraLLofiLUpNQg2wUPG6CJpxcaGEZUwuNrnAgvcTP" }
-```
-
-- `QueryFilter` is `all` or `only { value }`. It is used for `market`, `underlying_mint`, `quote_mint` and `is_put`.
-- `TimeBound` is `unbounded` or `bounded { value }`, in Unix seconds. It is used for `min_expiry_ts` and `max_expiry_ts`.
-- `PageCursor` is `start` or `after { at, id }`. `at` is the ordering timestamp of the last row seen, in Unix seconds, and `id` is that row's id.
-- `limit` is required on every paged request. A value outside the range is rejected with `invalid_limit`. The server never defaults or clamps it.
-
-| Request | Limit range | Cursor `at` | Cursor `id` |
-|---|---|---|---|
-| `GetMakerPositions` | `1..=500` | `created_at` | position `pda` (base58) |
-| `GetMyQuotes` with `scope: history` | `1..=1000` | `created_at` | `order_id` |
-| `GetMyTrades` | `1..=200` | `confirmed_at` | trade `id` (UUID) |
-
-Pages run newest first, ordered by (created second, id) descending. A response sets `has_more: true` when rows remain past the page. To read the next page, send the same request with `cursor` set to `after` the last row of the previous page. Stop when `has_more` is `false`. `MakerPositions.unrenderable` rows count as rows of the page: when the last row of a page is unrenderable, its `created_at` and `pda` are the cursor.
-
-Do not use paged reads as a polling path.
+All lists use [common paging](ws-common.md#paging).
+`QueryFilter` is `all` or `only { value }`. `TimeBound` is `unbounded` or
+`bounded { value }` in Unix seconds. Required list filters use `[]` for all values.
+Position, quote-history and trade pages run newest first. Unrenderable maker
+positions consume page slots and are covered by the returned cursor.
 
 ### GetMakerPositions
+
+Uses [common paging](ws-common.md#paging).
 
 ```json
 {
@@ -1088,20 +1181,36 @@ Do not use paged reads as a polling path.
 }
 ```
 
-`status` is a list of `open`, `funded`, `liquidated`, `settled`; `[]` matches every status. `min_expiry_ts` keeps positions whose market expiry is at or after the bound. The `GetMakerPositions` response sets `has_more` when the result was truncated at `limit`.
+`status` is a list of `open`, `funded`, `liquidated`, `settled`; `[]` matches every status. `min_expiry_ts` keeps positions whose market expiry is at or after the bound. Follow its required nullable `next_cursor`.
 
 ### GetMarketsForMaker
+
+Uses [common paging](ws-common.md#paging).
 
 ```json
 {
   "type": "GetMarketsForMaker",
   "data": {
     "request_id": "a1b2c3d4-0000-4000-8000-000000000012",
-    "underlying_mints": ["So11111111111111111111111111111111111111112"],
+    "underlying_mints": [
+      "So11111111111111111111111111111111111111112"
+    ],
     "quote_mints": [],
-    "min_expiry_ts": { "type": "bounded", "value": 1710000000 },
-    "max_expiry_ts": { "type": "unbounded" },
-    "is_put": { "type": "only", "value": false }
+    "min_expiry_ts": {
+      "type": "bounded",
+      "value": 1710000000
+    },
+    "max_expiry_ts": {
+      "type": "unbounded"
+    },
+    "is_put": {
+      "type": "only",
+      "value": false
+    },
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
   }
 }
 ```
@@ -1109,6 +1218,8 @@ Do not use paged reads as a polling path.
 The request has no result cap. Use filters for dashboard views and avoid polling it.
 
 ### Markets payload
+
+Uses [common paging](ws-common.md#paging).
 
 ```json
 {
@@ -1122,11 +1233,15 @@ The request has no result cap. Use filters for dashboard views and avoid polling
         "quote": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "expiry_ts": 1710600000,
         "is_put": false,
-        "products": ["covered_call", "call_spread"],
+        "products": [
+          "covered_call",
+          "call_spread"
+        ],
         "status": "active",
         "settlement_price": null
       }
-    ]
+    ],
+    "next_cursor": null
   }
 }
 ```
@@ -1135,12 +1250,18 @@ Same compact [`MarketInfo`](ws-common.md#marketinfo) shape as `Snapshot.markets`
 
 ### Expiries payload
 
+Uses [common paging](ws-common.md#paging).
+
 ```json
 {
   "type": "Expiries",
   "data": {
     "request_id": "a1b2c3d4-0000-4000-8000-00000000000b",
-    "expiries_ts": [1710600000, 1711200000]
+    "expiries_ts": [
+      1710600000,
+      1711200000
+    ],
+    "next_cursor": null
   }
 }
 ```
@@ -1148,6 +1269,8 @@ Same compact [`MarketInfo`](ws-common.md#marketinfo) shape as `Snapshot.markets`
 List of distinct market expiry timestamps (Unix seconds) matching the request filters.
 
 ### Tokens payload
+
+Uses [common paging](ws-common.md#paging).
 
 ```json
 {
@@ -1159,22 +1282,35 @@ List of distinct market expiry timestamps (Unix seconds) matching the request fi
         "mint": "So11111111111111111111111111111111111111112",
         "symbol": "SOL",
         "decimals": 9,
-        "oracle_feed_ids": ["<oracle feed id>"],
+        "oracle_feed_ids": [
+          "<oracle feed id>"
+        ],
         "role": {
           "type": "underlying",
-          "size_rule": { "min_size": 100000000, "max_size": 1000000000000, "step": 100000000 },
+          "size_rule": {
+            "min_size": 100000000,
+            "max_size": 1000000000000,
+            "step": 100000000
+          },
           "strike_tick": 500000000,
-          "quote_mints": ["EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"]
+          "quote_mints": [
+            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+          ]
         }
       },
       {
         "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "symbol": "USDC",
         "decimals": 6,
-        "oracle_feed_ids": ["<oracle feed id>"],
-        "role": { "type": "quote" }
+        "oracle_feed_ids": [
+          "<oracle feed id>"
+        ],
+        "role": {
+          "type": "quote"
+        }
       }
-    ]
+    ],
+    "next_cursor": null
   }
 }
 ```
@@ -1182,6 +1318,8 @@ List of distinct market expiry timestamps (Unix seconds) matching the request fi
 Each mint once; see [`TokenInfo`](ws-common.md#tokeninfo). `role` is `quote` or `underlying`. Underlyings carry `size_rule`, `strike_tick` (1e9-scaled, like strikes) and `quote_mints`.
 
 ### MarketDescriptorInfo (from `MarketDescriptors`)
+
+Uses [common paging](ws-common.md#paging).
 
 Token decimals live here and nowhere in `RfqBroadcast`: `RfqBroadcast.quantity`,
 `QuoteFilled.quantity` and `size_rule` are underlying atoms. Cache
@@ -1220,6 +1358,8 @@ type MarketDescriptorInfo = {
 
 ### MakerPositions payload
 
+Uses [common paging](ws-common.md#paging).
+
 `MakerPositions` returns `MakerPositionInfo[]`:
 
 ```json
@@ -1229,7 +1369,11 @@ type MarketDescriptorInfo = {
     "request_id": "a1b2c3d4-0000-4000-8000-000000000011",
     "positions": [
       {
-        "revision": { "slot": 250000000, "transaction_index": 12, "instruction_index": 1 },
+        "revision": {
+          "slot": 250000000,
+          "transaction_index": 12,
+          "instruction_index": 1
+        },
         "pda": "75NqraLLofiLUpNQg2wUPG6CJpxcaGEZUwuNrnAgvcTP",
         "market": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
         "underlying_mint": "So11111111111111111111111111111111111111112",
@@ -1238,7 +1382,10 @@ type MarketDescriptorInfo = {
         "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "quote_symbol": "USDC",
         "quote_decimals": 6,
-        "terms": { "type": "covered_call", "strike": 160000000000 },
+        "terms": {
+          "type": "covered_call",
+          "strike": 160000000000
+        },
         "side": "sell",
         "state": "funded",
         "quantity": 1000000000,
@@ -1248,7 +1395,11 @@ type MarketDescriptorInfo = {
         "expiry_ts": 1710600000
       },
       {
-        "revision": { "slot": 250900000, "transaction_index": 3, "instruction_index": 0 },
+        "revision": {
+          "slot": 250900000,
+          "transaction_index": 3,
+          "instruction_index": 0
+        },
         "pda": "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin",
         "market": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
         "underlying_mint": "So11111111111111111111111111111111111111112",
@@ -1257,7 +1408,11 @@ type MarketDescriptorInfo = {
         "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "quote_symbol": "USDC",
         "quote_decimals": 6,
-        "terms": { "type": "call_spread", "lower_strike": 100000000000, "upper_strike": 120000000000 },
+        "terms": {
+          "type": "call_spread",
+          "lower_strike": 100000000000,
+          "upper_strike": 120000000000
+        },
         "side": "sell",
         "state": "settled",
         "settlement": {
@@ -1274,7 +1429,7 @@ type MarketDescriptorInfo = {
       }
     ],
     "unrenderable": [],
-    "has_more": false
+    "next_cursor": null
   }
 }
 ```
@@ -1288,7 +1443,7 @@ Field semantics:
 - `total_premium` is the net premium in quote atoms after the protocol fee. It is the authoritative money figure for the position. The wire `price` alone does not give it.
 - `price` is the gross premium per 1 underlying unit (1e9 scale).
 - `underlying_symbol` / `quote_symbol` / `underlying_decimals` / `quote_decimals` are pre-resolved token metadata so the maker does not need a separate `GetTokens` lookup.
-- `unrenderable` lists stored positions whose market projection is incomplete: `{ pda, market, created_at, missing }`, where `missing` names the fields the projection could not supply. They count toward `has_more`. Retrying does not repair them.
+- `unrenderable` lists stored positions whose market projection is incomplete: `{ pda, market, created_at, missing }`, where `missing` names the fields the projection could not supply. They count toward the page limit. Retrying does not repair them.
 - all amount fields are unsigned (`u64`); timestamps remain Unix seconds.
 
 #### Position revisions
@@ -1306,30 +1461,41 @@ Every full position row (`MakerPositionInfo`, and `PositionInfo` in `PositionUpd
 
 ### MyQuotes payload
 
+Uses [common paging](ws-common.md#paging).
+
 ```json
 {
   "type": "MyQuotes",
   "data": {
     "request_id": "a1b2c3d4-0000-4000-8000-000000000001",
-    "has_more": false,
-    "quotes": [{
-      "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-      "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-      "market": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
-      "underlying_mint": "So11111111111111111111111111111111111111112",
-      "underlying_symbol": "SOL",
-      "underlying_decimals": 9,
-      "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-      "quote_symbol": "USDC",
-      "quote_decimals": 6,
-      "terms": { "type": "covered_call", "strike": 160000000000 },
-      "side": "sell",
-      "price": 5000000000,
-      "quantity": 1000000000,
-      "valid_until": 1710000120,
-      "state": { "type": "active", "rank": "best", "rfq_version": 1 },
-      "created_at": 1710000010
-    }]
+    "quotes": [
+      {
+        "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
+        "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+        "market": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+        "underlying_mint": "So11111111111111111111111111111111111111112",
+        "underlying_symbol": "SOL",
+        "underlying_decimals": 9,
+        "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "quote_symbol": "USDC",
+        "quote_decimals": 6,
+        "terms": {
+          "type": "covered_call",
+          "strike": 160000000000
+        },
+        "side": "sell",
+        "price": 5000000000,
+        "quantity": 1000000000,
+        "valid_until": 1710000120,
+        "state": {
+          "type": "active",
+          "rank": "best",
+          "rfq_version": 1
+        },
+        "created_at": 1710000010
+      }
+    ],
+    "next_cursor": null
   }
 }
 ```
@@ -1342,14 +1508,20 @@ Every full position row (`MakerPositionInfo`, and `PositionInfo` in `PositionUpd
 | `executing` | `rfq_version` | Selected quote whose execution is unresolved. |
 | `historical` | `status` | History only; persisted projection, not live authority. |
 
-Historical `status` is one of `submitted`, `filled`, `cancelled`, `replaced`, `expired`, `lost`. There is no top-level `status` or `selected`. `has_more` is always false for Live.
+Historical `status` is one of `submitted`, `filled`, `cancelled`, `replaced`, `expired`, `lost`. There is no top-level `status` or `selected`. Both scopes use the returned `next_cursor`.
 
 ```json
 {
   "type": "GetMyQuotes",
   "data": {
     "request_id": "a1b2c3d4-0000-4000-8000-000000000013",
-    "scope": { "type": "history", "limit": 200, "cursor": { "type": "start" } }
+    "scope": {
+      "type": "history"
+    },
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
   }
 }
 ```
@@ -1369,6 +1541,8 @@ A lost ACK leaves the command outcome unknown. Keep unresolved orders in strateg
 
 ### MakerMarkets payload
 
+Uses [common paging](ws-common.md#paging).
+
 ```json
 {
   "type": "MakerMarkets",
@@ -1376,7 +1550,10 @@ A lost ACK leaves the command outcome unknown. Keep unresolved orders in strateg
     "request_id": "a1b2c3d4-0000-4000-8000-000000000012",
     "markets": [
       {
-        "products": ["covered_call", "call_spread"],
+        "products": [
+          "covered_call",
+          "call_spread"
+        ],
         "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
         "underlying_mint": "So11111111111111111111111111111111111111112",
         "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
@@ -1386,14 +1563,17 @@ A lost ACK leaves the command outcome unknown. Keep unresolved orders in strateg
         "underlying_symbol": "SOL",
         "quote_symbol": "USDC"
       }
-    ]
+    ],
+    "next_cursor": null
   }
 }
 ```
 
 ### MmSummary payload
 
-`MmSummary` is the one-shot MM dashboard bootstrap response. It bundles caps, positions, active quotes, markets, and token metadata in a single payload so a freshly-connected market maker can render its UI without firing a fan-out of discovery requests.
+Uses [common paging](ws-common.md#paging).
+
+`MmSummary` pages positions, live quotes, markets, tokens and caps with one shared limit and cursor. See [common paging](ws-common.md#paging).
 
 Send `GetMmSummary` on `/maker/data`. Valid triggers are initial connect/auth,
 reconnect, manual refresh, detected drift, and post-transaction reconciliation
@@ -1407,8 +1587,10 @@ heavy read.
     "request_id": "a1b2c3d4-0000-4000-8000-000000000003",
     "maker_pda": "HYe9CryCnQ3ZviCwoG8X7REFoSBK7HCjrhWWMpNtTah1",
     "caps": {
-      "request_id": "a1b2c3d4-0000-4000-8000-000000000003",
-      "positions": { "current": 5, "limit": 100 },
+      "positions": {
+        "current": 5,
+        "limit": 100
+      },
       "notional": [
         {
           "underlying_mint": "So11111111111111111111111111111111111111112",
@@ -1432,7 +1614,11 @@ heavy read.
           "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
           "symbol": "USDC",
           "current_liability": 20000000,
-          "policy": { "type": "limited", "max_liability": 100000000, "headroom": 80000000 }
+          "policy": {
+            "type": "limited",
+            "max_liability": 100000000,
+            "headroom": 80000000
+          }
         }
       ]
     },
@@ -1442,7 +1628,7 @@ heavy read.
     "tokens": [],
     "computed_at": 1710000042,
     "unrenderable_positions": [],
-    "positions_has_more": false
+    "next_cursor": null
   }
 }
 ```
@@ -1450,17 +1636,18 @@ heavy read.
 Field semantics:
 - `maker_pda`: on-chain maker account PDA (base58)
 - `caps`: same shape as the [`MyCaps`](#mycaps-payload) response (echoes `request_id` from `GetMmSummary`)
-- `positions`: `MakerPositionInfo[]` — see [MakerPositions payload](#makerpositions-payload). The summary holds the newest 500 positions across all statuses, ordered by (created second, `pda`) descending.
+- `positions`: `MakerPositionInfo[]` — see [MakerPositions payload](#makerpositions-payload). Positions are ordered newest first; follow `next_cursor` to continue the compound reply.
 - `active_quotes`: `MakerQuoteInfo[]` — see [MyQuotes payload](#myquotes-payload)
 - `markets`: `MakerMarketInfo[]` — see [MakerMarkets payload](#makermarkets-payload)
 - `tokens`: `TokenInfo[]` — see [`TokenInfo`](ws-common.md#tokeninfo)
 - `computed_at`: server-side snapshot timestamp (Unix seconds)
 - `unrenderable_positions`: positions the summary holds but cannot describe; same shape as `MakerPositions.unrenderable`
-- `positions_has_more`: `true` when the embedded `positions` were capped at 500. Retrieve the rest by paging `GetMakerPositions` as described under [Filters and pages](#filters-and-pages). The rest of the snapshot is complete.
 
 All balance values are in their respective token atomic units (use `decimals` from `caps.balances` to format).
 
 ### ActiveRfqs payload
+
+Uses [common paging](ws-common.md#paging).
 
 ```json
 {
@@ -1472,18 +1659,28 @@ All balance values are in their respective token atomic units (use `decimals` fr
         "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
         "market": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
         "taker": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
-        "terms": { "type": "covered_call", "strike": 160000000000 },
+        "terms": {
+          "type": "covered_call",
+          "strike": 160000000000
+        },
         "side": "sell",
         "quantity": 1000000000,
         "expires_at": 1710000050,
         "quotes_count": 3,
         "best_price": 5500000000,
         "order_options": [
-          { "type": "covered_call", "strike": 150000000000 },
-          { "type": "covered_call", "strike": 160000000000 }
+          {
+            "type": "covered_call",
+            "strike": 150000000000
+          },
+          {
+            "type": "covered_call",
+            "strike": 160000000000
+          }
         ]
       }
-    ]
+    ],
+    "next_cursor": null
   }
 }
 ```
@@ -1492,14 +1689,21 @@ All balance values are in their respective token atomic units (use `decimals` fr
 
 ### GetMyTrades (maker -> server)
 
+Uses [common paging](ws-common.md#paging).
+
 ```json
 {
   "type": "GetMyTrades",
   "data": {
     "request_id": "a1b2c3d4-0000-4000-8000-000000000014",
     "limit": 50,
-    "cursor": { "type": "after", "at": 1710000042, "id": "7c2e9a41-6b3d-4f58-9e1a-0d4b6f8a2c35" },
-    "market": { "type": "only", "value": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi" }
+    "cursor": {
+      "type": "start"
+    },
+    "market": {
+      "type": "only",
+      "value": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi"
+    }
   }
 }
 ```
@@ -1507,10 +1711,12 @@ All balance values are in their respective token atomic units (use `decimals` fr
 All four fields are required.
 
 - `limit`: page size in `1..=200`.
-- `cursor`: `start`, or `after` with the `confirmed_at` and `id` of the last trade of the previous page. The cursor is exclusive: the next page holds trades older than the cursor.
+- `cursor`: the tagged cursor from [common paging](ws-common.md#paging).
 - `market`: a `QueryFilter` on the market PDA.
 
 ### MyTrades payload
+
+Uses [common paging](ws-common.md#paging).
 
 ```json
 {
@@ -1528,7 +1734,10 @@ All four fields are required.
         "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "quote_symbol": "USDC",
         "quote_decimals": 6,
-        "terms": { "type": "covered_call", "strike": 160000000000 },
+        "terms": {
+          "type": "covered_call",
+          "strike": 160000000000
+        },
         "side": "sell",
         "taker": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
         "quantity": 1000000000,
@@ -1538,7 +1747,7 @@ All four fields are required.
         "confirmed_at": 1710000042
       }
     ],
-    "has_more": true
+    "next_cursor": null
   }
 }
 ```
@@ -1547,15 +1756,18 @@ Field semantics:
 - `price`: gross premium per 1 underlying unit (1e9 scale)
 - `confirmed_at`: Unix timestamp seconds when the trade was confirmed on-chain
 - `tx_signature` is always present; `position_pda` may be `null`
-- `has_more`: `true` if there are more trades beyond this page; use the last trade's `confirmed_at` and `id` as the `after` cursor for the next page
 
 `MyTrades` returns **confirmed trades only** — in-flight orders are visible via `GetOrderStatus` and the order push flow, not here. The cursor is therefore stable.
 
 ### TokenCaps payload
 
+Uses [common paging](ws-common.md#paging).
+
 Platform-level OI and notional caps. Full schema (fields, unlimited semantics, `include_markets` behavior): [caps.md](caps.md#platform-caps).
 
 ### MyCaps payload
+
+Uses [common paging](ws-common.md#paging).
 
 Per-maker position count, notional, balance and quote-liability caps. Full schema (fields, `decimals` rendering, unlimited semantics): [caps.md](caps.md#maker-caps).
 
@@ -1591,14 +1803,20 @@ Dry run of the cap checks a `Quote` of `quantity` at `price` on `market_id` (the
 
 ### Subscriptions payload
 
+Uses [common paging](ws-common.md#paging).
+
 ```json
 {
   "type": "Subscriptions",
   "data": {
     "request_id": "a1b2c3d4-0000-4000-8000-000000000004",
-    "channels": ["rfqs", "chain_events"],
+    "channels": [
+      "rfqs",
+      "chain_events"
+    ],
     "underlying_mints": [],
-    "quote_mints": []
+    "quote_mints": [],
+    "next_cursor": null
   }
 }
 ```
@@ -1813,7 +2031,7 @@ Quote plane, `/maker`. The managed Rust SDK does this before it reports `Ready`:
 1. Send `GetSubscriptions`.
 2. If the server holds channels the client does not want, send `Unsubscribe` for them. Wait for `UnsubscribeAck`.
 3. Send `Subscribe` with the desired products, channels and both mint lists (empty lists included). Wait for `SubscribeAck`. This replaces any mint scope that a resumed session restored.
-4. Send `GetActiveRfqs` and `GetMyQuotes { scope: live }`. `ActiveRfqs` supplies each RFQ's taker and market PDA for the quote preimage. A `MyQuotes` response with `has_more: true` is a failed read, and the SDK retries the session.
+4. Send `GetActiveRfqs` and `GetMyQuotes { scope: live }`. `ActiveRfqs` supplies each RFQ's taker and market PDA for the quote preimage. The SDK follows every live quote page before reporting readiness.
 
 Data plane, `/maker/data`:
 
@@ -1821,7 +2039,7 @@ Data plane, `/maker/data`:
 
 These reads span live server state and the database. They are not an atomic snapshot. Then, in the strategy:
 
-6. Rebuild the position book. Apply `MmSummary.positions` by revision. If `positions_has_more` is `true`, page `GetMakerPositions` with `status: []` until `has_more` is `false`. To read fewer rows, set `min_expiry_ts` to `bounded` at the earlier of two times: the earliest expiry among local rows that are not `settled` or `liquidated`, and the time of the last row or fill you applied. A position opened later has a later expiry. Keep a row only when its revision is newer.
+6. Rebuild the live position book. Apply revisions from `MmSummary`. If it has a continuation, read all `GetMakerPositions` pages with `status: ["open", "funded"]`. Historical positions remain an explicit read. Preserve newer push revisions received during paging.
 7. Book money from position rows. `total_premium` is the net premium the taker received. The maker's cost is the gross premium, [`scaled_quote_amount(price, quantity)`](protocol-flow.md#units), and the fee is that cost minus `total_premium`. `QuoteFilled` has no fee or net field.
 8. Reconcile unfinished orders. For each local order with no terminal outcome that is not in the Live set, send `GetOrderStatus` and wait for its response before sending the next. Stop at the first `RequestError`. Fix the cause and restart the loop from that order. `pending` and `unknown` keep the order as an open obligation. `confirmed` gives the `position_pda`; book it from the position row.
 9. Drop signed quotes from before the disconnect. Sign new ones with a fresh `valid_until`, `nonce` and `order_id`.
@@ -1981,6 +2199,8 @@ describing what went wrong.
 | `buy` | Rejected with `taker_buy_unsupported`. |
 
 ### PositionStatus (in `GetMakerPositions.status`)
+
+Uses [common paging](ws-common.md#paging).
 
 | Value | Meaning |
 |-------|---------|

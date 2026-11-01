@@ -172,7 +172,7 @@ You do **not** settle or liquidate. Publishing the settlement price and finalizi
 
 ## Indicative pricing
 
-Indicative pricing covers covered calls and cash-secured puts. If the account is enrolled in pre-trade pricing, the server periodically emits `IndicativePricesRequest` for reference prices to be displayed in the taker UI. Indicative quotes are non-binding and operate under a tighter latency budget than auction quotes. The response is correlated by `request_id`:
+When indicative pricing is enabled on the server, a connected `/maker` session subscribed to `rfqs` with matching mint filters may receive `IndicativePricesRequest` for covered calls or cash-secured puts. There is no separate enrollment. `/maker/data` does not receive these requests. Prices are non-binding; reply with `IndicativePricesResponse` using the request ID:
 
 ```json
 {
@@ -202,18 +202,57 @@ Recover in this order after reauthentication. Use `/maker/data` for the data rea
 - Send `GetActiveRfqs` and `GetMyQuotes` with `scope: { "type": "live" }`.
 
 ```json
-{ "type": "GetSubscriptions", "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000004" } }
-{ "type": "GetActiveRfqs",    "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000001" } }
-{ "type": "GetMyQuotes",      "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000002", "scope": { "type": "live" } } }
+{
+  "type": "GetSubscriptions",
+  "data": {
+    "request_id": "a1b2c3d4-0000-4000-8000-000000000004",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
+{
+  "type": "GetActiveRfqs",
+  "data": {
+    "request_id": "a1b2c3d4-0000-4000-8000-000000000001",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
+{
+  "type": "GetMyQuotes",
+  "data": {
+    "request_id": "a1b2c3d4-0000-4000-8000-000000000002",
+    "scope": {
+      "type": "live"
+    },
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
 ```
 
 **2. Data plane, `/maker/data`.** Send `GetMmSummary`. Owner pushes (`PositionUpdated`, `TradeExecuted`, `MakerCapsUpdated`) start after it is answered. Do not poll it.
 
 ```json
-{ "type": "GetMmSummary", "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000003" } }
+{
+  "type": "GetMmSummary",
+  "data": {
+    "request_id": "a1b2c3d4-0000-4000-8000-000000000003",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
 ```
 
-**3. Position book.** Apply `MmSummary.positions` by revision. The summary holds the newest 500 positions. If `positions_has_more` is `true`, page `GetMakerPositions` to the end.
+**3. Position book.** Apply position revisions and complete the open/funded reads before trading. Historical positions are an explicit read.
 
 **4. Money.** Book net premium from `total_premium` on the position rows. The maker's cost is the gross premium; the fee is that cost minus `total_premium`.
 
@@ -229,32 +268,35 @@ Recover in this order after reauthentication. Use `/maker/data` for the data rea
 
 ### Paging
 
-Position, trade and quote-history reads are paged. `limit` and `cursor` are required. A limit outside the range is rejected with `invalid_limit`; it is never defaulted or clamped.
+Position, trade and quote-history reads are paged. `limit` and `cursor` are required. Normal SDK list calls collect all pages through one helper. Live quotes and catalogs are paged too. Do not use query reads as polling paths.
 
-| Request | `limit` | Cursor `at` | Cursor `id` |
-|---|---|---|---|
-| `GetMakerPositions` | `1..=500` | `created_at` | `pda` |
-| `GetMyQuotes` with `scope.type = "history"` | `1..=1000` | `created_at` | `order_id` |
-| `GetMyTrades` | `1..=200` | `confirmed_at` | trade `id` |
 
-Pages run newest first. Send the first page with `{ "type": "start" }`. Send the next page with the last row's keys, and stop when `has_more` is `false`:
+See [common paging](../reference/ws-common.md#paging). History reads run newest first:
 
 ```json
 {
   "type": "GetMakerPositions",
   "data": {
     "request_id": "a1b2c3d4-0000-4000-8000-000000000011",
-    "market": { "type": "all" },
-    "underlying_mint": { "type": "all" },
+    "market": {
+      "type": "all"
+    },
+    "underlying_mint": {
+      "type": "all"
+    },
     "status": [],
-    "min_expiry_ts": { "type": "unbounded" },
-    "limit": 500,
-    "cursor": { "type": "after", "at": 1710000042, "id": "75NqraLLofiLUpNQg2wUPG6CJpxcaGEZUwuNrnAgvcTP" }
+    "min_expiry_ts": {
+      "type": "unbounded"
+    },
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
   }
 }
 ```
 
-`status: []` matches every status, and `{ "type": "all" }` matches every market or mint. `GetMyQuotes` with `scope: { "type": "live" }` is complete and unpaged; never substitute History for recovery. See [`../reference/maker-api.md`](../reference/maker-api.md#filters-and-pages).
+`status: []` matches every status, and `{ "type": "all" }` matches every market or mint. `GetMyQuotes` with `scope: { "type": "live" }` uses the same paging contract; never substitute History for recovery. See [`../reference/maker-api.md`](../reference/maker-api.md#filters-and-pages).
 
 If many maker workers can reconnect at once, add a small random delay before expensive recovery
 reads so they do not all hit the data plane in the same second.
@@ -264,10 +306,66 @@ reads so they do not all hit the data plane in the same second.
 Fetch static metadata on `/maker/data` at startup and re-read it when the server sends `ReferenceChanged`. Do not refresh these requests on a fixed interval.
 
 ```json
-{ "type": "GetMarketDescriptors", "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000009" } }
-{ "type": "GetExpiries",          "data": { "request_id": "a1b2c3d4-0000-4000-8000-00000000000b", "underlying_mint": { "type": "all" }, "quote_mint": { "type": "all" }, "is_put": { "type": "all" } } }
-{ "type": "GetTokens",            "data": { "request_id": "a1b2c3d4-0000-4000-8000-00000000000a" } }
-{ "type": "GetMarketsForMaker",   "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000012", "underlying_mints": [], "quote_mints": [], "min_expiry_ts": { "type": "unbounded" }, "max_expiry_ts": { "type": "unbounded" }, "is_put": { "type": "all" } } }
+{
+  "type": "GetMarketDescriptors",
+  "data": {
+    "request_id": "a1b2c3d4-0000-4000-8000-000000000009",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
+{
+  "type": "GetExpiries",
+  "data": {
+    "request_id": "a1b2c3d4-0000-4000-8000-00000000000b",
+    "underlying_mint": {
+      "type": "all"
+    },
+    "quote_mint": {
+      "type": "all"
+    },
+    "is_put": {
+      "type": "all"
+    },
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
+{
+  "type": "GetTokens",
+  "data": {
+    "request_id": "a1b2c3d4-0000-4000-8000-00000000000a",
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
+{
+  "type": "GetMarketsForMaker",
+  "data": {
+    "request_id": "a1b2c3d4-0000-4000-8000-000000000012",
+    "underlying_mints": [],
+    "quote_mints": [],
+    "min_expiry_ts": {
+      "type": "unbounded"
+    },
+    "max_expiry_ts": {
+      "type": "unbounded"
+    },
+    "is_put": {
+      "type": "all"
+    },
+    "limit": 200,
+    "cursor": {
+      "type": "start"
+    }
+  }
+}
 ```
 
 Discovery returns tradable markets only (non-finalized, non-disabled, before the pre-expiry trading cutoff). The same data is on HTTP: `GET /api/v1/venue`, `/api/v1/tokens` and `/api/v1/markets` (`active=false` adds closed and finalized markets), with ETag revalidation. See [Reference data](../reference/ws-common.md#reference-data).

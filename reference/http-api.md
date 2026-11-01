@@ -119,7 +119,7 @@ same program id.
   "max_rfq_timeout_seconds": 120,
   "signature_timeout_seconds": 30,
   "max_quotes_per_rfq": { "type": "limited", "value": 50 },
-  "max_active_rfqs_per_taker": { "type": "unlimited" },
+  "max_active_rfqs_per_taker": { "type": "limited", "value": 50 },
   "pre_expiry_cutoff_seconds": 10800
 }
 ```
@@ -146,6 +146,8 @@ The example shows one configuration; read the live endpoint for the values.
 
 ### GET `/api/v1/tokens`
 
+Uses [common paging](ws-common.md#paging).
+
 Every token of the active markets, once, sorted by mint. Markets reference tokens by mint; join on
 `mint` for symbol and decimals.
 
@@ -156,22 +158,35 @@ Every token of the active markets, once, sorted by mint. Markets reference token
       "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
       "symbol": "USDC",
       "decimals": 6,
-      "oracle_feed_ids": ["eaa020c61cc479712813461ce153894a96a6c00b21ed0cfc2798d1f9a9e9c94a"],
-      "role": { "type": "quote" }
+      "oracle_feed_ids": [
+        "eaa020c61cc479712813461ce153894a96a6c00b21ed0cfc2798d1f9a9e9c94a"
+      ],
+      "role": {
+        "type": "quote"
+      }
     },
     {
       "mint": "So11111111111111111111111111111111111111112",
       "symbol": "SOL",
       "decimals": 9,
-      "oracle_feed_ids": ["ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"],
+      "oracle_feed_ids": [
+        "ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"
+      ],
       "role": {
         "type": "underlying",
-        "size_rule": { "min_size": 100000000, "max_size": 1000000000000, "step": 10000000 },
+        "size_rule": {
+          "min_size": 100000000,
+          "max_size": 1000000000000,
+          "step": 10000000
+        },
         "strike_tick": 500000000,
-        "quote_mints": ["EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"]
+        "quote_mints": [
+          "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+        ]
       }
     }
-  ]
+  ],
+  "next_cursor": null
 }
 ```
 
@@ -186,6 +201,8 @@ underlying has no configured size rule (`code: "missing_size_rule_for_underlying
 The body is the usual error object; retry later.
 
 ### GET `/api/v1/markets`
+
+Uses [common paging](ws-common.md#paging).
 
 Query (all optional):
 
@@ -210,7 +227,11 @@ Query (all optional):
       "is_put": true,
       "status": "finalized",
       "settlement_price": 150000000000,
-      "products": ["cash_secured_put", "put_spread", "cash_put"]
+      "products": [
+        "cash_secured_put",
+        "put_spread",
+        "cash_put"
+      ]
     },
     {
       "pda": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
@@ -220,9 +241,13 @@ Query (all optional):
       "is_put": false,
       "status": "active",
       "settlement_price": null,
-      "products": ["covered_call", "call_spread"]
+      "products": [
+        "covered_call",
+        "call_spread"
+      ]
     }
-  ]
+  ],
+  "next_cursor": null
 }
 ```
 
@@ -251,6 +276,13 @@ settlement mints).
 
 ### GET `/api/v1/makers`
 
+Uses [common paging](ws-common.md#paging).
+
+Optional `limit` defaults to 50. Omit `cursor` for the first page; pass the opaque
+`next_cursor` string directly for the next page.
+Rows are ordered by PDA ascending. `next_cursor: null` means the final page.
+Invalid bounds return `invalid_limit`; malformed cursors return `invalid_cursor`.
+
 ```json
 {
   "makers": [
@@ -262,7 +294,8 @@ settlement mints).
       "total_volume": "1000000",
       "total_quotes": 55
     }
-  ]
+  ],
+  "next_cursor": null
 }
 ```
 
@@ -297,6 +330,8 @@ Both are hints that are never replayed: re-read `/vaults` (or `/vaults/{pda}`) o
 every WebSocket connect or reconnect.
 
 ### GET `/api/v1/vaults`
+
+Uses [common paging](ws-common.md#paging).
 
 Optional query: `delegate=<pubkey>` returns only vaults that key can operate as delegate: it is the
 `primary_delegate` and holds an unexpired delegate grant. A value that is not a base58 pubkey returns `400` `invalid_delegate`.
@@ -340,7 +375,11 @@ Optional query: `delegate=<pubkey>` returns only vaults that key can operate as 
       "last_hwm_update_ts": "1710000000",
       "last_hwm_reset_ts": "0",
       "last_settlement_ts": "1710000000",
-      "capacity": { "type": "limited", "cap_limit": "1000000000", "remaining": "800000000" },
+      "capacity": {
+        "type": "limited",
+        "cap_limit": "1000000000",
+        "remaining": "800000000"
+      },
       "capital_fallback_delay_secs": "43200",
       "deposit_window_set_ts": "1709990000",
       "main_balance": "1000000",
@@ -370,8 +409,14 @@ Optional query: `delegate=<pubkey>` returns only vaults that key can operate as 
       "premium": [
         {
           "quote_mint": "QuoteMintBase58",
-          "cycle": { "received": "5000000", "paid": "0" },
-          "generation": { "received": "50000000", "paid": "7000000" }
+          "cycle": {
+            "received": "5000000",
+            "paid": "0"
+          },
+          "generation": {
+            "received": "50000000",
+            "paid": "7000000"
+          }
         }
       ],
       "fees": {
@@ -385,10 +430,22 @@ Optional query: `delegate=<pubkey>` returns only vaults that key can operate as 
         "computed_at": "1710000060",
         "covered": true,
         "returns": {
-          "7d": { "return_pct": 0.4, "from_time": "1709395200", "to_time": "1710000000" },
-          "30d": { "return_pct": 1.5, "from_time": "1707408000", "to_time": "1710000000" },
+          "7d": {
+            "return_pct": 0.4,
+            "from_time": "1709395200",
+            "to_time": "1710000000"
+          },
+          "30d": {
+            "return_pct": 1.5,
+            "from_time": "1707408000",
+            "to_time": "1710000000"
+          },
           "90d": null,
-          "all": { "return_pct": 2.0, "from_time": "1700000100", "to_time": "1710000000" }
+          "all": {
+            "return_pct": 2.0,
+            "from_time": "1700000100",
+            "to_time": "1710000000"
+          }
         },
         "apy_30d": 19.9,
         "apy_90d": null,
@@ -407,7 +464,8 @@ Optional query: `delegate=<pubkey>` returns only vaults that key can operate as 
         "logo_url": null
       }
     }
-  ]
+  ],
+  "next_cursor": null
 }
 ```
 
@@ -437,13 +495,15 @@ malformed PDA.
 
 ### GET `/api/v1/vaults/{pda}/positions`
 
+Uses [common paging](ws-common.md#paging).
+
 Query:
 
 | Parameter | Type | Default | Meaning |
 |---|---|---|---|
 | `settled` | bool | unset | Filters on `settled_at`: `true` returns only rows that have one, `false` only rows that do not; unset returns both |
-| `limit` | u16 | `100` | Page size, `1..=200`. Out-of-range values return `400` `invalid_limit`. |
-| `cursor` | string | unset | `next_cursor` from the previous page |
+| `limit` | integer | 50 | 1 through 200 |
+| `cursor` | string | unset | Opaque `next_cursor` value, URL-encoded; absent means the first page |
 
 ```json
 {
@@ -456,7 +516,9 @@ Query:
       "market": "MarketPdaBase58",
       "position_type": "covered_call",
       "strike": "1000000000",
-      "product": { "kind": "physical" },
+      "product": {
+        "kind": "physical"
+      },
       "quantity": "1000000",
       "net_premium": "25000000",
       "counterparty": "CounterpartyBase58",
@@ -469,7 +531,7 @@ Query:
       "transaction_signature": "TxSignatureBase58"
     }
   ],
-  "next_cursor": "312000000:3:0:PositionPdaBase58"
+  "next_cursor": null
 }
 ```
 
@@ -487,6 +549,11 @@ Query:
 A malformed `cursor` returns `400` with code `invalid_cursor`.
 
 ### GET `/api/v1/vaults/{pda}/exposure`
+
+Uses [common paging](ws-common.md#paging).
+
+Positions are paged by PDA ascending using [common paging](ws-common.md#paging).
+Totals always cover the complete cached exposure snapshot, not just the page.
 
 Open and funded positions with an indicative spot. Positions are reloaded after 10 s and never served older than 15 s (`as_of` is when they were read; a failed reload past that returns `503`); `spot` is read per request. Needs the database (`503` `db_disabled` without one).
 
@@ -515,8 +582,13 @@ Open and funded positions with an indicative spot. Positions are reloaded after 
     }
   ],
   "totals": [
-    { "quote_mint": "QuoteMintBase58", "notional_at_strike": "280000000", "outstanding_intrinsic": "-20000000" }
-  ]
+    {
+      "quote_mint": "QuoteMintBase58",
+      "notional_at_strike": "280000000",
+      "outstanding_intrinsic": "-20000000"
+    }
+  ],
+  "next_cursor": null
 }
 ```
 
@@ -531,7 +603,9 @@ Open and funded positions with an indicative spot. Positions are reloaded after 
 
 ### GET `/api/v1/vaults/{pda}/cycles`
 
-Query: `limit` (u16, default `50`, `1..=200`) and `cursor` (`next_cursor` from the previous page).
+Uses [common paging](ws-common.md#paging).
+
+Query: optional `limit` (default 50, maximum 200) and `cursor`; see [common paging](ws-common.md#paging).
 Cycles are returned newest first.
 
 ```json
@@ -554,7 +628,7 @@ Cycles are returned newest first.
       "management_fee_assessed": "190"
     }
   ],
-  "next_cursor": "2"
+  "next_cursor": null
 }
 ```
 
@@ -565,8 +639,10 @@ finalize.
 
 ### GET `/api/v1/vaults/{pda}/deposit-requests` and `/withdraw-requests`
 
+Uses [common paging](ws-common.md#paging).
+
 Pending capital requests, for curators batching `ProcessDeposits` / `ProcessWithdrawals`.
-Query: `limit` (u16, default `50`, `1..=100`) and `cursor` (`next_cursor` from the previous page).
+Query: optional `limit` (default 50, maximum 100) and `cursor`; see [common paging](ws-common.md#paging).
 Requests are ordered by wallet; `next_cursor` is `null` on the last page. Withdraw requests carry
 `shares` instead of `amount`. `transaction_signature` may be null.
 
@@ -618,7 +694,9 @@ appear per event as `second_amount` in the history.
 
 ### GET `/api/v1/vaults/{pda}/depositors/{wallet}/history`
 
-Query: `limit` (u16, default `50`, `1..=200`) and `cursor`. Events are returned newest first.
+Uses [common paging](ws-common.md#paging).
+
+Query: optional `limit` (default 50, maximum 200) and `cursor`; see [common paging](ws-common.md#paging).
 
 ```json
 {
@@ -634,7 +712,7 @@ Query: `limit` (u16, default `50`, `1..=200`) and `cursor`. Events are returned 
       "transaction_signature": "TxSignatureBase58"
     }
   ],
-  "next_cursor": "312000000:3:0:42"
+  "next_cursor": null
 }
 ```
 
@@ -646,14 +724,33 @@ Query: `limit` (u16, default `50`, `1..=200`) and `cursor`. Events are returned 
 
 ### GET `/api/v1/depositors/{wallet}`
 
+Uses [common paging](ws-common.md#paging).
+
+Vaults are paged by PDA ascending using [common paging](ws-common.md#paging).
+Visibility filters apply before the page limit.
+
 The wallet's portfolio: one entry per vault the wallet has a request or history in. Each entry has
 the same shape as `/vaults/{pda}/depositors/{wallet}`.
 
 ```json
-{ "wallet": "WalletBase58", "vaults": [ { "vault": "VaultPdaBase58", "wallet": "WalletBase58", "deposit_request": null, "withdraw_request": null, "totals": null } ] }
+{
+  "wallet": "WalletBase58",
+  "vaults": [
+    {
+      "vault": "VaultPdaBase58",
+      "wallet": "WalletBase58",
+      "deposit_request": null,
+      "withdraw_request": null,
+      "totals": null
+    }
+  ],
+  "next_cursor": null
+}
 ```
 
 ### GET `/api/v1/depositors/{wallet}/history`
+
+Uses [common paging](ws-common.md#paging).
 
 The same event feed as `/vaults/{pda}/depositors/{wallet}/history`, across all vaults. It takes the
 same `limit` and `cursor` and returns the same page shape.
@@ -711,3 +808,8 @@ lack a stored USD valuation; those are not repriced using today's market.
 - [WS common conventions](ws-common.md)
 - [Maker API reference](maker-api.md)
 - [Taker API reference](taker-api.md)
+
+
+Configuration lists (`/markets`, `/tokens`, `/vaults`) have an immutable ceiling
+of 1,000 entries and return pages of at most 200. Oversized configuration fails. Portfolio history and income totals use WS `GetPositions` and
+`GetPositionSummary` on the authenticated wallet connection.

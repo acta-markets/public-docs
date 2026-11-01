@@ -127,7 +127,15 @@ Browsers obtain current reference prices from the selected backend through [`Get
 
 ## On-chain maker instructions
 
-The instruction data starts with a one-byte discriminant. Integers are little-endian. The full IDL ships in `@acta-markets/ts-sdk` as `ACTA_IDL`, and `ACTA_IDL_SHA256` is its hash.
+The instruction data starts with a one-byte discriminant. Integers are little-endian. The full IDL ships in `@acta-markets/ts-sdk` as `ACTA_IDL`.
+
+Install `@acta-markets/ts-sdk@0.3.1` and import the IDL from the package root:
+
+```typescript
+import { ACTA_IDL } from "@acta-markets/ts-sdk";
+```
+
+The package also contains the JSON file at `node_modules/@acta-markets/ts-sdk/dist/idl/acta_contract.json`. Raw clients can read that file without using the TypeScript builders.
 
 Builders: `buildDepositPremiumIx` and `buildDepositFundsToPositionIx` from `@acta-markets/ts-sdk/chain`, or `ChainClient::deposit_premium` and `ChainClient::fund_position` in the Rust SDK (`chain-rpc` feature).
 

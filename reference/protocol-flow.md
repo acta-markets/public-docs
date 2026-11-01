@@ -30,7 +30,7 @@ The maker is the buyer and the taker is the writer. Every RFQ, quote and positio
 | `put_spread` | `lower_strike`, `upper_strike` | put | Cash, quote mint | `C = ceil(width × quantity)` quote atoms |
 | `cash_put` | `strike` | put | Cash, quote mint | `C = ceil(strike × quantity)` quote atoms |
 
-`width = upper_strike − lower_strike`. A `cash_put` with strike `K` is executed on chain as a put spread with legs `(0, K)`.
+`width = upper_strike − lower_strike`. A cash put is economically a put spread with lower strike 0 and upper strike `K`. It executes on chain with those legs and keeps the wire name `cash_put`.
 
 A market is either a call market or a put market (`is_put`). Market rows list in `products` only the products of their own side: put markets list `cash_secured_put`, `put_spread`, `cash_put`; call markets list `covered_call`, `call_spread`. A market with none of the configured products is not listed. Strikes and `strike_tick` are scaled by `1e9`.
 
@@ -114,8 +114,8 @@ Defaults below are the server's configuration defaults; all are configurable.
 | `submitted_watchdog_timeout` | 120 s | After this the server flags a submitted trade that has not resolved. The RFQ stays locked to the selected quote until the trade confirms on-chain or the server knows the transaction was never sent. |
 | `closed_rfq_ttl` | 300 s | How long a closed RFQ is retained before purge. |
 | `max_quotes_per_rfq` | 50 | Cap on quotes per RFQ across all makers. |
-| `max_rfqs_per_taker / max_active_rfqs` | 50 / 1000 | Concurrency limits (`0` disables the corresponding limit). |
-| `max_active_rfqs_per_ip` | 50 | Unfinished RFQs per source IP, counted across wallets and reconnects (`0` disables it). A breach rejects `RfqRequest` with a resource-limit error. |
+| `max_rfqs_per_taker / max_active_rfqs` | 50 / 1000 | Concurrency limits; each must be within `1..=1000`. |
+| `max_active_rfqs_per_ip` | 50 | Unfinished RFQs per source IP, counted across wallets and reconnects; must be within `1..=1000`. A breach rejects `RfqRequest` with a resource-limit error. |
 <!-- /generated:rfq-timing-defaults -->
 
 `rfq.expires_at` is the auction deadline; `quote.valid_until` is the on-chain order validity. They are distinct clocks. `valid_until` may not exceed the market expiry.

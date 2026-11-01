@@ -12,10 +12,10 @@ For JSON-layer integrations, see [`maker-quickstart.md`](maker-quickstart.md). M
 
 ```toml
 [dependencies]
-acta-maker-sdk = { version = "0.6.0", features = ["ws-client"] }
+acta-maker-sdk = { version = "0.6.1", features = ["ws-client"] }
 ```
 
-Version 0.6.0 speaks WS protocol `1.0.0` (`WS_PROTOCOL_VERSION`). The wire is closed: every field is present, absent facts are explicit `null`, and decoding rejects unknown message types, error codes, enum values and missing fields. This guide covers ordinary makers; vault operators use the `vault` feature, see the [vault operator guide](vault-operator-guide.md).
+Version 0.6.1 speaks WS protocol `1.0.0` (`WS_PROTOCOL_VERSION`). The wire is closed: every field is present, absent facts are explicit `null`, and decoding rejects unknown message types, error codes, enum values and missing fields. This guide covers ordinary makers; vault operators use the `vault` feature, see the [vault operator guide](vault-operator-guide.md).
 
 Quote-only integrations need `ws-client`. `chain` adds Solana instruction builders (including `chain::vault`); `chain-rpc` adds on-chain reads; `http` adds the read-only HTTP client; `vault` adds the vault operator client and implies `ws-client` and `chain`.
 
@@ -83,7 +83,7 @@ The signer is an `Arc<dyn SignerLike + Send + Sync>`. It signs the auth challeng
 
 Readiness reads depend on the endpoint:
 
-- Quote: `GetSubscriptions`, then `Unsubscribe` for channels the server holds and the client does not want, then `Subscribe` with the desired target and a wait for `SubscribeAck`. After that it reads `GetActiveRfqs` and `GetMyQuotes { scope: Live }`. A Live response with `has_more` set fails the session attempt, and the client retries.
+- Quote: `GetSubscriptions`, then `Unsubscribe` for channels the server holds and the client does not want, then `Subscribe` with the desired target and a wait for `SubscribeAck`. After that it reads `GetActiveRfqs` and `GetMyQuotes { scope: Live }`. Both live reads follow continuation pages before the session reports Ready. A page that claims more rows without a cursor row fails recovery.
 - Data: `GetMmSummary`.
 
 `initial_subscribe` seeds the desired subscription target; its `request_id` is not sent on the wire, and recovery uses fresh request IDs. Dynamic subscription changes update the desired target after acknowledgement.
@@ -168,7 +168,7 @@ For covered calls and cash-secured puts, `physical_premium(price, strike, quanti
 
 `RfqBroadcast.quantity` and `QuoteFilled.quantity` are underlying atoms; `Price` and `Strike` are 1e9-scaled per underlying token, independent of decimals. Mint decimals come only from `GetMarketDescriptors` on `/maker/data` (`underlying_decimals`, `quote_decimals` per `market_pda`); `MarketDecimals::observe(&message)` caches them and `get(market_pda)` returns them. `total_premium_quote_atoms(price, quantity, underlying_decimals, quote_decimals)` is the fill's gross premium (before protocol fees) in quote atoms with the contract's rounding; `Price::as_decimal()`, `Strike::as_decimal()` and `Quantity::to_units(decimals)` are for display.
 
-`QuoteExpiry` stores whole Unix seconds; use `QuoteExpiry::from_unix_seconds(...)` or `QuoteExpiry::after(...)` rather than putting a fractional `SystemTime` into a signed order. See the crate's `managed_quote` example (`cargo run --example managed_quote --features ws-client,http` from the 0.6.0 crate sources; API reference on [docs.rs](https://docs.rs/acta-maker-sdk)) for receiving recovery responses, checking epochs and handling stream gaps.
+`QuoteExpiry` stores whole Unix seconds; use `QuoteExpiry::from_unix_seconds(...)` or `QuoteExpiry::after(...)` rather than putting a fractional `SystemTime` into a signed order. See the crate's `managed_quote` example (`cargo run --example managed_quote --features ws-client,http` from the 0.6.1 crate sources; API reference on [docs.rs](https://docs.rs/acta-maker-sdk)) for receiving recovery responses, checking epochs and handling stream gaps.
 
 `quote_in_epoch`, `replace_in_epoch` and `batch_quotes_in_epoch` (and their `try_` forms) return `NotReady` if the connection has changed. Do not replace the applied recovery epoch with the latest transport epoch just before sending.
 
@@ -243,20 +243,15 @@ Queries take explicit filters. There are no defaults and no optional fields.
 - Single-value filters are `QueryFilter::All {}` or `QueryFilter::Only { value }`.
 - Time bounds are `TimeBound::Unbounded {}` or `TimeBound::Bounded { value }`.
 - Mint lists and `status: Vec<PositionStatus>` use an empty list for every value.
-- Pages take a required `limit` and a `PageCursor::Start {}` or `PageCursor::After { at, id }`. `GetMyQuotes` takes `MakerQuoteScope::Live {}` or `History { limit, cursor }`.
+- All list reads use [common paging](../reference/ws-common.md#paging). Quote scope is `Live {}` or `History {}`; paging fields are top-level.
 
-| Request | `limit` range | Cursor `at` | Cursor `id` |
-|---|---|---|---|
-| `GetMakerPositions` | `1..=500` | `created_at` | PDA |
-| `GetMyQuotes` History | `1..=1000` | `created_at` | `order_id` |
-| `GetMyTrades` | `1..=200` | `confirmed_at` | trade `id` |
 
-A limit outside the range is rejected with `invalid_limit`; the server does not clamp it. Pages run newest first by (created second, id). `has_more` is `true` while rows remain. `GetMyQuotes { scope: Live }` is complete and unpaged; never substitute History for recovery. `GetMarketsForMaker` supports filters and has no result cap. Do not use any of these as polling paths. The WebSocket query bucket is `20` query tokens per second with a burst of `40`.
+Normal SDK list calls collect all pages through one helper. Live quotes and catalogs are paged too. Do not use query reads as polling paths.
 
-`MakerDataClient::all_pages(request, timeout)` pages `GetMakerPositions`, `GetMyTrades` and `GetMyQuotes` History to the end at the server's largest page size. It ignores the request's own `limit` and cursor. Pages after the first are appended.
+`MakerDataClient::request` and `all_pages` collect every page of a list using the shared helper. Use `request_page` for an explicit page.
 
 ```rust
-use acta_maker_sdk::ws::types::{GetMakerPositionsMessage, PageCursor, QueryFilter, TimeBound};
+use acta_maker_sdk::ws::types::{GetMakerPositionsMessage, Cursor, QueryFilter, TimeBound};
 use std::time::Duration;
 
 let positions = data_client
@@ -267,8 +262,8 @@ let positions = data_client
             underlying_mint: QueryFilter::All {},
             status: vec![],
             min_expiry_ts: TimeBound::Unbounded {},
-            limit: 500,
-            cursor: PageCursor::Start {},
+            limit: 200,
+            cursor: Cursor::Start {},
         },
         Duration::from_secs(5),
     )
@@ -281,7 +276,7 @@ let positions = data_client
 The managed clients run the readiness reads and then report `Ready`. The strategy does the rest:
 
 1. Wait for `Ready` and take the connection epoch. Consume the quote-plane `ActiveRfqs` and `MyQuotes` responses and the data-plane `MmSummary` from the receivers.
-2. Apply `MmSummary.positions` by revision. If `positions_has_more` is `true`, page the rest with `all_pages`. The summary holds the newest 500 positions across all statuses.
+2. Apply position revisions from the summary and live recovery pages. If the summary is incomplete, managed recovery reads all open/funded positions. Historical reads remain explicit.
 3. Book money from the rows' `total_premium`.
 4. Reconcile each unfinished local order that is not in the Live set. Query `GetOrderStatus` one order at a time, and stop at the first rejection:
 
@@ -328,7 +323,7 @@ The server does not replay the missed event stream. Handle duplicate lifecycle o
 
 ## Indicative pricing
 
-Indicative pricing covers covered calls and cash-secured puts. If the account is enrolled in pre-trade pricing, the server emits `IndicativePricesRequest`; the integrator replies with `IndicativePricesResponse` correlated by `request_id`. Indicative quotes are non-binding and operate under a tighter latency budget than auction quotes.
+When indicative pricing is enabled on the server, a connected quote session subscribed to `rfqs` with matching mint filters may receive `IndicativePricesRequest` for covered calls or cash-secured puts. There is no separate enrollment, and data sessions do not receive these requests. Prices are non-binding; reply with `IndicativePricesResponse` using the request ID.
 
 ---
 
