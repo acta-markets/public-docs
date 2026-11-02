@@ -12,10 +12,10 @@ For JSON-layer integrations, see [`maker-quickstart.md`](maker-quickstart.md). M
 
 ```toml
 [dependencies]
-acta-maker-sdk = { version = "0.6.1", features = ["ws-client"] }
+acta-maker-sdk = { version = "0.6.2", features = ["ws-client"] }
 ```
 
-Version 0.6.1 speaks WS protocol `1.0.0` (`WS_PROTOCOL_VERSION`). The wire is closed: every field is present, absent facts are explicit `null`, and decoding rejects unknown message types, error codes, enum values and missing fields. This guide covers ordinary makers; vault operators use the `vault` feature, see the [vault operator guide](vault-operator-guide.md).
+Version 0.6.2 speaks WS protocol `1.0.0` (`WS_PROTOCOL_VERSION`). The wire is closed: every field is present, absent facts are explicit `null`, and decoding rejects unknown message types, error codes, enum values and missing fields. This guide covers ordinary makers; vault operators use the `vault` feature, see the [vault operator guide](vault-operator-guide.md).
 
 Quote-only integrations need `ws-client`. `chain` adds Solana instruction builders (including `chain::vault`); `chain-rpc` adds on-chain reads; `http` adds the read-only HTTP client; `vault` adds the vault operator client and implies `ws-client` and `chain`.
 
@@ -248,7 +248,7 @@ Queries take explicit filters. There are no defaults and no optional fields.
 
 Normal SDK list calls collect all pages through one helper. Live quotes and catalogs are paged too. Do not use query reads as polling paths.
 
-`MakerDataClient::request` and `all_pages` collect every page of a list using the shared helper. Use `request_page` for an explicit page.
+`MakerDataClient::request_all` and `all_pages` collect every page of a list using the shared helper. Use `request_page` for an explicit page.
 
 ```rust
 use acta_maker_sdk::ws::types::{GetMakerPositionsMessage, Cursor, QueryFilter, TimeBound};
@@ -285,7 +285,7 @@ use acta_maker_sdk::ws::types::{GetOrderStatusMessage, OrderExecutionState};
 
 for order_id in unfinished {
     let status = data_client
-        .request(
+        .request_all(
             GetOrderStatusMessage { request_id: uuid::Uuid::new_v4(), order_id },
             Duration::from_secs(5),
         )
