@@ -36,4 +36,3 @@
 - Renamed capability `spreads_v2` to `spreads` (order bytes unchanged).
 - All position opens use keeper-sponsored v0 transactions with address lookup tables (ALT).
 
-See WIRE-SPREADS.md for exact wire shapes and data-session semantics.
