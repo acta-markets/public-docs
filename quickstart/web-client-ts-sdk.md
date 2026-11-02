@@ -10,7 +10,7 @@ Wire messages, errors and enums are in [`../reference/taker-api.md`](../referenc
 npm install @acta-markets/ts-sdk
 ```
 
-This guide covers version 0.3.1. It speaks WS protocol `1.0.0` and targets the program deployed to devnet and mainnet; both use the same program ID, and `GET /api/v1/venue` returns the authoritative `program_id`. Refer to opcodes and errors by name through the generated constants exported from `@acta-markets/ts-sdk` (`*_DISCRIMINATOR` for opcodes, `ACTA_CONTRACT_ERROR__*` for errors), not by number. The package README and changelog cover the vault builders.
+This guide covers version 0.3.2. It speaks WS protocol `1.0.0` and targets the program deployed to devnet and mainnet; both use the same program ID, and `GET /api/v1/venue` returns the authoritative `program_id`. Refer to opcodes and errors by name through the generated constants exported from `@acta-markets/ts-sdk` (`*_DISCRIMINATOR` for opcodes, `ACTA_CONTRACT_ERROR__*` for errors), not by number. The package README and changelog cover the vault builders.
 
 The wire is closed. The client does not dispatch a frame that lacks a required field or carries an unknown enum value. A message whose type the SDK does not know is reported on the `unknownMessage` event. Facts that are absent arrive as explicit `null`, typed `T | null`. State-dependent shapes are tagged unions. Wire addresses are validated when a frame is decoded. `server_time_unix_ms` and `sent_at_unix_ms` use milliseconds, and `expires_at` uses Unix seconds.
 

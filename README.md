@@ -19,6 +19,8 @@
 - [Maker wire examples](quickstart/maker-wire-examples.md) — complete JSON session
 - [Rust Maker SDK](quickstart/maker-rust-sdk.md) — Rust SDK integration guide
 
+- [Protocol changelog](reference/protocol-changelog.md) — every wire change, newest first
+
 ## Vaults
 
 - [Vault operator guide](quickstart/vault-operator-guide.md) — roles, cycle, trading options and spreads, checked signing, funding, fallbacks

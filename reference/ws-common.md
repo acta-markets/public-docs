@@ -285,7 +285,7 @@ Validate the entire challenge **before invoking the signer**. Require the exact 
 
 After validation, sign the original UTF-8 bytes without normalization, additional prefix or hashing. The fixed text already supplies the authentication domain. Signing arbitrary endpoint text with the order key can authorize an order instead of authentication.
 
-Rust SDK (`acta-maker-sdk` 0.6.2) and TS SDK (`@acta-markets/ts-sdk` 0.3.1) validate authentication messages before invoking signers in their managed clients. Raw Rust clients use `validate_maker_auth_challenge`, or `validate_vault_auth_challenge(challenge, operator, vault)` for a vault session; raw TS clients use `validateAuthChallenge`, which checks the grammar of the maker and taker formats and rejects the vault format, and `assertVaultAuthChallenge(challenge, operator, vault)` for a vault session. This does not establish endpoint trust or prevent relay of a genuine server challenge.
+Rust SDK (`acta-maker-sdk` 0.6.3) and TS SDK (`@acta-markets/ts-sdk` 0.3.2) validate authentication messages before invoking signers in their managed clients. Raw Rust clients use `validate_maker_auth_challenge`, or `validate_vault_auth_challenge(challenge, operator, vault)` for a vault session; raw TS clients use `validateAuthChallenge`, which checks the grammar of the maker and taker formats and rejects the vault format, and `assertVaultAuthChallenge(challenge, operator, vault)` for a vault session. This does not establish endpoint trust or prevent relay of a genuine server challenge.
 
 ### AuthChallenge (client -> server)
 
@@ -956,7 +956,7 @@ rejected, never clamped. Compound replies share one page budget across their
 collections. Scalars repeat on each page. Token-market strike lists can span
 pages; merge fragments by market PDA and position type.
 
-Rust SDK `0.6.2` and TypeScript SDK `0.3.1` use one shared `fetch_all` or
+Rust SDK `0.6.3` and TypeScript SDK `0.3.2` use one shared `fetch_all` or
 `fetchAllPages` helper. Their normal list methods collect every page. Use an
 explicit page method for incremental UI loading, such as
 `getPositionsPageAsync` in TypeScript. Raw WS `request` methods return one page.
