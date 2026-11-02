@@ -417,7 +417,7 @@ ws.on("disconnected", (code, reason) => {});
 
 Close code `4006` (`unsupported_protocol_version`) means the server did not accept the `protocolVersion` the client sent. The default is `1.0.0`; leave it unset.
 
-**Recovery on reconnect.** The SDK reconnects and resumes authentication after network drops. After `authenticated`, it restores the desired subscriptions and, with the default `autoReconcile`, requests `GetMyActiveRfqs` and `GetPositions` (all positions). Authentication alone does not mean these reads have completed.
+**Recovery on reconnect.** The SDK reconnects and resumes authentication after network drops. A skipped unknown or invalid frame triggers the same reads, at most once every 5 seconds, with `autoReconcile` on. After `authenticated`, it restores the desired subscriptions and, with the default `autoReconcile`, requests `GetMyActiveRfqs` and `GetPositions` (all positions). Authentication alone does not mean these reads have completed.
 
 Wait for those responses before rebuilding application state, and request `GetOrderStatus` for each unresolved order. Apply the exact-order recovery rules above. Do not clear an unresolved order because it is missing from an RFQ or position response.
 
