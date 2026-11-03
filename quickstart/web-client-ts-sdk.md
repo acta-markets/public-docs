@@ -10,7 +10,7 @@ Wire messages, errors and enums are in [`../reference/taker-api.md`](../referenc
 npm install @acta-markets/ts-sdk
 ```
 
-This guide covers version 0.3.2. It speaks WS protocol `1.0.0` and targets the program deployed to devnet and mainnet; both use the same program ID, and `GET /api/v1/venue` returns the authoritative `program_id`. Refer to opcodes and errors by name through the generated constants exported from `@acta-markets/ts-sdk` (`*_DISCRIMINATOR` for opcodes, `ACTA_CONTRACT_ERROR__*` for errors), not by number. The package README and changelog cover the vault builders.
+This guide covers version 0.4.1. It speaks WS protocol `1.0.0` and targets the program deployed to devnet and mainnet; both use the same program ID, and `GET /api/v1/venue` returns the authoritative `program_id`. Refer to opcodes and errors by name through the generated constants exported from `@acta-markets/ts-sdk` (`*_DISCRIMINATOR` for opcodes, `ACTA_CONTRACT_ERROR__*` for errors), not by number. The package README and changelog cover the vault builders.
 
 The wire is closed. The client does not dispatch a frame that lacks a required field or carries an unknown enum value. A message whose type the SDK does not know is reported on the `unknownMessage` event. Facts that are absent arrive as explicit `null`, typed `T | null`. State-dependent shapes are tagged unions. Wire addresses are validated when a frame is decoded. `server_time_unix_ms` and `sent_at_unix_ms` use milliseconds, and `expires_at` uses Unix seconds.
 
@@ -150,7 +150,7 @@ ws.getPositions(ALL_POSITIONS);
 
 `quantity` is always in underlying atoms, including for cash-secured puts, spreads and cash puts. Convert a quote-token budget to quote atoms (`amount * 10^quote_decimals`), then use the integer floor-and-step calculation in [Quantity and collateral by product](../reference/ws-common.md#quantity-and-collateral-by-product). Use the strike for a cash-secured put or cash put, and `upper_strike - lower_strike` for a spread. `quoteAmountToQuantity` rounds to the nearest atom and does not apply `size_rule`; its result is not a budget-safe RFQ quantity.
 
-`terms` is a tagged union and `side` must be `"sell"`:
+`terms` is a tagged union. `side` is `"sell"` to write the product for the premium or `"buy"` to buy it, see [Buying options](#buying-options):
 
 ```typescript
 ws.on("rfqCreated", (rfq) => console.log(rfq.rfq_id, rfq.expires_at, rfq.order_options));
@@ -188,7 +188,7 @@ For spreads and cash puts, `order_options` holds exactly your `terms`.
 
 ### Spread economics
 
-Spreads and cash puts are cash-settled in the quote mint. The taker posts collateral `C` and receives the net premium. At expiry the maker gets `ceil(min(intrinsic, width) * quantity)` capped at `C`, and the taker gets the rest. The `chain` entry point has the exact bigint helpers:
+Spreads and cash puts are cash-settled in the quote mint. The writer posts collateral `C` and receives the net premium. At expiry the holder gets `ceil(min(intrinsic, width) * quantity)` capped at `C`, and the writer gets the rest. On a sell you are the writer; on a buy you are the holder. The `chain` entry point has the exact bigint helpers:
 
 ```typescript
 import { ActaHttpClient } from "@acta-markets/ts-sdk/http";
@@ -214,11 +214,45 @@ const economics = spreadPremium(
   venue.protocol_fee_bps_volume,
 );
 
-// At settlement price S: makerPayoff and takerReturn sum to economics.collateral
-const { makerPayoff, takerReturn } = spreadSettlement(terms, 133_000_000_000n, economics.collateral);
+// At settlement price S: holderPayoff and writerReturn sum to economics.collateral
+const { holderPayoff, writerReturn } = spreadSettlement(terms, 133_000_000_000n, economics.collateral);
 ```
 
 `spreadPremium` throws when the price is not strictly between `0` and the width after rounding. The fee is `min(premium_fee, volume_fee)`. For a cash put, map the terms with `executionTerms(terms)` from `@acta-markets/ts-sdk/ws`, which returns a put spread with legs `(0, strike)`, and use `SpreadType.PutSpread` with `lowerStrike: 0n`.
+
+### Buying options
+
+With `side: "buy"` you buy the product. The maker writes it from its Maker PDA custody, so only makers subscribed to `taker_buy_rfqs` with enough custody receive the RFQ. The best buy quote is the lowest price. If no maker can receive it, the RFQ closes at once with `reason: "no_eligible_makers"`.
+
+```typescript
+await ws.createRfq({
+  market: marketPdaBase58,
+  terms: { type: "covered_call", strike: 150_000_000_000 },
+  side: "buy",
+  quantity: 1_000_000_000,
+  timeoutSeconds: 30,
+  requestId: crypto.randomUUID(),
+});
+```
+
+Accept and sign as for a sell: `verifyAndSignTakerFill` reads the side from the RFQ and refuses a fill whose side, terms or amounts differ. You pay the gross premium in the quote mint and become the position `holder`; the maker is the `writer`. Vault makers do not write buys.
+
+A bought covered call or cash-secured put is exercised by depositing the settlement amount (quote for a call, underlying for a put) strictly before `expiry_ts`. You sign and pay for this transaction yourself:
+
+```typescript
+import { fetchMarket, fetchPosition } from "@acta-markets/ts-sdk";
+import { flows } from "@acta-markets/ts-sdk/chain";
+
+const { ixs } = await flows.buildDepositFundsIxs({
+  programId,
+  payer: buyer.address,
+  owner: buyer,
+  position: (await fetchPosition(rpc, positionPda)).data,
+  market: (await fetchMarket(rpc, marketPda)).data,
+});
+```
+
+Without a deposit all collateral returns to the writer at expiry, also in the money; the position settles as `not_exercised`. A bought spread or cash put needs no deposit and settles in cash: `holder_payoff` is yours. While the chain has settled a position and the server has not sealed that slot, its state is `terminal_pending { slot, outcome }`; show it, but do not count it.
 
 ### 7. Cancel RFQ
 

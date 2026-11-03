@@ -390,7 +390,7 @@ Fills do not push it. Poll `GetMyCaps` to track capacity between pushes.
 
 ## Freeing capacity
 
-Reserved capacity returns when a quote is cancelled, replaced, expires, or is rejected. Position exposure returns when the position settles. Deposited premium not backing an open position or live quote can be retrieved via the on-chain `WithdrawPremium` instruction.
+Reserved capacity returns when a quote is cancelled, replaced, expires, or is rejected. Position exposure returns when the position settles. Deposited premium not backing an open position or live quote can be retrieved via the on-chain `MakerWithdraw` instruction.
 
 ## Reference
 

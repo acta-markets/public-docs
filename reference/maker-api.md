@@ -300,7 +300,7 @@ Every RFQ, quote, position and trade carries two required fields: `terms` and `s
 ```
 
 - Strikes are integers scaled by 1e9 per underlying token, independent of mint decimals. `strike_tick` from `GetTokens` is on the same scale.
-- `side` describes the taker: `sell` or `buy`. Only `sell` is executable. A `buy` quote is rejected with `taker_buy_unsupported`.
+- `side` describes the taker: `sell` or `buy`. To see and quote `buy` RFQs, subscribe to `taker_buy_rfqs`; without it the RFQ is not delivered and a quote is rejected with `unauthorized`. A `buy` is written from Maker PDA custody: the server refuses a quote when custody is below the collateral, which is the width times quantity for a spread or cash put. Custody is read, not reserved, so overlapping quotes can fail at fill.
 - `cash_put` is economically a put spread with lower strike 0 and upper strike K. It settles in cash and executes on chain with those legs. It is signed with the put-spread product byte, lower strike `0` and upper strike K.
 - Public `call_spread` and `put_spread` terms require `0 < lower_strike < upper_strike`. Both strikes are chosen by the taker. For puts the short strike is the upper strike.
 - A put with a zero lower leg is a `cash_put`. A `put_spread` with `lower_strike` `0` is rejected with `spread_invalid_strikes`. On chain a position with legs `(0, K)` reads back as `cash_put`.
@@ -1418,8 +1418,8 @@ Uses [common paging](ws-common.md#paging).
         "settlement": {
           "type": "cash",
           "settlement_price": 110000000000,
-          "maker_payoff": 10000000,
-          "taker_return": 10000000
+          "holder_payoff": 10000000,
+          "writer_return": 10000000
         },
         "quantity": 1000000000,
         "price": 5000000000,
@@ -1437,13 +1437,14 @@ Uses [common paging](ws-common.md#paging).
 Field semantics:
 - `state` is a tag on the row. `open`, `funded` and `liquidated` rows carry no settlement fields. A `settled` row carries `settlement`, a tagged union:
   - `{ "type": "physical", "settlement_price", "is_otm" }` for covered calls and cash-secured puts. `is_otm` is derived from the market settlement price and the strike. A settlement price equal to the strike is out of the money.
-  - `{ "type": "cash", "settlement_price", "maker_payoff", "taker_return" }` for spreads and cash puts, with both amounts in quote atoms. `taker_return` includes any donated collateral.
+  - `{ "type": "cash", "settlement_price", "holder_payoff", "writer_return" }` for spreads and cash puts, with both amounts in quote atoms. `writer_return` includes any donated collateral.
 - `settlement_price` is 1e9-scaled.
+- A `terminal_pending` row, `{ "state": "terminal_pending", "slot", "outcome" }`, is a position the chain has already settled or liquidated at `slot` while the server has not sealed that slot. It usually lasts under a second. `outcome` is `{ "type": "settled", "is_otm" }` or `{ "type": "liquidated" }`. Show it, but do not count it: caps and balances follow the sealed state, and the sealed row replaces it.
 - `revision` is `{ slot, transaction_index, instruction_index }` of the last applied lifecycle event. See [Position revisions](#position-revisions).
 - `total_premium` is the net premium in quote atoms after the protocol fee. It is the authoritative money figure for the position. The wire `price` alone does not give it.
 - `price` is the gross premium per 1 underlying unit (1e9 scale).
 - `underlying_symbol` / `quote_symbol` / `underlying_decimals` / `quote_decimals` are pre-resolved token metadata so the maker does not need a separate `GetTokens` lookup.
-- `unrenderable` lists stored positions whose market projection is incomplete: `{ pda, market, created_at, missing }`, where `missing` names the fields the projection could not supply. They count toward the page limit. Retrying does not repair them.
+- `unrenderable` lists stored positions whose market projection is incomplete (a position waiting for its seal is `terminal_pending`, not unrenderable): `{ pda, market, created_at, missing }`, where `missing` names the fields the projection could not supply. They count toward the page limit. Retrying does not repair them.
 - all amount fields are unsigned (`u64`); timestamps remain Unix seconds.
 
 #### Position revisions
@@ -2146,6 +2147,7 @@ Operational handling recommendations:
 | `filled` | RFQ was filled on-chain |
 | `market_expired` | The underlying market expired |
 | `ladder_timeout` | Ladder execution timeout |
+| `no_eligible_makers` | No maker could receive the RFQ; sent to the taker only |
 
 ### QuoteFinalStatus (in `RfqClosed.your_quote.status`)
 
@@ -2218,7 +2220,7 @@ Position status is a lowercase snake_case string on the wire. `funded` and `liqu
 | `open` | none |
 | `funded` | none |
 | `liquidated` | none |
-| `settled` | `settlement`: `physical { settlement_price, is_otm }` or `cash { settlement_price, maker_payoff, taker_return }` |
+| `settled` | `settlement`: `physical { settlement_price, is_otm }` or `cash { settlement_price, holder_payoff, writer_return }` |
 
 ### PositionUpdateType (in `PositionUpdated`)
 

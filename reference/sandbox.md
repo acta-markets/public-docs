@@ -65,7 +65,7 @@ If you have trouble claiming tokens, contact the Acta team.
 
 ### 4. Deposit premium
 
-Deposit quote token (devnet USDC) into the maker PDA via the `DepositPremium` on-chain instruction.
+Deposit quote token (devnet USDC) into the maker PDA via the `MakerDeposit` on-chain instruction.
 
 - The `maker_owner` wallet signs this transaction.
 - `maker_owner` needs an associated token account (ATA) for the quote mint, and so does the maker PDA.
@@ -129,7 +129,7 @@ Browsers obtain current reference prices from the selected backend through [`Get
 
 The instruction data starts with a one-byte discriminant. Integers are little-endian. The full IDL ships in `@acta-markets/ts-sdk` as `ACTA_IDL`.
 
-Install `@acta-markets/ts-sdk@0.3.2` and import the IDL from the package root:
+Install `@acta-markets/ts-sdk@0.4.1` and import the IDL from the package root:
 
 ```typescript
 import { ACTA_IDL } from "@acta-markets/ts-sdk";
@@ -137,9 +137,9 @@ import { ACTA_IDL } from "@acta-markets/ts-sdk";
 
 The package also contains the JSON file at `node_modules/@acta-markets/ts-sdk/dist/idl/acta_contract.json`. Raw clients can read that file without using the TypeScript builders.
 
-Builders: `buildDepositPremiumIx` and `buildDepositFundsToPositionIx` from `@acta-markets/ts-sdk/chain`, or `ChainClient::deposit_premium` and `ChainClient::fund_position` in the Rust SDK (`chain-rpc` feature).
+Builders: `buildMakerDepositIx` and `buildDepositFundsToPositionIx` from `@acta-markets/ts-sdk/chain`, or `ChainClient::maker_deposit` and `ChainClient::fund_position` in the Rust SDK (`chain-rpc` feature).
 
-### `DepositPremium`
+### `MakerDeposit`
 
 Moves quote tokens from the owner's wallet to the maker PDA's custody account. Fills debit this balance.
 
@@ -150,7 +150,7 @@ Data, 9 bytes: discriminant `4`, then `amount` as `u64`. `amount` must not be `0
 | 0 | `maker_owner` | no | yes | The registered owner |
 | 1 | `maker_pda` | no | no | `["maker", maker_owner]` |
 | 2 | `maker_owner_premium_ata` | yes | no | Source token account owned by `maker_owner` |
-| 3 | `maker_premium_ata` | yes | no | The maker PDA's ATA for the same mint. It must already exist |
+| 3 | `maker_custody_ata` | yes | no | The maker PDA's ATA for the same mint. It must already exist |
 | 4 | `token_program` | no | no | The mint's token program |
 
 ### `DepositFundsToPosition`

@@ -149,7 +149,7 @@ RfqRequest -> RfqCreated -> QuoteReceived (0..N) -> AcceptQuote
 
 ### 1. Open the RFQ
 
-`terms` is a tagged union that names the product and its strikes. `side` is the taker's side and must be `sell`; `buy` fails with `taker_buy_unsupported`.
+`terms` is a tagged union that names the product and its strikes. `side` is the taker's side: `sell` writes the product and pays you the premium, `buy` buys it for the premium. A bought covered call or cash-secured put needs a deposit before expiry to exercise; a bought spread or cash put needs none.
 
 | Product | `terms` |
 |---|---|
@@ -371,7 +371,7 @@ Once open, the position's collateral is locked in its own escrow. There is no ma
 
 For a covered call or cash-secured put that is in the money, the maker supplies the settlement asset. If it remains unfunded, a permissionless liquidator can supply that asset and receive the corresponding collateral. Locked collateral does not guarantee a liquidation deadline: completion depends on someone providing the funding.
 
-A call spread, put spread or cash put goes from `open` straight to `settled`. Its `settlement` is `{ "type": "cash", "settlement_price", "maker_payoff", "taker_return" }` with amounts in quote atoms. A settled physical position has `{ "type": "physical", "settlement_price", "is_otm" }`.
+A call spread, put spread or cash put goes from `open` straight to `settled`. Its `settlement` is `{ "type": "cash", "settlement_price", "holder_payoff", "writer_return" }` with amounts in quote atoms. A settled physical position has `{ "type": "physical", "settlement_price", "is_otm" }`.
 
 Every position row carries `revision { slot, transaction_index, instruction_index }`, both decimals and `total_premium`, the net premium in quote atoms after the protocol fee. Track positions in two ways:
 

@@ -16,7 +16,9 @@ API payloads are in [Maker API](maker-api.md), [Taker API](taker-api.md), and [W
 | **Oracle setter and settlement attestor** | Compute the expiry fixing and publish it to the oracle accounts. | Protocol-operated. See [Settlement fixing](#settlement-fixing). |
 | **Liquidator** | Closes ITM physical positions the maker never funded; fronts the settlement to the taker. | Permissionless. Anyone can run it. |
 
-The maker is the buyer and the taker is the writer. Every RFQ, quote and position carries `side`; the venue accepts only `sell` (the taker writes). A `buy` side is rejected with `taker_buy_unsupported`. The `is_taker_buy` byte in the order-id preimage is `0`.
+Every RFQ, quote and position carries `side`, the taker's direction. On `sell` the taker writes and the maker buys. On `buy` a wallet buys from a maker, who writes from Maker PDA custody; the `is_taker_buy` byte in the order-id preimage is `1`. Vault sessions stay `sell` only and a `buy` from one fails with `taker_buy_unsupported`.
+
+On a buy the buyer pays the gross premium, and a physical option needs a deposit strictly before `expiry_ts` to exercise. With no deposit all collateral returns to the writer, also when in the money, and the position reads `not_exercised`. A bought spread or cash put takes no deposit: the maker locks the width times quantity, the buyer can lose at most the premium and receives at most the width.
 
 ## Products
 
@@ -168,7 +170,7 @@ On a successful open:
 | Call spread, put spread | `C = scaled_quote_amount_ceil(width, quantity)` quote atomic units | None |
 | Cash put | `C = scaled_quote_amount_ceil(strike, quantity)` quote atomic units | None |
 
-Taker collateral is fully locked at open. For physical products the maker settlement leg is **not** locked at open: the maker pays the premium and may deposit the settlement asset later with `DepositFundsToPosition` (`open` → `funded`). Spreads and cash puts have no maker leg. The maker needs a deposited program quote balance (via `DepositPremium`) for the premium debit; idle balance is retrieved with `WithdrawPremium`.
+Taker collateral is fully locked at open. For physical products the maker settlement leg is **not** locked at open: the maker pays the premium and may deposit the settlement asset later with `DepositFundsToPosition` (`open` → `funded`). Spreads and cash puts have no maker leg. The maker needs a deposited program quote balance (via `MakerDeposit`) for the premium debit; idle balance is retrieved with `MakerWithdraw`.
 
 ### Fees
 
@@ -200,11 +202,11 @@ For a spread or cash put with legs `(L, U)` at settlement price `S`:
 call spread: intrinsic = max(S - L, 0)
 put spread:  intrinsic = max(U - S, 0)      (cash put: L = 0, U = K)
 
-maker_payoff = scaled_quote_amount_ceil(min(intrinsic, width), quantity)
-taker_return = collateral_balance - maker_payoff
+holder_payoff = scaled_quote_amount_ceil(min(intrinsic, width), quantity)
+writer_return = collateral_balance - holder_payoff
 ```
 
-`maker_payoff` is at most `C`. The taker receives the rest of the escrow, including any amount donated to it. The buyer's profit is `maker_payoff - gross_premium`, and the writer's loss is bounded by `C - net_premium`.
+`holder_payoff` is at most `C`. The writer receives the rest of the escrow, including any amount donated to it. The buyer's profit is `holder_payoff - gross_premium`, and the writer's loss is bounded by `C - net_premium`.
 
 ## Settlement and payoff
 
@@ -246,7 +248,7 @@ At-the-money counts as OTM.
 
 ### Cash outcomes
 
-`SettlePosition` pays `maker_payoff` to the maker and `taker_return` to the taker, both in the quote mint, and closes the position. If one owner is on both sides, both amounts go to distinct quote accounts or one shared account. The final `state` is `settled { settlement: cash { settlement_price, maker_payoff, taker_return } }`.
+`SettlePosition` pays `holder_payoff` to the holder and `writer_return` to the writer, both in the quote mint, and closes the position. If one owner is on both sides, both amounts go to distinct quote accounts or one shared account. The final `state` is `settled { settlement: cash { settlement_price, holder_payoff, writer_return } }`.
 
 ## Funding deadline (physical positions)
 
@@ -332,7 +334,7 @@ Events worth tracking end to end:
 | `ChainEvent(position_settled)` | Assets distributed. |
 | `ChainEvent(position_liquidated)` | Unfunded ITM physical position liquidated. |
 
-`RegisterMaker`, `DepositPremium`, `WithdrawPremium`, and `DepositFundsToPosition` are Solana on-chain instructions, not WebSocket messages; build and submit them as transactions signed by the relevant owner wallet. The layouts of the maker's deposit instructions are in [Sandbox](sandbox.md#on-chain-maker-instructions). The full IDL ships in `@acta-markets/ts-sdk` as `ACTA_IDL`.
+`RegisterMaker`, `MakerDeposit`, `MakerWithdraw`, and `DepositFundsToPosition` are Solana on-chain instructions, not WebSocket messages; build and submit them as transactions signed by the relevant owner wallet. The layouts of the maker's deposit instructions are in [Sandbox](sandbox.md#on-chain-maker-instructions). The full IDL ships in `@acta-markets/ts-sdk` as `ACTA_IDL`.
 
 ## Related docs
 

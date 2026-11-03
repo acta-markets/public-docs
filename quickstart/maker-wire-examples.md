@@ -385,8 +385,8 @@ Spreads and cash puts go from `open` to `settled` only. A settled row carries th
       "settlement": {
         "type": "cash",
         "settlement_price": 110000000000,
-        "maker_payoff": 10000000,
-        "taker_return": 10000000
+        "holder_payoff": 10000000,
+        "writer_return": 10000000
       },
       "quantity": 1000000000,
       "price": 5000000000,
@@ -413,7 +413,7 @@ A spread quote the venue refuses carries a specific reason:
 }
 ```
 
-A `buy` side is rejected with `taker_buy_unsupported`.
+A `buy` side arrives only on the `taker_buy_rfqs` channel, and the maker writes it from Maker PDA custody.
 
 ## Additional scenarios
 

@@ -12,10 +12,10 @@ For JSON-layer integrations, see [`maker-quickstart.md`](maker-quickstart.md). M
 
 ```toml
 [dependencies]
-acta-maker-sdk = { version = "0.6.3", features = ["ws-client"] }
+acta-maker-sdk = { version = "0.7.1", features = ["ws-client"] }
 ```
 
-Version 0.6.3 speaks WS protocol `1.0.0` (`WS_PROTOCOL_VERSION`). The wire is closed: every field is present, absent facts are explicit `null`, and decoding rejects unknown message types, error codes, enum values and missing fields. This guide covers ordinary makers; vault operators use the `vault` feature, see the [vault operator guide](vault-operator-guide.md).
+Version 0.7.1 speaks WS protocol `1.0.0` (`WS_PROTOCOL_VERSION`). The wire is closed: every field is present, absent facts are explicit `null`, and decoding rejects unknown message types, error codes, enum values and missing fields. This guide covers ordinary makers; vault operators use the `vault` feature, see the [vault operator guide](vault-operator-guide.md).
 
 Quote-only integrations need `ws-client`. `chain` adds Solana instruction builders (including `chain::vault`); `chain-rpc` adds on-chain reads; `http` adds the read-only HTTP client; `vault` adds the vault operator client and implies `ws-client` and `chain`.
 
@@ -168,15 +168,38 @@ For covered calls and cash-secured puts, `physical_premium(price, strike, quanti
 
 `RfqBroadcast.quantity` and `QuoteFilled.quantity` are underlying atoms; `Price` and `Strike` are 1e9-scaled per underlying token, independent of decimals. Mint decimals come only from `GetMarketDescriptors` on `/maker/data` (`underlying_decimals`, `quote_decimals` per `market_pda`); `MarketDecimals::observe(&message)` caches them and `get(market_pda)` returns them. `total_premium_quote_atoms(price, quantity, underlying_decimals, quote_decimals)` is the fill's gross premium (before protocol fees) in quote atoms with the contract's rounding; `Price::as_decimal()`, `Strike::as_decimal()` and `Quantity::to_units(decimals)` are for display.
 
-`QuoteExpiry` stores whole Unix seconds; use `QuoteExpiry::from_unix_seconds(...)` or `QuoteExpiry::after(...)` rather than putting a fractional `SystemTime` into a signed order. See the crate's `managed_quote` example (`cargo run --example managed_quote --features ws-client,http` from the 0.6.1 crate sources; API reference on [docs.rs](https://docs.rs/acta-maker-sdk)) for receiving recovery responses, checking epochs and handling stream gaps.
+`QuoteExpiry` stores whole Unix seconds; use `QuoteExpiry::from_unix_seconds(...)` or `QuoteExpiry::after(...)` rather than putting a fractional `SystemTime` into a signed order. See the crate's `managed_quote` example (`cargo run --example managed_quote --features ws-client,http` from the 0.7.1 crate sources; API reference on [docs.rs](https://docs.rs/acta-maker-sdk)) for receiving recovery responses, checking epochs and handling stream gaps.
 
 `quote_in_epoch`, `replace_in_epoch` and `batch_quotes_in_epoch` (and their `try_` forms) return `NotReady` if the connection has changed. Do not replace the applied recovery epoch with the latest transport epoch just before sending.
 
 Constraints:
 
 - `now + min_quote_validity_seconds ≤ valid_until ≤ market.expiry_ts`, with `min_quote_validity_seconds` from `GET /api/v1/venue`. `QuoteBuilder` checks both bounds before signing (`ValidUntilTooSoon`, `ValidUntilAfterMarketExpiry`). The trailing `settlement_buffer_seconds` is reserved for settlement; the effective trading window ends at `valid_until − settlement_buffer_seconds`. Size it as `rfq.expires_at + min_quote_validity_seconds` plus a little slack, capped at market expiry.
-- The taker side is `sell`: the taker is always the option writer.
+- The quote's side is the RFQ's side. On `sell` the taker writes the option; on `buy` you write it from Maker PDA custody, see [Writing taker buys](#writing-taker-buys).
 - Use a fresh nonce and order ID for a new quote; the server validates the hash-bound order ID, not independent nonce uniqueness. `AtomicNonceGenerator` is safe to declare as a `static`.
+
+## Writing taker buys
+
+A buy RFQ (`side: buy`) asks you to write the option the taker holds: the taker is
+the holder, you are the writer. Subscribe to `WsChannel::TakerBuyRfqs`; the channel
+is separate from `Rfqs`, so a maker that only sells never receives buys.
+
+- **Custody.** The collateral leaves your Maker PDA custody at open, not your
+  wallet: the underlying for a call, the quote mint for a put, a spread or a cash
+  put. The net premium lands in custody in the same transaction. Fund custody with
+  `ChainClient::maker_deposit` (`MakerDeposit`) from your wallet ATA; a wSOL
+  underlying must already be wrapped in that ATA.
+- **Admission.** The server checks custody before it sends you the RFQ. A short
+  custody turns into `RfqSkipped` with `maker_insufficient_balance` and the RFQ never
+  reaches quoting, so top up when you see the skip, after every fill, or on a timer.
+- **Price.** The taker pays your price; quote an ask. The order id signs the side,
+  so a buy quote cannot fill a sell.
+- **Settlement.** The holder deposits strictly before expiry to exercise a physical
+  buy. An unfunded in-the-money buy returns all collateral to you and settles as
+  `not_exercised`; spreads and cash puts settle in cash with no deposit. `PositionInfo`
+  names the roles `writer` (you) and `holder` (the buyer).
+
+See [`examples/taker_buy_quote.rs`](https://github.com/acta-markets/rust-maker-sdk/blob/main/examples/taker_buy_quote.rs).
 
 ---
 
@@ -212,7 +235,7 @@ The preimage is constructed identically to a fresh `Quote` with a new `nonce` an
 
 Position rows (`MakerPositionInfo`, and `PositionInfo` in `PositionUpdated`) carry:
 
-- `state`: `Open`, `Funded`, `Liquidated`, or `Settled { settlement }`. `settlement` is `Physical { settlement_price, is_otm }` or `Cash { settlement_price, maker_payoff, taker_return }`.
+- `state`: `Open`, `Funded`, `Liquidated`, or `Settled { settlement }`. `settlement` is `Physical { settlement_price, is_otm }` or `Cash { settlement_price, holder_payoff, writer_return }`.
 - `terms` and `side`.
 - `total_premium`: the net premium the taker received, in quote atoms after the protocol fee. This is the authoritative figure for the position, not `QuoteFilled`. The maker's cost is the gross premium, and the fee is that cost minus `total_premium`.
 - `revision`: `PositionRevision { slot, transaction_index, instruction_index }`. It orders lexicographically. Keep a row only when `incoming.revision > stored.revision` for the same PDA.

@@ -271,7 +271,7 @@ The server answers with `SubscribeAck { request_id, subscribed }`, where `subscr
 
 A cash put is economically a put spread with lower strike 0 and upper strike `strike`. It executes on chain with those legs and keeps the wire name `cash_put`. Its width is `strike`.
 
-`side` is the taker's side. Takers sell: send `"sell"`. `"buy"` is rejected with `taker_buy_unsupported`.
+`side` is the taker's side: `"sell"` writes the product, `"buy"` buys it. A vault session may only sell; `"buy"` from one fails with `taker_buy_unsupported`.
 
 Admission rules for `RfqRequest`:
 
@@ -291,6 +291,7 @@ Spreads and cash puts are cash-settled in the quote mint. Their lifecycle is Ope
 - **Gross price** `G` is per underlying unit, `1e9`-scaled, and satisfies `0 < G < W`. A maker quote outside that range is rejected with `spread_premium_invalid`, so a taker never receives one.
 - **Protocol fee** is `min(premium_fee, volume_fee)`. With `quote(x) = floor(x * quantity * 10^quote_decimals / (1e9 * 10^underlying_decimals))`, `premium_fee` is `quote(G) - quote(G - floor(G * protocol_fee_bps_premium / 10000))`. `volume_fee` is `floor(quote(exposure) * protocol_fee_bps_volume / 10000)`, where `exposure` is `W` for spreads and cash puts and `strike` for physical products. Read both rates from `GET /api/v1/venue`.
 - **Net premium** is gross premium minus the fee, in quote atoms. The taker receives it at open. It is the `total_premium` of the position row.
+- **Roles.** The text below describes `side: "sell"`, where the taker writes. On `side: "buy"` the roles swap: the taker pays the gross premium, the maker locks `C` from custody, and at expiry the taker receives the payoff. `holder_payoff` and `writer_return` in the position row keep their chain roles, holder and writer, so on a buy the taker's payoff is `holder_payoff`.
 - **At expiry** the maker receives `ceil(min(intrinsic, W) * quantity ...)` in quote atoms, capped at `C`. The taker receives the rest of `C`. `intrinsic` is `max(settlement_price - lower_strike, 0)` for a call spread, `max(upper_strike - settlement_price, 0)` for a put spread, and `max(strike - settlement_price, 0)` for a cash put.
 
 Example: put spread `(130, 140)`, 5 SOL (`quantity = 5000000000`), SOL has 9 decimals and USDC has 6. The 5 SOL in these examples may exceed a deployment's `max_size`; read `size_rule` first.
@@ -596,7 +597,7 @@ The keeper retries retryable submission failures within a five-attempt budget. E
 }
 ```
 
-`reason` is `expired`, `taker_cancelled`, `filled`, `market_expired` or `ladder_timeout`. `your_quote` is `null` or `{ order_id, status, price }`. `winner` is `null` or `{ maker, price, tx_signature }`, and `tx_signature` is itself `null` when the signature is not known.
+`reason` is `expired`, `taker_cancelled`, `filled`, `market_expired`, `ladder_timeout` or `no_eligible_makers`. `no_eligible_makers` means no maker could receive the RFQ (none subscribed, or every one skipped for caps or custody), so the server closes it at once instead of at its timeout. `your_quote` is `null` or `{ order_id, status, price }`. `winner` is `null` or `{ maker, price, tx_signature }`, and `tx_signature` is itself `null` when the signature is not known.
 
 ### Terminal semantics: OrderConfirmed vs RfqClosed
 
@@ -733,8 +734,8 @@ Settled cash position (settlement price `133`), the same row after settlement:
   "settlement": {
     "type": "cash",
     "settlement_price": 133000000000,
-    "maker_payoff": 35000000,
-    "taker_return": 15000000
+    "holder_payoff": 35000000,
+    "writer_return": 15000000
   },
   "quantity": 5000000000,
   "price": 1200000000,
@@ -748,7 +749,7 @@ A settled physical position carries `"settlement": { "type": "physical", "settle
 
 Field semantics:
 - `state`: `open`, `funded`, `liquidated` or `settled`. Only `settled` carries `settlement`.
-- `settlement.type`: `physical` or `cash`. Cash amounts (`maker_payoff`, `taker_return`) are quote atoms. `settlement_price` is `1e9`-scaled.
+- `settlement.type`: `physical` or `cash`. Cash amounts (`holder_payoff`, `writer_return`) are quote atoms. `settlement_price` is `1e9`-scaled.
 - `price`: gross price per underlying unit, `1e9`-scaled.
 - `total_premium`: net premium in quote atoms after the protocol fee. It is the authoritative money figure.
 - `underlying_decimals`, `quote_decimals`: token decimals for converting `quantity` and `total_premium`.
@@ -777,8 +778,8 @@ The server pushes `PositionUpdated` to the session of the position's taker (and 
       "settlement": {
         "type": "cash",
         "settlement_price": 133000000000,
-        "maker_payoff": 35000000,
-        "taker_return": 15000000
+        "holder_payoff": 35000000,
+        "writer_return": 15000000
       },
       "quantity": 5000000000,
       "price": 1200000000,

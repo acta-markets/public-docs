@@ -76,7 +76,7 @@ Every RFQ, quote, position and trade carries `terms` and `side`.
 | `call_spread`, `put_spread` | `lower_strike`, `upper_strike` | cash, in the quote mint |
 | `cash_put` | `strike` | cash, in the quote mint |
 
-- `side` is `sell` or `buy`. Only `sell` is executable. `buy` is rejected with `taker_buy_unsupported`.
+- `side` is `sell` or `buy`. `buy` RFQs arrive only after subscribing to `taker_buy_rfqs`, and the collateral comes from Maker PDA custody.
 - `cash_put` executes on chain as a put spread with legs `(0, K)`.
 - Strikes are 1e9-scaled. Spread strikes and `cash_put` strikes must be multiples of the underlying mint's `strike_tick` from `GetTokens`.
 - A market's `products` lists only the pair's products on that market's side. Call markets list `covered_call` and `call_spread`. Put markets list `cash_secured_put`, `put_spread` and `cash_put`.
@@ -137,7 +137,7 @@ When an RFQ permits several strikes, each strike requires a distinct quote. Pref
 
 Use `ReplaceQuote` for repricing: the swap is atomic and single-RTT. `CancelQuote` followed by `Quote` introduces a gap in the book during the cancellation window and incurs an additional round-trip.
 
-`is_taker_buy` in the order-id preimage is `0` for side `sell`; the taker is always the option writer. Side `buy` sets it to `1` and is rejected. Implementations whose preimage builders default this field to `true` must override it explicitly.
+`is_taker_buy` in the order-id preimage is `0` for side `sell`, where the taker writes, and `1` for side `buy`, where the maker writes. Implementations whose preimage builders default this field to `true` must override it explicitly.
 
 `QuoteRejected` carries `reason` and a `message`. Fix the cause before retrying; the same payload will fail again. Two reasons are not about the payload: `rate_limited` (the connection's quote bucket is empty; back off and re-sign with a fresh nonce) and `trading_paused` (the venue is paused; wait for it to resume).
 
@@ -165,7 +165,7 @@ Book money from the position row, not from the fill. `PositionUpdated` carries t
 
 Quoting and the lifecycle above are entirely off-chain (WebSocket). Your only on-chain actions as a maker are funding-related:
 
-- `DepositPremium` — deposit program quote balance; **required before quoting** (the fill's premium debit draws from it). [Layout](../reference/sandbox.md#on-chain-maker-instructions). `WithdrawPremium` retrieves idle balance.
+- `MakerDeposit` — deposit program quote balance; **required before quoting** (the fill's premium debit draws from it). [Layout](../reference/sandbox.md#on-chain-maker-instructions). `MakerWithdraw` retrieves idle balance.
 - `DepositFundsToPosition` — optional, after a covered-call or cash-secured-put fill: fund the settlement leg (`open` → `funded`) to avoid the ITM-unfunded liquidation loss. Spreads and cash puts have no funded step. [Layout](../reference/sandbox.md#on-chain-maker-instructions).
 
 You do **not** settle or liquidate. Publishing the settlement price and finalizing markets is operator-side; settlement is keeper-driven; liquidating ITM-unfunded physical positions is permissionless. Your downside is bounded — fund the settlement leg of a physical position, or a third party liquidates and fronts the taker payout. See [`../reference/protocol-flow.md`](../reference/protocol-flow.md) for the risk model.

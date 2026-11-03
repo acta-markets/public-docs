@@ -198,7 +198,7 @@ Every field is required. `underlying_mints: []` and `quote_mints: []` mean every
 
 ### 7) RfqRequest, CommandAccepted, RfqCreated
 
-`terms` names the product and its strikes. `side` is `sell`; `buy` is rejected with `taker_buy_unsupported`. `quantity` is underlying atoms for every product. Here: 5 SOL, covered call, strike 136.0.
+`terms` names the product and its strikes. `side` is `sell` here; `buy` buys the same terms. `quantity` is underlying atoms for every product. Here: 5 SOL, covered call, strike 136.0.
 
 ```json
 {
@@ -496,8 +496,8 @@ At settlement price `133` the intrinsic value is `7`. The maker receives `350000
       "settlement": {
         "type": "cash",
         "settlement_price": 133000000000,
-        "maker_payoff": 35000000,
-        "taker_return": 15000000
+        "holder_payoff": 35000000,
+        "writer_return": 15000000
       },
       "quantity": 5000000000,
       "price": 1200000000,
@@ -647,7 +647,7 @@ Treat the order as not executed only if every submission you made returned `not_
 }
 ```
 
-`reason` is `expired`, `taker_cancelled`, `filled`, `market_expired` or `ladder_timeout`.
+`reason` is `expired`, `taker_cancelled`, `filled`, `market_expired`, `ladder_timeout` or `no_eligible_makers`. `no_eligible_makers` means no maker could receive the RFQ (none subscribed, or every one skipped for caps or custody), so the server closes it at once instead of at its timeout.
 
 ### Invite gating (closed mainnet only)
 
