@@ -33,14 +33,15 @@ Delegate permission bits:
 
 | Bit | Name | Allows |
 |---|---|---|
-| `1` | `OPEN_TAKER` | Open positions as writer (the vault sells: RFQ as taker), including spreads |
-| `2` | `SIGN_MAKER_QUOTES` | Quote RFQs as holder (the vault buys), including spreads |
-| `4` | `FUND_MAKER` | Fund a physical (covered call or cash-secured put) position the vault holds |
+| `1` | `OPEN_AS_WRITER` | Open positions as writer (the vault sells: RFQ as taker), including spreads |
+| `2` | `SIGN_HOLDER_QUOTES` | Quote sell RFQs as holder (the vault buys), including spreads |
+| `4` | `FUND_HOLDER` | Fund a physical (covered call or cash-secured put) position the vault holds |
 | `8` | `REBALANCE` | Rebalance swaps |
 | `16` | `PROCESS_CAPITAL` | Price equity, process requests, finalize the cycle before the fallback opens |
 | `32` | `SET_DEPOSIT_WINDOW` | Open or close the Idle deposit window |
+| `64` | `SIGN_WRITER_QUOTES` | Quote buy RFQs as writer (a wallet buys what the vault writes), including spreads. The quote signature alone commits vault collateral. |
 
-Governance rotates the delegate only in Idle, and not in Closing, EmergencyUnwind or WithdrawOnly. Governance can disable the delegate at any time. A governance key quotes only if it also holds an active primary-delegate grant with `SIGN_MAKER_QUOTES`.
+Governance rotates the delegate only in Idle, and not in Closing, EmergencyUnwind or WithdrawOnly. Governance can disable the delegate at any time. A governance key quotes only if it also holds an active primary-delegate grant with the matching quote bit.
 
 Vault capabilities (`capabilities` on `/api/v1/vaults/{pda}`) limit what the vault may trade, checked at open:
 
@@ -88,8 +89,10 @@ Only cold can start `EmergencyUnwind`, which is irreversible. It allows deposit 
 
 One WebSocket connection on `/vault` (same host as `/maker` and `/taker`) serves one vault. Auth is `StartVaultAuth { operator, vault_pda }`, a challenge signed by the operator key, then `VaultAuthSuccess { vault_pda, operator, operator_kind, permissions }`, where `operator_kind` is `governance` or `delegate` and `permissions` is a u32 bitmask of the delegate permission bits (TS `VaultDelegatePermission` / `hasVaultPermission`). The TS `ActaWsClient` emits `vaultAuthenticated` for it, not `authenticated`. Every reconnect re-authenticates; there is no `ResumeAuth`. The only subscribable channel is `vaults`, on by default; `VaultProjectionAdvanced` on it means this vault's row changed: reload `/api/v1/vaults/{pda}`, and reload it after every reconnect too, since missed notifications are not replayed. To follow the set of vaults, use a maker or taker session subscribed to `vaults`: it receives `VaultCatalogChanged { vault_pda }` when a vault is created, re-delegated or closed (not when a delegate is disabled). It is a hint that can be lost with a dropped connection, so re-list `GET /api/v1/vaults` on it and after every connect or reconnect.
 
-- **Selling** (vault is writer, `OPEN_TAKER`): send `RfqRequest` with `terms` and `side: "sell"`, then `AcceptQuote`, as a taker. The server returns `SponsoredTxToSign`. The keeper (the deployment's `GlobalConfig.hot_authority`) pays and signs slot 0; the operator signs slot 1. The vault pays the collateral from the matching leg and receives the net premium in its quote leg.
-- **Buying** (vault is holder, `SIGN_MAKER_QUOTES`): answer `RfqBroadcast` with a quote whose `maker_owner` is the vault PDA, signed by the operator key. The quote carries the RFQ's `terms` and `side`. The external taker signs the transaction; the vault pays the gross premium (net premium plus protocol fee) from its quote-mint leg.
+- **Selling** (vault is writer, `OPEN_AS_WRITER`): send `RfqRequest` with `terms` and `side: "sell"`, then `AcceptQuote`, as a taker. The server returns `SponsoredTxToSign`. The keeper (the deployment's `GlobalConfig.hot_authority`) pays and signs slot 0; the operator signs slot 1. The vault pays the collateral from the matching leg and receives the net premium in its quote leg.
+- **Buying** (vault is holder, `SIGN_HOLDER_QUOTES`): answer a `sell` `RfqBroadcast` with a quote whose `maker_owner` is the vault PDA, signed by the operator key. The quote carries the RFQ's `terms` and `side`. The external taker signs the transaction; the vault pays the gross premium (net premium plus protocol fee) from its quote-mint leg.
+- **Writing a wallet's buy** (vault is writer, `SIGN_WRITER_QUOTES`): answer a `buy` `RfqBroadcast` the same way, with an ask. The buyer's wallet signs `OpenPositionForVaultWriter` or `OpenSpreadForVaultWriter` with holder byte `1`; the operator signs only the order id and never the transaction. The vault posts the collateral from its collateral leg and receives the net premium in its quote leg. The wallet holds the option: it may deposit the exercise amount before expiry, and an unfunded buy returns the collateral to the vault at settlement. Acta sets no price floor or band on vault asks.
+- **Which RFQs reach the vault:** both sides arrive on the `vaults` channel, a side only if the delegate holds its quote bit. In Idle the vault receives any expiry; in Active only its cycle expiry, because every open must match the cycle. A buy whose collateral the vault's last observed leg balance cannot cover is not sent; on a sell the premium is checked when the vault quotes. A vault cannot request a buy as taker: `RfqRequest` with `side: "buy"` fails with `taker_buy_unsupported`.
 - **Vault to vault:** a vault can sell to another vault's quote. Writer and holder must be two distinct vaults; the contract rejects a trade of a vault with itself. Each vault is checked for its own permission, capability and `max_open_positions`. Both vaults count the position in their cycle, so both must be in a cycle with that expiry.
 - **Swaps** (`REBALANCE`; `recovery` and `closing` need governance and accept only `direction: "second_to_main"`): `SwapQuote` returns a server-built transaction. The swap runs as 1–4 hops, each a CPI into a program that Acta cold registered as a swap venue: Jupiter v6, plus Exponent's Generic SY and CLMM programs for PT purchases, on mainnet; a mock router on devnet. Rebalance works in `active` before expiry in either direction while the vault has at least one open position, and in `processing_capital` before equity only second-to-main.
 
@@ -209,15 +212,15 @@ A swap whose `minimum_out_amount` is below your `min_output_floor` is rejected e
 | Verify only | `chain::vault::verify_vault_open` / `verify_vault_swap` | `flows.verifyVaultOpen` / `flows.verifyVaultSwap` from `/chain` |
 | Price routes | `PriceRoute::from_account` at `VaultAddresses::{main,second}_price_route` | `fetchVaultPriceRoutes` / `decodePriceRouteAccount` + `findPriceRoutePda` from `/chain` |
 
-Open intents: `Sale` / `"sale"` (vault writes for an external maker), `BetweenVaults` / `"betweenVaults"` (vault writes against another vault's quote), `Fill` / `"fill"` (an external taker writes against the vault's quote). Every intent carries `keeper`: the deployment's `GlobalConfig.hot_authority`, read from chain (Rust `ChainClient::hot_authority()`, TS the `hotAuthority` field of the decoded GlobalConfig). Do not take it from the venue: it pays and signs slot 0. `terms` are the RFQ and quote terms: Rust `VaultSaleTerms::Physical(VaultTradeTerms)` or `VaultSaleTerms::Spread(VaultSpreadTerms)`, TS `VaultTradeTerms` with `kind: "physical"` or `kind: "spread"`. Both carry `side`, which must be `sell`. `maker_quote_signer` is the maker's `quote_signing` key (`GET /api/v1/makers` or its on-chain Maker account).
+Open intents: `Sale` / `"sale"` (vault writes for an external maker), `BetweenVaults` / `"betweenVaults"` (vault writes against another vault's quote), `Fill` / `"fill"` (an external taker writes against the vault's quote), `Buy` / `"buy"` (a wallet buys what the vault writes; the buyer checks this one, the vault never signs it). Every intent carries `keeper`: the deployment's `GlobalConfig.hot_authority`, read from chain (Rust `ChainClient::hot_authority()`, TS the `hotAuthority` field of the decoded GlobalConfig). Do not take it from the venue: it pays and signs slot 0. `terms` are the RFQ and quote terms: Rust `VaultSaleTerms::Physical(VaultTradeTerms)` or `VaultSaleTerms::Spread(VaultSpreadTerms)`, TS `VaultTradeTerms` with `kind: "physical"` or `kind: "spread"`. Both carry `side`: `buy` for the `Buy` intent, `sell` otherwise. `maker_quote_signer` is the maker's `quote_signing` key (`GET /api/v1/makers` or its on-chain Maker account).
 
 | Product | Rust terms | Instruction rebuilt |
 |---|---|---|
-| Covered call, cash-secured put | `VaultSaleTerms::Physical` | `OpenPositionForVaultAsTaker` / `AsMaker` / `OpenPositionBetweenVaults` |
-| Call spread, put spread | `VaultSaleTerms::Spread` with `kind: SpreadType::CallSpread` / `PutSpread` | `OpenSpreadForVaultAsTaker` (78) / `AsMaker` (79) / `OpenSpreadBetweenVaults` (80) |
+| Covered call, cash-secured put | `VaultSaleTerms::Physical` | `OpenPositionForVaultWriter` (41) / `OpenPositionForVaultHolder` (42) / `OpenPositionBetweenVaults` (61) |
+| Call spread, put spread | `VaultSaleTerms::Spread` with `kind: SpreadType::CallSpread` / `PutSpread` | `OpenSpreadForVaultWriter` (78) / `OpenSpreadForVaultHolder` (79) / `OpenSpreadBetweenVaults` (80) |
 | Cash put | `VaultSaleTerms::Spread`, `PutSpread`, `lower_strike: 0`, `upper_strike: K` | same as put spread |
 
-`VaultManager::open_spread_as_taker` (vault sells), `open_spread_as_maker` (vault buys) and `open_spread_with_vault_holder` (vault sells to another vault) build the instructions. `VaultSpreadTerms` is validated before building: ordered strikes, a positive lower strike for a call spread, `0 < price < width`, and `valid_until` no later than the market expiry.
+`VaultManager::open_spread_as_writer` (vault sells to a maker, holder byte `0`), `open_spread_for_wallet_holder` (a wallet buys from the vault, holder byte `1`), `open_spread_as_holder` (vault buys) and `open_spread_with_vault_holder` (vault sells to another vault) build the instructions; the physical builders follow the same names. `VaultSpreadTerms` is validated before building: ordered strikes, a positive lower strike for a call spread, `0 < price < width`, and `valid_until` no later than the market expiry.
 
 Rust, selling:
 
@@ -296,20 +299,20 @@ The accounts are `venue PDA, program, source, destination`, followed by the hop'
 
 ## Funding bought options
 
-This section applies to covered calls and cash-secured puts only. A vault that holds a call spread, put spread or cash put has nothing to fund: the position is collateralized in full by the writer and the vault receives its payoff at settlement. `VaultFundMakerPosition` on such a position fails.
+This section applies to covered calls and cash-secured puts only. A vault that holds a call spread, put spread or cash put has nothing to fund: the position is collateralized in full by the writer and the vault receives its payoff at settlement. `FundPositionForVaultHolder` on such a position fails.
 
-When the vault holds a physical option, the option is not funded at open. To exercise an ITM option, the vault must fund it (`FUND_MAKER`): it pays strike × quantity in quote for a call, or the quantity in underlying for a put, from the matching leg, and receives the collateral at settlement. **Fund before expiry.** After the market is finalized, anyone can liquidate an unfunded ITM position. The liquidator pays the writer and takes the collateral, and the vault keeps nothing: it loses the intrinsic value. The contract sets no funding deadline. Funding is accepted after finalization until a settlement or liquidation lands, but then you are racing liquidators. Keep enough of the funding mint for every physical holder position you may need to exercise.
+When the vault holds a physical option, the option is not funded at open. To exercise an ITM option, the vault must fund it (`FUND_HOLDER`): it pays strike × quantity in quote for a call, or the quantity in underlying for a put, from the matching leg, and receives the collateral at settlement. **Fund before expiry.** After the market is finalized, anyone can liquidate an unfunded ITM position. The liquidator pays the writer and takes the collateral, and the vault keeps nothing: it loses the intrinsic value. The contract sets no funding deadline. Funding is accepted after finalization until a settlement or liquidation lands, but then you are racing liquidators. Keep enough of the funding mint for every physical holder position you may need to exercise.
 
 `ChainClient::unfunded_positions(vault)` returns every `open` position whose maker is the vault. That list includes spreads and cash puts, which stay `open` until settlement and cannot be funded. Skip entries whose `terms` is a spread or cash put before building a fund instruction.
 
-Builders: TS `planner.trading.fundMakerPosition(position)`; Rust `VaultManager::fund_maker_position` in `acta-maker-sdk` (feature `chain`). The builder picks the funding mint from the market side and the vault ATA by that mint. The actor signs (`FUND_MAKER` or governance) and pays; `VaultFundMakerPosition` takes no arguments and moves the amount the position needs.
+Builders: TS `planner.trading.fundHolderPosition(position)`; Rust `VaultManager::fund_holder_position` in `acta-maker-sdk` (feature `chain`). The builder picks the funding mint from the market side and the vault ATA by that mint. The actor signs (`FUND_HOLDER` or governance) and pays; `FundPositionForVaultHolder` takes no arguments and moves the amount the position needs.
 
 ```rust
 use acta_maker_sdk::chain::vault::{VaultAccount, VaultManager, VaultPositionRef};
 use solana_sdk::transaction::Transaction;
 
 let vault = VaultManager::from_vault(program_id, operator.pubkey(), &VaultAccount::parse(&vault_data)?)?;
-let fund = vault.fund_maker_position(&VaultPositionRef {
+let fund = vault.fund_holder_position(&VaultPositionRef {
     underlying_mint, quote_mint, expiry_ts, is_put,
     order_id, // the held position's order id
 })?;

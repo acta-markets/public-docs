@@ -12,10 +12,10 @@ For JSON-layer integrations, see [`maker-quickstart.md`](maker-quickstart.md). M
 
 ```toml
 [dependencies]
-acta-maker-sdk = { version = "0.7.1", features = ["ws-client"] }
+acta-maker-sdk = { version = "0.7.2", features = ["ws-client"] }
 ```
 
-Version 0.7.1 speaks WS protocol `1.0.0` (`WS_PROTOCOL_VERSION`). The wire is closed: every field is present, absent facts are explicit `null`, and decoding rejects unknown message types, error codes, enum values and missing fields. This guide covers ordinary makers; vault operators use the `vault` feature, see the [vault operator guide](vault-operator-guide.md).
+Version 0.7.2 speaks WS protocol `1.0.0` (`WS_PROTOCOL_VERSION`). The wire is closed: every field is present, absent facts are explicit `null`, and decoding rejects unknown message types, error codes, enum values and missing fields. This guide covers ordinary makers; vault operators use the `vault` feature, see the [vault operator guide](vault-operator-guide.md).
 
 Quote-only integrations need `ws-client`. `chain` adds Solana instruction builders (including `chain::vault`); `chain-rpc` adds on-chain reads; `http` adds the read-only HTTP client; `vault` adds the vault operator client and implies `ws-client` and `chain`.
 
@@ -197,7 +197,10 @@ is separate from `Rfqs`, so a maker that only sells never receives buys.
 - **Settlement.** The holder deposits strictly before expiry to exercise a physical
   buy. An unfunded in-the-money buy returns all collateral to you and settles as
   `not_exercised`; spreads and cash puts settle in cash with no deposit. `PositionInfo`
-  names the roles `writer` (you) and `holder` (the buyer).
+  names the roles `writer` (you) and `holder` (the buyer). `chain::vault::build_settle_position_ix`
+  and `settle_position_sequence` settle a buy you wrote.
+- **Competition.** Vaults whose delegate holds `SIGN_WRITER_QUOTES` quote the same buys
+  and write from their collateral leg.
 
 See [`examples/taker_buy_quote.rs`](https://github.com/acta-markets/rust-maker-sdk/blob/main/examples/taker_buy_quote.rs).
 

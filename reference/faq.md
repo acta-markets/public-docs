@@ -25,7 +25,7 @@ No. Each maker pubkey gets one quote WebSocket on `/maker`. A second replaces th
 | `invalid_strike` | The strike is not in the RFQ's `order_options` set. |
 | `order_id_mismatch` | The submitted `order_id` does not equal the SHA-256 of the order preimage (182 bytes for covered calls and cash-secured puts, 190 bytes for spreads and cash puts). See [Troubleshooting](#troubleshooting). |
 | `product_not_allowed` | The pair policy is absent or does not allow the product. |
-| `taker_buy_unsupported` | `side` is `buy` on a vault session; vaults only sell. |
+| `taker_buy_unsupported` | `RfqRequest` with `side: "buy"` from a vault session. A vault writes buys only by quoting them. |
 | `spread_invalid_strikes`, `spread_tick_violation`, `spread_premium_invalid` | The spread strikes, strike tick or gross price are invalid. See the [error codes](ws-common.md#ws-error-codes). |
 | `quote_identity_mismatch` | The quote `terms` or `side` differ from the RFQ. |
 | `quote_expiry_too_short` | `valid_until < now + min_quote_validity_seconds` (`GET /api/v1/venue`). |

@@ -300,7 +300,7 @@ Every RFQ, quote, position and trade carries two required fields: `terms` and `s
 ```
 
 - Strikes are integers scaled by 1e9 per underlying token, independent of mint decimals. `strike_tick` from `GetTokens` is on the same scale.
-- `side` describes the taker: `sell` or `buy`. To see and quote `buy` RFQs, subscribe to `taker_buy_rfqs`; without it the RFQ is not delivered and a quote is rejected with `unauthorized`. A `buy` is written from Maker PDA custody: the server refuses a quote when custody is below the collateral, which is the width times quantity for a spread or cash put. Custody is read, not reserved, so overlapping quotes can fail at fill.
+- `side` describes the taker: `sell` or `buy`. To see and quote `buy` RFQs, subscribe to `taker_buy_rfqs`; without it the RFQ is not delivered and a quote is rejected with `unauthorized`. A `buy` is written from Maker PDA custody (a vault writes from its collateral leg instead): the server refuses a quote when custody is below the collateral, which is the width times quantity for a spread or cash put. Custody is read, not reserved, so overlapping quotes can fail at fill.
 - `cash_put` is economically a put spread with lower strike 0 and upper strike K. It settles in cash and executes on chain with those legs. It is signed with the put-spread product byte, lower strike `0` and upper strike K.
 - Public `call_spread` and `put_spread` terms require `0 < lower_strike < upper_strike`. Both strikes are chosen by the taker. For puts the short strike is the upper strike.
 - A put with a zero lower leg is a `cash_put`. A `put_spread` with `lower_strike` `0` is rejected with `spread_invalid_strikes`. On chain a position with legs `(0, K)` reads back as `cash_put`.
@@ -669,7 +669,6 @@ The value under `cap_exceeded` is a `CapError`: a bare string for
 | `spread_invalid_strikes` | Zero, reversed or otherwise invalid spread strikes |
 | `spread_tick_violation` | A strike is not a multiple of the underlying mint's strike tick |
 | `spread_premium_invalid` | `price >= width`, zero gross premium, `gross >= C`, or the amounts are not representable |
-| `taker_buy_unsupported` | `side` is `buy` |
 | `quote_identity_mismatch` | Product, `side` or spread `terms` differ from the RFQ |
 | `market_expired` | `valid_until` is after the market's expiry, or the market has expired |
 | `quote_expiry_too_short` | `valid_until` below `now + min_quote_validity_seconds` |
@@ -2120,7 +2119,7 @@ Quote-specific validation failures are sent as `QuoteRejected` with a typed `rea
 | `invalid_products` | `Subscribe.products` is empty |
 | `invalid_limit` | A page `limit` is outside the range of its request |
 | `product_not_allowed` | The pair's policy does not allow the RFQ's product |
-| `taker_buy_unsupported` | `side` is `buy` |
+| `taker_buy_unsupported` | `RfqRequest` with `side: "buy"` on `/vault` |
 | `spread_invalid_strikes` | Invalid spread strikes |
 | `spread_tick_violation` | A strike is off the underlying mint's strike tick |
 | `spread_premium_invalid` | Price or gross premium outside `0 < price < width`, `0 < gross < C` |
@@ -2197,8 +2196,8 @@ describing what went wrong.
 
 | Value | Meaning |
 |-------|---------|
-| `sell` | The taker is the option writer. The only executable side. |
-| `buy` | Rejected with `taker_buy_unsupported`. |
+| `sell` | The taker writes the option; the maker or vault holds it. |
+| `buy` | The taker buys; the maker or vault writes it. |
 
 ### PositionStatus (in `GetMakerPositions.status`)
 
@@ -2295,7 +2294,7 @@ After `AuthSuccess`, the server sends `Snapshot` before any broadcast events. Yo
 
 ### `is_taker_buy`
 
-In the order-id preimage, `is_taker_buy` is `0` for side `sell`. Side `buy` sets it to `1` and is rejected with `taker_buy_unsupported`.
+In the order-id preimage, `is_taker_buy` is `0` for side `sell` and `1` for side `buy`.
 
 ### `gross_price` in preimage
 

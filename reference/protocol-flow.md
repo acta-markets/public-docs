@@ -16,7 +16,7 @@ API payloads are in [Maker API](maker-api.md), [Taker API](taker-api.md), and [W
 | **Oracle setter and settlement attestor** | Compute the expiry fixing and publish it to the oracle accounts. | Protocol-operated. See [Settlement fixing](#settlement-fixing). |
 | **Liquidator** | Closes ITM physical positions the maker never funded; fronts the settlement to the taker. | Permissionless. Anyone can run it. |
 
-Every RFQ, quote and position carries `side`, the taker's direction. On `sell` the taker writes and the maker buys. On `buy` a wallet buys from a maker, who writes from Maker PDA custody; the `is_taker_buy` byte in the order-id preimage is `1`. Vault sessions stay `sell` only and a `buy` from one fails with `taker_buy_unsupported`.
+Every RFQ, quote and position carries `side`, the taker's direction. On `sell` the taker writes and the maker buys. On `buy` a wallet buys from a maker, who writes from Maker PDA custody, or from a vault, which writes from its collateral leg; the `is_taker_buy` byte in the order-id preimage is `1`. A vault quotes buys but cannot request one: `RfqRequest` with `side: "buy"` from a vault session fails with `taker_buy_unsupported`.
 
 On a buy the buyer pays the gross premium, and a physical option needs a deposit strictly before `expiry_ts` to exercise. With no deposit all collateral returns to the writer, also when in the money, and the position reads `not_exercised`. A bought spread or cash put takes no deposit: the maker locks the width times quantity, the buyer can lose at most the premium and receives at most the width.
 

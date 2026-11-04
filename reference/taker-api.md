@@ -271,7 +271,7 @@ The server answers with `SubscribeAck { request_id, subscribed }`, where `subscr
 
 A cash put is economically a put spread with lower strike 0 and upper strike `strike`. It executes on chain with those legs and keeps the wire name `cash_put`. Its width is `strike`.
 
-`side` is the taker's side: `"sell"` writes the product, `"buy"` buys it. A vault session may only sell; `"buy"` from one fails with `taker_buy_unsupported`.
+`side` is the taker's side: `"sell"` writes the product, `"buy"` buys it. A vault session cannot request a buy: `"buy"` from one fails with `taker_buy_unsupported`. A buy may fill from a maker or from a vault quoting it.
 
 Admission rules for `RfqRequest`:
 

@@ -76,7 +76,7 @@ Every RFQ, quote, position and trade carries `terms` and `side`.
 | `call_spread`, `put_spread` | `lower_strike`, `upper_strike` | cash, in the quote mint |
 | `cash_put` | `strike` | cash, in the quote mint |
 
-- `side` is `sell` or `buy`. `buy` RFQs arrive only after subscribing to `taker_buy_rfqs`, and the collateral comes from Maker PDA custody.
+- `side` is `sell` or `buy`. `buy` RFQs arrive only after subscribing to `taker_buy_rfqs`, and the collateral comes from Maker PDA custody. Vaults with `SIGN_WRITER_QUOTES` quote the same buys.
 - `cash_put` executes on chain as a put spread with legs `(0, K)`.
 - Strikes are 1e9-scaled. Spread strikes and `cash_put` strikes must be multiples of the underlying mint's `strike_tick` from `GetTokens`.
 - A market's `products` lists only the pair's products on that market's side. Call markets list `covered_call` and `call_spread`. Put markets list `cash_secured_put`, `put_spread` and `cash_put`.

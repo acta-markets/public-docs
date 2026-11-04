@@ -1,5 +1,15 @@
 # Protocol changelog
 
+## 2026-11-04
+
+Program upgrade; SDKs `@acta-markets/ts-sdk` 0.4.2 and `acta-maker-sdk` 0.7.2.
+
+- Vaults write what wallets buy. A vault session receives `buy` RFQs on the `vaults` channel when its delegate holds the new permission `SIGN_WRITER_QUOTES` (`64`), and quotes an ask. The buyer signs `OpenPositionForVaultWriter` (41) or `OpenSpreadForVaultWriter` (78) with holder byte `1` (data length 75 or 83); the vault's delegate signs only the order id. A holder byte `0` is the existing sale to a maker. No price floor applies.
+- A vault receives RFQs for any expiry while Idle and only its cycle expiry while Active, on both sides. A buy the vault's last observed collateral leg cannot cover is not sent.
+- Names follow position roles; opcodes and bytes are unchanged: `OpenPositionForVaultHolder` (42), `OpenSpreadForVaultHolder` (79), `FundPositionForVaultHolder` (43); delegate bits `OPEN_AS_WRITER` (1), `SIGN_HOLDER_QUOTES` (2), `FUND_HOLDER` (4).
+- Program events are version 2. `PositionOpened` (kind 11) is emitted once per open on every path, with writer, holder, `flags` (bit 0 vault writer, 1 vault holder, 2 taker buy), terms, gross and net premium and collateral; `VaultCycleOpened` (kind 48) once per vault side. They replace `OpenPosition`, `OpenSpread`, `OpenTakerBuy`, `OpenTakerBuySpread`, `VaultPositionOpened` and `VaultSpreadOpened`. `SettleSpread` is kind 79, `VaultSpreadClosed` 80, `TakerBuyFunded` 81, `TakerBuyNotExercised` 82. The SDKs do not decode version 1 events.
+- Program error `NotPositionHolder` (1111): a deposit signer that is not the position holder.
+
 ## 2026-11-02
 
 - Every list request takes required `limit` (at most 200) and a tagged `cursor` (`start`, or `after` with `id`). Every list response has a required nullable `next_cursor`. This replaces timestamp cursors, `has_more`, nested quote-scope paging and dual MM cursors. A larger limit is rejected with `invalid_limit`, a bad cursor with `invalid_cursor`.

@@ -10,7 +10,7 @@ Wire messages, errors and enums are in [`../reference/taker-api.md`](../referenc
 npm install @acta-markets/ts-sdk
 ```
 
-This guide covers version 0.4.1. It speaks WS protocol `1.0.0` and targets the program deployed to devnet and mainnet; both use the same program ID, and `GET /api/v1/venue` returns the authoritative `program_id`. Refer to opcodes and errors by name through the generated constants exported from `@acta-markets/ts-sdk` (`*_DISCRIMINATOR` for opcodes, `ACTA_CONTRACT_ERROR__*` for errors), not by number. The package README and changelog cover the vault builders.
+This guide covers version 0.4.2. It speaks WS protocol `1.0.0` and targets the program deployed to devnet and mainnet; both use the same program ID, and `GET /api/v1/venue` returns the authoritative `program_id`. Refer to opcodes and errors by name through the generated constants exported from `@acta-markets/ts-sdk` (`*_DISCRIMINATOR` for opcodes, `ACTA_CONTRACT_ERROR__*` for errors), not by number. The package README and changelog cover the vault builders.
 
 The wire is closed. The client does not dispatch a frame that lacks a required field or carries an unknown enum value. A message whose type the SDK does not know is reported on the `unknownMessage` event. Facts that are absent arrive as explicit `null`, typed `T | null`. State-dependent shapes are tagged unions. Wire addresses are validated when a frame is decoded. `server_time_unix_ms` and `sent_at_unix_ms` use milliseconds, and `expires_at` uses Unix seconds.
 
@@ -278,7 +278,7 @@ A mismatch throws `VaultIntentError` and nothing is signed.
 Inputs the helper needs:
 
 - `keeper`: the canonical `GlobalConfig.hotAuthority` address. Read it once from chain.
-- `makerVault`: `await fetchMakerVault(rpc, quote.maker)`, which is a decoded `Vault` when the quote's maker is a vault PDA and `null` for an ordinary maker. A vault maker needs the account; without it the fill is verified as an ordinary maker's.
+- `makerVault`: `await fetchMakerVault(rpc, quote.maker)`, which is a decoded `Vault` when the quote's maker is a vault PDA and `null` for an ordinary maker. A vault maker needs the account; without it the fill is verified as an ordinary maker's. On a buy from a vault the helper checks `OpenPositionForVaultWriter` (or `OpenSpreadForVaultWriter`) with holder byte `1`: your wallet signs and pays from its quote ATA, and the vault delegate's Ed25519 check covers only the order id.
 - `rfq`: a `TakerFillRfq` built from the RFQ (below). Both variants need `rfq_id`, `market` (the descriptor's `market`), `terms`, `side`, `quantity` and `order_options`. A spread or cash put also needs `underlying_decimals` and `quote_decimals` from the descriptor, and its `order_options` must hold exactly `terms`.
 - `tables`: address lookup tables, `{}` for sponsored fills.
 
