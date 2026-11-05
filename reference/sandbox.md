@@ -129,7 +129,7 @@ Browsers obtain current reference prices from the selected backend through [`Get
 
 The instruction data starts with a one-byte discriminant. Integers are little-endian. The full IDL ships in `@acta-markets/ts-sdk` as `ACTA_IDL`.
 
-Install `@acta-markets/ts-sdk@0.4.2` and import the IDL from the package root:
+Install `@acta-markets/ts-sdk@0.4.3` and import the IDL from the package root:
 
 ```typescript
 import { ACTA_IDL } from "@acta-markets/ts-sdk";

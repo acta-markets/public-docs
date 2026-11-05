@@ -1,5 +1,13 @@
 # Protocol changelog
 
+## 2026-11-05
+
+SDKs `@acta-markets/ts-sdk` 0.4.3 and `acta-maker-sdk` 0.7.3; the program is unchanged.
+
+- A wallet can fund a physical option it bought from a vault (`flags` vault writer + taker buy). The SDK deposit builders refused any vault flag before; only a vault holder is refused, as on chain. Without the deposit such a buy settled as `not_exercised`.
+- A funded buy from a vault can settle with a SOL unwrap to the wallet holder. The ts-sdk refused it before; the contract SDK adds `flows::build_settle_position_with_sol_unwrap`, which places the owner after the vault accounts as the program reads it.
+- The RFQ close reason `ladder_timeout` is removed. The server never sent it; both SDKs now reject it like any unknown reason.
+
 ## 2026-11-04
 
 Program upgrade; SDKs `@acta-markets/ts-sdk` 0.4.2 and `acta-maker-sdk` 0.7.2.
