@@ -647,7 +647,7 @@ Treat the order as not executed only if every submission you made returned `not_
 }
 ```
 
-`reason` is `expired`, `taker_cancelled`, `filled`, `market_expired`, `ladder_timeout` or `no_eligible_makers`. `no_eligible_makers` means no maker could receive the RFQ (none subscribed, or every one skipped for caps or custody), so the server closes it at once instead of at its timeout.
+`reason` is `expired`, `taker_cancelled`, `filled`, `market_expired` or `no_eligible_makers`. `no_eligible_makers` means no maker could receive the RFQ (none subscribed, or every one skipped for caps or custody), so the server closes it at once instead of at its timeout.
 
 ### Invite gating (closed mainnet only)
 

@@ -873,7 +873,7 @@ Always sent when a quote expires.
 }
 ```
 
-`reason` values: `expired`, `taker_cancelled`, `filled`, `market_expired`, `ladder_timeout`.
+`reason` values: `expired`, `taker_cancelled`, `filled`, `market_expired`.
 
 `your_quote` is this session's quote on the RFQ, or `null` when it has none. `your_quote.status` values: `expired`, `outbid`, `cancelled`, `filled`. A session with several quotes gets one of them; a session that won gets the winning quote.
 
@@ -2145,7 +2145,6 @@ Operational handling recommendations:
 | `taker_cancelled` | Taker cancelled the RFQ |
 | `filled` | RFQ was filled on-chain |
 | `market_expired` | The underlying market expired |
-| `ladder_timeout` | Ladder execution timeout |
 | `no_eligible_makers` | No maker could receive the RFQ; sent to the taker only |
 
 ### QuoteFinalStatus (in `RfqClosed.your_quote.status`)

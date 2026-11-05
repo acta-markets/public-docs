@@ -392,7 +392,7 @@ ws.on("orderFailed", (orderIdHex, reason, orderVersion) => {});
 
 ws.on("rfqClosed", (data) => {
   // Terminal: clean up RFQ state.
-  // data.reason: "expired" | "taker_cancelled" | "filled" | "market_expired" | "ladder_timeout"
+  // data.reason: "expired" | "taker_cancelled" | "filled" | "market_expired" | "no_eligible_makers"
   // data.your_quote and data.winner are null when they do not apply.
 });
 ```
