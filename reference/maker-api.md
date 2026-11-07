@@ -217,7 +217,7 @@ The two mint lists may contain at most 1024 entries in total after each list is 
 - `Snapshot`, `ReferenceChanged`
 - `RfqBroadcast`, `RfqSkipped`
 - `QuoteRefreshRequested`, `QuoteAcknowledged`, `QuoteBestStatus`, `QuoteOutbid`, `QuoteSelected`
-- `QuoteRejected`, `QuoteFilled`, `QuoteCancelled`, `QuoteExpired`, `RfqAvailableAgain`, `RfqClosed`
+- `QuoteRejected`, `QuoteFilled`, `QuoteCancelled`, `QuoteExpired`, `RfqLocked`, `RfqAvailableAgain`, `RfqClosed`
 - `CancelQuoteAck`, `CancelAllQuotesAck`, `BatchQuotesAck`
 - `IndicativePricesRequest`
 - `SubscriptionUpdated`
@@ -259,7 +259,8 @@ the session that sent the quote, or the maker owner's `/maker` and ready
 |---|---|---|---|
 | `RfqBroadcast` | `rfqs` channel, within the product and mint scope | no | sessions with `sign_maker_quotes`, no subscription |
 | `RfqSkipped` | `rfqs` channel, makers the caps prefilter skipped | no | sessions with `sign_maker_quotes` the prefilter skipped |
-| `IndicativePricesRequest` | `rfqs` channel | no | no |
+| `IndicativePricesRequest` | `side: "sell"` on the `rfqs` channel, `side: "buy"` on `taker_buy_rfqs` | no | no |
+| `RfqLocked` | every session that quoted the RFQ except the accepted one | no | every session that quoted the RFQ except the accepted one |
 | `QuoteAcknowledged`, `QuoteRejected`, `QuoteBestStatus`, `QuoteOutbid`, `QuoteSelected`, `QuoteRefreshRequested`, `QuoteExpired`, `QuoteCancelled` | the session that sent the quote | no | the session that sent the quote |
 | `QuoteFilled` | the session that sent the winning quote | no | the session that sent the winning quote |
 | `RfqClosed`, `RfqAvailableAgain` | every session that quoted the RFQ | no | every session that quoted the RFQ, and the taker session |
@@ -882,6 +883,21 @@ Always sent when a quote expires.
 - On `filled`, every recipient gets `winner`, including `winner.tx_signature`. The winning session gets `your_quote.status` `filled`, a session with another live quote gets `outbid`, and a session whose quotes are already gone gets `null`.
 - On any other reason, a session with a live quote gets it with status `expired` (reason `expired`) or `cancelled`. A session whose quotes are already gone gets `null`.
 
+### RfqLocked (server -> maker)
+
+```json
+{
+  "type": "RfqLocked",
+  "data": {
+    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
+    "rfq_version": 2,
+    "locked_at": 1710000030
+  }
+}
+```
+
+Sent to every other maker on the RFQ when the taker accepts a quote; the accepted maker gets `QuoteSelected` instead. Your quote stays live as a backup and the RFQ takes no new quotes until `RfqAvailableAgain` or `RfqClosed`.
+
 ### RfqAvailableAgain (server -> maker)
 
 ```json
@@ -1391,7 +1407,8 @@ Uses [common paging](ws-common.md#paging).
         "price": 5000000000,
         "total_premium": 4975000,
         "created_at": 1710000042,
-        "expiry_ts": 1710600000
+        "expiry_ts": 1710600000,
+        "underlying_price": { "type": "available", "price": 151000000000, "published_at": 1710000040 }
       },
       {
         "revision": {
@@ -1424,7 +1441,8 @@ Uses [common paging](ws-common.md#paging).
         "price": 5000000000,
         "total_premium": 4980000,
         "created_at": 1709900000,
-        "expiry_ts": 1710000000
+        "expiry_ts": 1710000000,
+        "underlying_price": { "type": "unavailable" }
       }
     ],
     "unrenderable": [],
@@ -1443,6 +1461,7 @@ Field semantics:
 - `total_premium` is the net premium in quote atoms after the protocol fee. It is the authoritative money figure for the position. The wire `price` alone does not give it.
 - `price` is the gross premium per 1 underlying unit (1e9 scale).
 - `underlying_symbol` / `quote_symbol` / `underlying_decimals` / `quote_decimals` are pre-resolved token metadata so the maker does not need a separate `GetTokens` lookup.
+- `underlying_price`: `{ type: "available", price, published_at }` or `{ type: "unavailable" }`, the trusted oracle price of the underlying in the quote token (`1e9`) that the server prices RFQs with. Assets with trading sessions keep their last price and its timestamp while closed.
 - `unrenderable` lists stored positions whose market projection is incomplete (a position waiting for its seal is `terminal_pending`, not unrenderable): `{ pda, market, created_at, missing }`, where `missing` names the fields the projection could not supply. They count toward the page limit. Retrying does not repair them.
 - all amount fields are unsigned (`u64`); timestamps remain Unix seconds.
 
@@ -1901,7 +1920,8 @@ the last representable value after overflow; prefer the USD object.
       "price": 5000000000,
       "total_premium": 4975000,
       "created_at": 1710000042,
-      "expiry_ts": 1710600000
+      "expiry_ts": 1710600000,
+      "underlying_price": { "type": "available", "price": 151000000000, "published_at": 1710000040 }
     },
     "update_type": "funded"
   }
@@ -2052,7 +2072,7 @@ An empty Live set, a timeout and `unknown` do not prove that an order did not ex
 
 ## Indicative pricing workflow
 
-Indicative pricing covers covered calls and cash-secured puts only.
+Indicative pricing covers covered calls and cash-secured puts only. Each request names one taker `side`: `sell` asks what you pay a taker who writes the option, `buy` what you charge a taker who buys it. Buy requests reach only sessions subscribed to `taker_buy_rfqs`. Echo `side` in the response; a response without it does not parse, and repeated parse errors close the connection. The server publishes the median of maker prices per strike.
 
 ### Request from taker-side cache (server -> maker)
 
@@ -2073,6 +2093,7 @@ Indicative pricing covers covered calls and cash-secured puts only.
       "settlement_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
     },
     "position_type": "covered_call",
+    "side": "sell",
     "strikes": [150000000000, 160000000000]
   }
 }
@@ -2087,6 +2108,7 @@ Indicative pricing covers covered calls and cash-secured puts only.
     "request_id": "a1b2c3d4-0000-4000-8000-000000000021",
     "market": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
     "position_type": "covered_call",
+    "side": "sell",
     "prices": [{ "strike": 150000000000, "price": 4200000000 }]
   }
 }
@@ -2146,6 +2168,7 @@ Operational handling recommendations:
 | `filled` | RFQ was filled on-chain |
 | `market_expired` | The underlying market expired |
 | `no_eligible_makers` | No maker could receive the RFQ; sent to the taker only |
+| `server_shutdown` | A graceful server stop closed the RFQ before its order reached the keeper; your quote reports `cancelled` |
 
 ### QuoteFinalStatus (in `RfqClosed.your_quote.status`)
 

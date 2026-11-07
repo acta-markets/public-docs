@@ -597,7 +597,7 @@ The keeper retries retryable submission failures within a five-attempt budget. E
 }
 ```
 
-`reason` is `expired`, `taker_cancelled`, `filled`, `market_expired` or `no_eligible_makers`. `no_eligible_makers` means no maker could receive the RFQ (none subscribed, or every one skipped for caps or custody), so the server closes it at once instead of at its timeout. `your_quote` is `null` or `{ order_id, status, price }`. `winner` is `null` or `{ maker, price, tx_signature }`, and `tx_signature` is itself `null` when the signature is not known.
+`reason` is `expired`, `taker_cancelled`, `filled`, `market_expired`, `no_eligible_makers` or `server_shutdown`. `no_eligible_makers` means no maker could receive the RFQ (none subscribed, or every one skipped for caps or custody), so the server closes it at once instead of at its timeout. `server_shutdown` means a graceful server stop closed the RFQ before its order reached the keeper; open a new RFQ after reconnecting. `your_quote` is `null` or `{ order_id, status, price }`. `winner` is `null` or `{ maker, price, tx_signature }`, and `tx_signature` is itself `null` when the signature is not known.
 
 ### Terminal semantics: OrderConfirmed vs RfqClosed
 
@@ -709,7 +709,8 @@ Open put spread:
         "price": 1200000000,
         "total_premium": 5970000,
         "created_at": 1710000012,
-        "expiry_ts": 1710600000
+        "expiry_ts": 1710600000,
+        "underlying_price": { "type": "available", "price": 136000000000, "published_at": 1710300000 }
       }
     ],
     "next_cursor": null
@@ -741,7 +742,8 @@ Settled cash position (settlement price `133`), the same row after settlement:
   "price": 1200000000,
   "total_premium": 5970000,
   "created_at": 1710000012,
-  "expiry_ts": 1710600000
+  "expiry_ts": 1710600000,
+  "underlying_price": { "type": "unavailable" }
 }
 ```
 
@@ -753,6 +755,7 @@ Field semantics:
 - `price`: gross price per underlying unit, `1e9`-scaled.
 - `total_premium`: net premium in quote atoms after the protocol fee. It is the authoritative money figure.
 - `underlying_decimals`, `quote_decimals`: token decimals for converting `quantity` and `total_premium`.
+- `underlying_price`: `{ type: "available", price, published_at }` or `{ type: "unavailable" }`. `price` is the trusted oracle price of the underlying in the quote token, `1e9`-scaled, the one the server prices RFQs with; `published_at` is its publish time in unix seconds. Assets with trading sessions (TSLA, XAU) keep their last price and its old timestamp while the market is closed. `unavailable` means the server has no trusted price, for example after the market was finalized. With `terms` and `side` it gives the position's value if it settled now.
 - `revision`: the last applied lifecycle event in chain order. See below.
 - All amounts are unsigned `u64`.
 
@@ -785,7 +788,8 @@ The server pushes `PositionUpdated` to the session of the position's taker (and 
       "price": 1200000000,
       "total_premium": 5970000,
       "created_at": 1710000012,
-      "expiry_ts": 1710600000
+      "expiry_ts": 1710600000,
+      "underlying_price": { "type": "available", "price": 151000000000, "published_at": 1710000010 }
     },
     "update_type": "settled"
   }
@@ -952,6 +956,7 @@ Taker discovery requests. `request_id` is required on each.
     "request_id": "uuid",
     "market": "MarketPdaBase58",
     "position_type": "covered_call",
+    "side": "sell",
     "limit": 200,
     "cursor": {
       "type": "start"
@@ -1327,6 +1332,7 @@ All four arrays are always present and may be empty. Amounts are `u64`: underlyi
         "indicatives": [
           {
             "position_type": "covered_call",
+            "side": "sell",
             "updated_at": 1710000000,
             "is_stale": false,
             "strikes": [
@@ -1344,17 +1350,17 @@ All four arrays are always present and may be empty. Amounts are `u64`: underlyi
 }
 ```
 
-`reference_price` is the backend-validated underlying/quote spot, `1e9`-scaled. `best_price` is `Price | null`: a non-binding indicative display premium per underlying unit, `1e9`-scaled, with the quote-mint fee adjustment applied when fee configuration is available. It is an estimate, not the exact on-chain net premium. Size-rule quantities are underlying atoms. Examples illustrate units, not current prices or limits.
+`reference_price` is the backend-validated underlying/quote spot, `1e9`-scaled. `indicatives` has one entry per `position_type` and taker `side` with data. `best_price` is `Price | null`: the median of the makers' non-binding indicative premiums per underlying unit, `1e9`-scaled, as the taker sees it. For `side: "sell"` it is net of the protocol fee (what the writer receives); for `side: "buy"` it is the gross price the buyer pays. It is an estimate, not an executable quote. Size-rule quantities are underlying atoms. Examples illustrate units, not current prices or limits.
 
 The response does not echo `underlying_mint`; keep it with the request ID. Use spot and premiums from the same response for an APR estimate, and suppress the estimate when the indicative is stale or missing. `updated_at` and `is_stale` describe the maker indicative premiums, not the oracle spot. The response has no oracle publish timestamp, confidence or age.
 
 The backend owns Pyth/Hermes access and price validation. A browser does not need a Pyth key. This endpoint supplies a current snapshot, not historical chart data or a binding execution quote.
 
-**Failure behavior:** missing size rules, incomplete metadata or unavailable oracle prices can return an uncorrelated `Error` (including `OraclePriceNotReady`). When there are no active markets for the underlying, the handler sends no response. Apply a request deadline, show unavailable data, and discard stale responses by request ID. Do not read silence as an empty snapshot. This endpoint is an exception to correlated query-error handling.
+**Failure behavior:** missing size rules, incomplete metadata or unavailable oracle prices return `RequestError` with the request's `request_id` (for example `OraclePriceNotReady`). An underlying without active markets returns `RequestError` with `market_not_found`. Show unavailable data and discard stale responses by request ID.
 
 ## Indicative prices
 
-Indicative prices exist for `covered_call` and `cash_secured_put` only. `GetIndicativePrices` with `call_spread`, `put_spread` or `cash_put` returns an uncorrelated `Error` with `spread_invalid_strikes`, because a spread price depends on both strikes the taker selects. A product that is not enabled for the pair returns `product_not_allowed`.
+Indicative prices exist for `covered_call` and `cash_secured_put` only, per taker `side`. `best_price` is the median of maker indicatives per strike: net of the protocol fee for `sell`, the gross price paid for `buy`; `null` when no maker priced the strike. `GetIndicativePrices` with `call_spread`, `put_spread` or `cash_put` returns `RequestError` with `spread_invalid_strikes`, because a spread price depends on both strikes the taker selects. A product that is not enabled for the pair returns `product_not_allowed`.
 
 ### GetIndicativePrices (taker -> server)
 
@@ -1367,6 +1373,7 @@ Uses [common paging](ws-common.md#paging).
     "request_id": "uuid",
     "market": "MarketPdaBase58",
     "position_type": "covered_call",
+    "side": "sell",
     "limit": 200,
     "cursor": {
       "type": "start"
@@ -1386,6 +1393,7 @@ Uses [common paging](ws-common.md#paging).
     "request_id": "uuid",
     "market": "MarketPdaBase58",
     "position_type": "covered_call",
+    "side": "sell",
     "updated_at": 1710000000,
     "is_stale": false,
     "strikes": [

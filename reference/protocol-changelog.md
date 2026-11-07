@@ -1,5 +1,19 @@
 # Protocol changelog
 
+## 2026-11-09
+
+`acta-maker-sdk` 0.8.1 and `@acta-markets/ts-sdk` 0.5.1. The wire changes below are breaking; the protocol version string stays `1.0.0`, so an older client passes `Hello` and then fails on the changed messages. `acta-maker-sdk` 0.8.0 and `@acta-markets/ts-sdk` 0.5.0 sent `1.1.0` and are refused at `Hello`; use 0.8.1 and 0.5.1. The program is unchanged.
+
+- Indicatives are per taker side. `IndicativePricesRequest`, `IndicativePricesResponse`, `GetIndicativePrices`, `IndicativePrices` and each `TokenMarketIndicatives` carry a required `side`. Makers echo the request's `side`. Buy requests reach only `taker_buy_rfqs` subscribers. `best_price` is the median of maker prices: net of the protocol fee for `sell`, the gross price paid for `buy`.
+- `PositionInfo` in `Positions` and `PositionUpdated` carries a required `underlying_price`: `{ type: "available", price, published_at }` or `{ type: "unavailable" }`, the trusted oracle price the server prices RFQs with. `MakerPositionInfo` (`MakerPositions`, `MmSummary`) carries it too and is `PositionInfo` plus token symbols.
+- `RfqLocked { rfq_id, rfq_version, locked_at }` tells every other maker on an RFQ that the taker accepted a quote. Their quotes stay as backups until `RfqAvailableAgain` or `RfqClosed`.
+- `RfqClosed.reason` gains `server_shutdown`: a graceful stop closes every RFQ whose order has not reached the keeper and cancels its quotes.
+- On a buy, `QuoteReceived.net_price`, `QuotesUpdate` quotes and `MyActiveRfqs.best_price` are the gross price the buyer pays; they were shown net of the fee. The TS client keeps the lowest quote as a buy RFQ's best price.
+- Query failures are `RequestError` with the request's `request_id`: `GetIndicativePrices`, `GetTokenMarketsInfo`, `GetPositions`, `GetMyActiveRfqs`, `GetMakerPositions`, `GetMyTrades`, `GetMyCaps`, `CheckQuote` and maker market reads sent an uncorrelated `Error` for some failures. `GetTokenMarketsInfo` for an underlying without active markets returns `market_not_found` instead of no response.
+- Quoting races (`RfqNotActive`, `QuoteLocked` and the like) are logged at debug, not error; `ServerError::is_quote_race` tells them apart.
+- Native SOL custody helpers: `chain::build_maker_deposit_native_sol_ixs` and `chain::build_maker_withdraw_native_sol_ixs`.
+- `io_observer` counts HTTP, WebSocket and RPC traffic. HTTP and RPC reuse connections and accept compressed responses.
+
 ## 2026-11-05
 
 SDKs `@acta-markets/ts-sdk` 0.4.3 and `acta-maker-sdk` 0.7.3; the program is unchanged.

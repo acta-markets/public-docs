@@ -10,7 +10,7 @@ Wire messages, errors and enums are in [`../reference/taker-api.md`](../referenc
 npm install @acta-markets/ts-sdk
 ```
 
-This guide covers version 0.4.3. It speaks WS protocol `1.0.0` and targets the program deployed to devnet and mainnet; both use the same program ID, and `GET /api/v1/venue` returns the authoritative `program_id`. Refer to opcodes and errors by name through the generated constants exported from `@acta-markets/ts-sdk` (`*_DISCRIMINATOR` for opcodes, `ACTA_CONTRACT_ERROR__*` for errors), not by number. The package README and changelog cover the vault builders.
+This guide covers version 0.5.1. It speaks WS protocol `1.0.0` and targets the program deployed to devnet and mainnet; both use the same program ID, and `GET /api/v1/venue` returns the authoritative `program_id`. Refer to opcodes and errors by name through the generated constants exported from `@acta-markets/ts-sdk` (`*_DISCRIMINATOR` for opcodes, `ACTA_CONTRACT_ERROR__*` for errors), not by number. The package README and changelog cover the vault builders.
 
 The wire is closed. The client does not dispatch a frame that lacks a required field or carries an unknown enum value. A message whose type the SDK does not know is reported on the `unknownMessage` event. Facts that are absent arrive as explicit `null`, typed `T | null`. State-dependent shapes are tagged unions. Wire addresses are validated when a frame is decoded. `server_time_unix_ms` and `sent_at_unix_ms` use milliseconds, and `expires_at` uses Unix seconds.
 
@@ -116,7 +116,7 @@ ws.on("chainEvent", (ev) => {
 });
 ```
 
-The client keeps `ws.state.positions` (a `Map` keyed by position PDA). It merges `Positions` responses and `PositionUpdated` pushes and applies a row only if its `revision` is newer than the stored one, so `positionUpdated` does not fire for duplicates or old rows. `comparePositionRevision(a, b)` from `@acta-markets/ts-sdk/ws` compares two revisions `(slot, transaction_index, instruction_index)` lexicographically; use it if you read raw `Positions` pages yourself. Switching the auth provider or logging out clears the cache.
+The client keeps `ws.state.positions` (a `Map` keyed by position PDA). It merges `Positions` responses and `PositionUpdated` pushes and applies a row only if its `revision` is newer than the stored one, so `positionUpdated` does not fire for duplicates or old rows. `comparePositionRevision(a, b)` from `@acta-markets/ts-sdk/ws` compares two revisions `(slot, transaction_index, instruction_index)` lexicographically; use it if you read raw `Positions` pages yourself. Switching the auth provider or logging out clears the cache. Each row carries `underlying_price`: `{ type: "available", price, published_at }` with the trusted oracle price of the underlying in the quote token (`1e9`), or `{ type: "unavailable" }`. Use it with `terms`, `side` and `quantity` for the current value of a position.
 
 Subscriptions restore on reconnect.
 
@@ -392,7 +392,7 @@ ws.on("orderFailed", (orderIdHex, reason, orderVersion) => {});
 
 ws.on("rfqClosed", (data) => {
   // Terminal: clean up RFQ state.
-  // data.reason: "expired" | "taker_cancelled" | "filled" | "market_expired" | "no_eligible_makers"
+  // data.reason: "expired" | "taker_cancelled" | "filled" | "market_expired" | "no_eligible_makers" | "server_shutdown"
   // data.your_quote and data.winner are null when they do not apply.
 });
 ```
@@ -484,10 +484,10 @@ Error codes and `OrderFailed` reasons: [taker-api.md](../reference/taker-api.md#
 - **Token caps.** `getTokenCaps(includeMarkets)` -> `tokenCaps` event. The flag is required and the server ignores it. The response carries `tokens`, `markets`, `quotes` and `quote_liabilities`, all always present. Schema: [taker-api.md](../reference/taker-api.md#token-caps) and [caps.md](../reference/caps.md).
 - **Earn summary.** `getEarnSummary()` -> `earnSummary` event. APR range (`apr` is `unavailable` or `available { min, max }`) and capacity per asset for landing pages.
 - **Market price snapshot.** `getTokenMarketsInfo(underlyingMint)` -> `tokenMarketsInfo` returns backend `reference_price`, size rules, decimals and indicative premiums together. See [TokenMarketsInfo](../reference/taker-api.md#tokenmarketsinfo). Correlate the response with the returned request ID and the mint you requested; the response does not echo the mint. Refresh while the view is active; the Acta web app uses 30 seconds.
-- **Indicative prices.** `getIndicativePrices({ market, position_type })` -> `indicativePrices` event. Available for `covered_call` and `cash_secured_put`. A spread or cash put request returns an `Error` with `spread_invalid_strikes`. Non-binding UI reference prices; the server refreshes roughly every 30s.
+- **Indicative prices.** `getIndicativePrices({ market, position_type, side })` -> `indicativePrices` event. Available for `covered_call` and `cash_secured_put`, per taker `side`: `best_price` is the median maker price, net of the protocol fee for `sell` and the gross price paid for `buy`. A spread or cash put request returns an `Error` with `spread_invalid_strikes`. Non-binding UI reference prices; the server refreshes roughly every 30s.
 - **Expiries.** `getExpiries({ underlying_mint, quote_mint, is_put })` takes `{ type: "all" }` or `{ type: "only", value }` for each filter.
 - **APR inputs.** Use spot and indicative premium from the same `TokenMarketsInfo` response. Suppress the preview when the price is unavailable or the indicative has `is_stale: true`. Clear cached metadata after a failed refresh or disconnect. Pyth credentials belong on the backend, not in browser code.
-- **APR and APY helper.** `computeApyFromScaledPrices({ underlyingAmount, grossPremiumPerUnit1e9, spotPrice1e9, secondsToExpiry })` from `@acta-markets/ts-sdk/ws` returns `{ premiumNotional, collateralNotional, termYield, apr, apy }`. `spotPrice1e9` is required: collateral is valued at spot for calls and puts. `computeApyFromAmounts({ underlyingAmount, premiumPerUnderlying, spotPrice, secondsToExpiry })` takes human units. For the market preview, pass backend `best_price` as `grossPremiumPerUnit1e9`: the backend applies the quote-mint fee adjustment when fee configuration is present. Do not subtract the fee a second time.
+- **APR and APY helper.** `computeApyFromScaledPrices({ underlyingAmount, grossPremiumPerUnit1e9, spotPrice1e9, secondsToExpiry })` from `@acta-markets/ts-sdk/ws` returns `{ premiumNotional, collateralNotional, termYield, apr, apy }`. `spotPrice1e9` is required: collateral is valued at spot for calls and puts. `computeApyFromAmounts({ underlyingAmount, premiumPerUnderlying, spotPrice, secondsToExpiry })` takes human units. For the market preview, pass the `sell` side `best_price` as `grossPremiumPerUnit1e9`: the backend already nets the protocol fee out of it. Do not subtract the fee a second time.
 - **Fill premium.** `totalPremiumQuoteAtoms(price, quantity, underlyingDecimals, quoteDecimals)` returns the gross premium in quote atoms as a `bigint`, rounded as the contract rounds it. The net premium is `total_premium` on the position row.
 - **Nonces.** `generateNonce()` from `@acta-markets/ts-sdk/ws` returns a fresh `bigint` nonce for signed orders.
 - **Program events.** `decodeActaEventsFromLogsScoped(logs, programId)` from `@acta-markets/ts-sdk` decodes only events emitted by that program.

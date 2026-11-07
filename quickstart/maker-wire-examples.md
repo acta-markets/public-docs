@@ -299,7 +299,8 @@ For successful fills, the winning maker receives `RfqClosed`, then `QuoteFilled`
       "price": 5000000000,
       "total_premium": 4975000,
       "created_at": 1710000042,
-      "expiry_ts": 1710600000
+      "expiry_ts": 1710600000,
+      "underlying_price": { "type": "available", "price": 151000000000, "published_at": 1710000010 }
     },
     "update_type": "created"
   }
@@ -392,7 +393,8 @@ Spreads and cash puts go from `open` to `settled` only. A settled row carries th
       "price": 5000000000,
       "total_premium": 4980000,
       "created_at": 1799999770,
-      "expiry_ts": 1800086400
+      "expiry_ts": 1800086400,
+      "underlying_price": { "type": "unavailable" }
     },
     "update_type": "settled"
   }
@@ -592,7 +594,8 @@ Use [common paging](../reference/ws-common.md#paging) for maker positions. Start
         "price": 5000000000,
         "total_premium": 4975000,
         "created_at": 1710000042,
-        "expiry_ts": 1710600000
+        "expiry_ts": 1710600000,
+        "underlying_price": { "type": "available", "price": 151000000000, "published_at": 1710000040 }
       }
     ],
     "unrenderable": [],
@@ -1023,6 +1026,19 @@ For every market, send `"market": { "type": "all" }`.
     "order_ids": ["0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"],
     "reason": "requested",
     "cancelled_at": 1710000025
+  }
+}
+```
+
+### RfqLocked
+
+```json
+{
+  "type": "RfqLocked",
+  "data": {
+    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
+    "rfq_version": 2,
+    "locked_at": 1710000030
   }
 }
 ```

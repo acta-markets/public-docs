@@ -156,6 +156,7 @@ Lifecycle events are keyed by `order_id`. `RfqClosed` is the terminal event for 
 | `QuoteFilled` | Position opened on-chain. Carries `position_pda`, `tx_signature`, `terms` and `side`. It has no fee or net-premium field. |
 | `QuoteCancelled` | Terminal. `reason` ∈ {`requested`, `risk_check`, `rfq_accepted`, `maker_disconnected`}. |
 | `QuoteExpired` | Always sent when a quote expires. `reason` ∈ {`expired`, `expiring_soon`}. |
+| `RfqLocked` | Another maker's quote was accepted. Yours stays as a backup; do not re-quote until `RfqAvailableAgain`. |
 | `RfqAvailableAgain` | Settlement reverted; the auction has reopened. The maker may re-quote with a fresh `order_id`. |
 | `RfqClosed` | Terminal RFQ event. Drop per-RFQ state. |
 
@@ -172,7 +173,7 @@ You do **not** settle or liquidate. Publishing the settlement price and finalizi
 
 ## Indicative pricing
 
-When indicative pricing is enabled on the server, a connected `/maker` session subscribed to `rfqs` with matching mint filters may receive `IndicativePricesRequest` for covered calls or cash-secured puts. There is no separate enrollment. `/maker/data` does not receive these requests. Prices are non-binding; reply with `IndicativePricesResponse` using the request ID:
+When indicative pricing is enabled on the server, a connected `/maker` session subscribed to `rfqs` with matching mint filters may receive `IndicativePricesRequest` for covered calls or cash-secured puts, once per taker side (`buy` only with a `taker_buy_rfqs` subscription). There is no separate enrollment. `/maker/data` does not receive these requests. Prices are non-binding; reply with `IndicativePricesResponse` using the request ID and the request's `side`:
 
 ```json
 {
@@ -181,6 +182,7 @@ When indicative pricing is enabled on the server, a connected `/maker` session s
     "request_id": "<from request>",
     "market": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
     "position_type": "covered_call",
+    "side": "sell",
     "prices": [
       { "strike": 150000000000, "price": 4500000000 },
       { "strike": 160000000000, "price": 5000000000 }
@@ -192,6 +194,8 @@ When indicative pricing is enabled on the server, a connected `/maker` session s
 ## Reconnection
 
 With `on_disconnect: "cancel_quotes"`, the engine removes the connection's active and retained non-winning quotes on disconnect; selected/executing obligations survive. With `keep_quotes`, resting quotes can remain fillable while offline. Resume restores server subscriptions; fresh auth requires restoring them. The server does not replay events missed during the disconnect window. Events already in flight can arrive again after recovery, so process lifecycle events idempotently by `order_id`.
+
+A graceful server stop first drains, then closes every RFQ whose order has not reached the keeper with `RfqClosed { reason: "server_shutdown" }`; your quotes on it report `your_quote.status = "cancelled"`. An order already forwarded for execution is not closed and can still land on chain. After a crash nothing is closed: the engine starts empty and no RFQ, resting quote or selection survives. In both cases treat the restart as a disconnect: reconnect, run the recovery below, and let step 5 settle every order you had selected before counting its collateral free.
 
 Recover in this order after reauthentication. Use `/maker/data` for the data reads and `/maker` for the quote plane.
 

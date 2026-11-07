@@ -285,7 +285,7 @@ Validate the entire challenge **before invoking the signer**. Require the exact 
 
 After validation, sign the original UTF-8 bytes without normalization, additional prefix or hashing. The fixed text already supplies the authentication domain. Signing arbitrary endpoint text with the order key can authorize an order instead of authentication.
 
-Rust SDK (`acta-maker-sdk` 0.7.3) and TS SDK (`@acta-markets/ts-sdk` 0.4.3) validate authentication messages before invoking signers in their managed clients. Raw Rust clients use `validate_maker_auth_challenge`, or `validate_vault_auth_challenge(challenge, operator, vault)` for a vault session; raw TS clients use `validateAuthChallenge`, which checks the grammar of the maker and taker formats and rejects the vault format, and `assertVaultAuthChallenge(challenge, operator, vault)` for a vault session. This does not establish endpoint trust or prevent relay of a genuine server challenge.
+Rust SDK (`acta-maker-sdk` 0.8.1) and TS SDK (`@acta-markets/ts-sdk` 0.5.1) validate authentication messages before invoking signers in their managed clients. Raw Rust clients use `validate_maker_auth_challenge`, or `validate_vault_auth_challenge(challenge, operator, vault)` for a vault session; raw TS clients use `validateAuthChallenge`, which checks the grammar of the maker and taker formats and rejects the vault format, and `assertVaultAuthChallenge(challenge, operator, vault)` for a vault session. This does not establish endpoint trust or prevent relay of a genuine server challenge.
 
 ### AuthChallenge (client -> server)
 
@@ -760,7 +760,7 @@ There's no single global correlation id. Correlation is per-request, via the `re
   the server accepted the command, never that anything landed on chain. Lifecycle pushes
   (`RfqCreated`, `OrderAccepted`, `OrderFailed`, …) stay keyed by `rfq_id` / `order_id` and may
   arrive before or after the receipt. `RfqRequest.request_id` is also the idempotency key: a
-  repeated `request_id` returns the RFQ it created, echoed in `RfqCreated.request_id`. Not every handler follows the correlated path: `GetTokenMarketsInfo` can return an uncorrelated error or no response for an empty market set. See [its failure behavior](taker-api.md#tokenmarketsinfo).
+  repeated `request_id` returns the RFQ it created, echoed in `RfqCreated.request_id`.
 - Exception: when the server's inbound queue for a connection is full it sends an uncorrelated
   `Error { code: "server_overloaded" }` and closes the socket with `4003 rate_limited`. Every request
   still outstanding on that connection has an unknown outcome; resolve submissions by status after
@@ -825,6 +825,7 @@ Trade lifecycle and payoff: [Protocol flow](protocol-flow.md).
 | Channel | Producer(s) | Audience |
 |---|---|---|
 | `rfqs` | `RfqBroadcast`, `IndicativePricesRequest`, quote/order lifecycle | **Makers.** Takers do not subscribe — a taker's own RFQ/quote/order events (`RfqCreated`, `QuoteReceived`, `OrderAccepted`, `SponsoredTxToSign`, `Order*`, `RfqClosed`) are delivered session-addressed regardless of subscription. |
+| `taker_buy_rfqs` | `RfqBroadcast` and `IndicativePricesRequest` with `side: "buy"` | **Makers** that write options for buying wallets from Maker PDA custody. |
 | `trades` | `TradeExecuted` | Public trade tape. Participants also receive their own fills session-addressed. |
 | `stats` | `StatsUpdate` | Global venue stats. |
 | `chain_events` | `ChainEvent` (position opened / settled / liquidated, market finalized) | Anyone. **This is how a taker tracks position outcomes** (settlement / liquidation). |
@@ -956,7 +957,7 @@ rejected, never clamped. Compound replies share one page budget across their
 collections. Scalars repeat on each page. Token-market strike lists can span
 pages; merge fragments by market PDA and position type.
 
-Rust SDK `0.7.3` and TypeScript SDK `0.4.3` use one shared `fetch_all` or
+Rust SDK `0.8.1` and TypeScript SDK `0.5.1` use one shared `fetch_all` or
 `fetchAllPages` helper. Their normal list methods collect every page. Use an
 explicit page method for incremental UI loading, such as
 `getPositionsPageAsync` in TypeScript. Raw WS `request` methods return one page.

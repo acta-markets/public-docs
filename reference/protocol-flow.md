@@ -69,7 +69,9 @@ There is no order book. The taker drives a sealed auction, makers stream signed 
 - A maker's live quote is keyed by `(rfq_id, terms)`. A new quote with the same key replaces the previous one, and `QuoteAcknowledged.replaced_order_id` names it.
 - The advisory "best" ranking (used only for `QuoteBestStatus` / `best_price`) is: higher premium wins, ties broken by earlier `received_at`, then by smaller `order_id`.
 
-Indicative pricing: after connecting, makers may receive `IndicativePricesRequest` and reply with non-binding reference prices per strike. Takers see these while browsing, before opening an RFQ.
+Indicative pricing: after connecting, makers may receive `IndicativePricesRequest`, one per taker side, and reply with non-binding reference prices per strike. Takers see the median per strike while browsing, before opening an RFQ.
+
+When the taker accepts a quote, the other makers on the RFQ receive `RfqLocked`. Their quotes stay as backups: a failed signature reopens the RFQ with `RfqAvailableAgain`.
 
 ## Trade lifecycle
 

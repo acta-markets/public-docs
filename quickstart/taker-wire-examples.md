@@ -400,7 +400,8 @@ After the position is projected, the session receives the full row. No subscript
       "price": 51000000,
       "total_premium": 253725,
       "created_at": 1710000012,
-      "expiry_ts": 1710600000
+      "expiry_ts": 1710600000,
+      "underlying_price": { "type": "available", "price": 151000000000, "published_at": 1710000010 }
     },
     "update_type": "created"
   }
@@ -503,7 +504,8 @@ At settlement price `133` the intrinsic value is `7`. The maker receives `350000
       "price": 1200000000,
       "total_premium": 5970000,
       "created_at": 1710000012,
-      "expiry_ts": 1710600000
+      "expiry_ts": 1710600000,
+      "underlying_price": { "type": "unavailable" }
     },
     "update_type": "settled"
   }
@@ -647,7 +649,7 @@ Treat the order as not executed only if every submission you made returned `not_
 }
 ```
 
-`reason` is `expired`, `taker_cancelled`, `filled`, `market_expired` or `no_eligible_makers`. `no_eligible_makers` means no maker could receive the RFQ (none subscribed, or every one skipped for caps or custody), so the server closes it at once instead of at its timeout.
+`reason` is `expired`, `taker_cancelled`, `filled`, `market_expired`, `no_eligible_makers` or `server_shutdown`. `no_eligible_makers` means no maker could receive the RFQ (none subscribed, or every one skipped for caps or custody), so the server closes it at once instead of at its timeout. `server_shutdown` means a graceful server stop closed it before its order reached the keeper.
 
 ### Invite gating (closed mainnet only)
 
@@ -759,7 +761,8 @@ Subscriptions and in-flight state are not replayed. Re-authenticate, resubscribe
         "price": 51000000,
         "total_premium": 253725,
         "created_at": 1710000012,
-        "expiry_ts": 1710600000
+        "expiry_ts": 1710600000,
+        "underlying_price": { "type": "available", "price": 151000000000, "published_at": 1710000010 }
       }
     ],
     "next_cursor": null
