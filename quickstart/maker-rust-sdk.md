@@ -12,10 +12,10 @@ For JSON-layer integrations, see [`maker-quickstart.md`](maker-quickstart.md). M
 
 ```toml
 [dependencies]
-acta-maker-sdk = { version = "0.8.1", features = ["ws-client"] }
+acta-maker-sdk = { version = "0.8.2", features = ["ws-client"] }
 ```
 
-Version 0.8.1 speaks WS protocol `1.0.0` (`WS_PROTOCOL_VERSION`). The wire is closed: every field is present, absent facts are explicit `null`, and decoding rejects unknown message types, error codes, enum values and missing fields. This guide covers ordinary makers; vault operators use the `vault` feature, see the [vault operator guide](vault-operator-guide.md).
+Version 0.8.2 speaks WS protocol `1.0.0` (`WS_PROTOCOL_VERSION`). The wire is closed: every field is present, absent facts are explicit `null`, and decoding rejects unknown message types, error codes, enum values and missing fields. This guide covers ordinary makers; vault operators use the `vault` feature, see the [vault operator guide](vault-operator-guide.md).
 
 Quote-only integrations need `ws-client`. `chain` adds Solana instruction builders (including `chain::vault`); `chain-rpc` adds on-chain reads; `http` adds the read-only HTTP client; `vault` adds the vault operator client and implies `ws-client` and `chain`.
 
@@ -142,11 +142,15 @@ let terms = SpreadTerms {
     quote_decimals,
     underlying_decimals,
 };
-let premium = terms.premium(
-    price,
-    venue.protocol_fee_bps_premium,
-    venue.protocol_fee_bps_volume,
-)?;
+// Fees belong to the quote token: `tokens` from `GetTokens` or `/api/v1/tokens`.
+let Some(TokenProtocolFees::Quote { premium_bps, volume_bps }) = tokens
+    .iter()
+    .find(|token| token.mint == rfq.market.quote_mint)
+    .map(|token| token.protocol_fees)
+else {
+    return Ok(());
+};
+let premium = terms.premium(price, premium_bps, volume_bps)?;
 // premium.collateral, .gross_premium, .protocol_fee, .net_premium, .prefunded_quote
 
 let quote = RfqBinding::from_broadcast_for_program(rfq, venue.program_id.into())?
@@ -190,8 +194,9 @@ is separate from `Rfqs`, so a maker that only sells never receives buys.
   `ChainClient::maker_deposit` (`MakerDeposit`) from your wallet ATA; a wSOL
   underlying must already be wrapped in that ATA. For native SOL,
   `chain::build_maker_deposit_native_sol_ixs` wraps and deposits in one go and
-  `chain::build_maker_withdraw_native_sol_ixs` withdraws and unwraps (it closes your
-  wSOL account, so all wSOL held there returns as SOL).
+  `chain::build_maker_withdraw_native_sol_ixs` withdraws and unwraps exactly the
+  withdrawn amount through a temporary wSOL account (`chain::unwrap_account`); other
+  wSOL in your account stays wrapped.
 - **Admission.** The server checks custody before it sends you the RFQ. A short
   custody turns into `RfqSkipped` with `maker_insufficient_balance` and the RFQ never
   reaches quoting, so top up when you see the skip, after every fill, or on a timer.

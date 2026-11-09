@@ -194,7 +194,7 @@ fee_total   = min(premium_fee, volume_fee)
 net_premium = gross_premium - fee_total
 ```
 
-The taker receives `net_premium`; `Position.total_premium` and the wire field `total_premium` hold the same net value in quote atoms. The maker pays `gross_premium`, so its cost is `scaled_quote_amount(price, quantity)` and the fee is that cost minus `total_premium`. `protocol_fee_bps_premium` and `protocol_fee_bps_volume` are on-chain config set by governance (each ≤ 10000 bps) and are published by `GET /api/v1/venue`. `net_price` in WS payloads is a display estimate only; for accounting use the formula above or `total_premium`.
+The taker receives `net_premium`; `Position.total_premium` and the wire field `total_premium` hold the same net value in quote atoms. The maker pays `gross_premium`, so its cost is `scaled_quote_amount(price, quantity)` and the fee is that cost minus `total_premium`. `protocol_fee_bps_premium` and `protocol_fee_bps_volume` are on-chain config of each quote token, set by governance (each ≤ 10000 bps), and are published as the token's `protocol_fees` by `GET /api/v1/tokens`. `net_price` in WS payloads is a display estimate only; for accounting use the formula above or `total_premium`.
 
 ### Spread payoff
 

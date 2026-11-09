@@ -10,7 +10,7 @@ Wire messages, errors and enums are in [`../reference/taker-api.md`](../referenc
 npm install @acta-markets/ts-sdk
 ```
 
-This guide covers version 0.5.1. It speaks WS protocol `1.0.0` and targets the program deployed to devnet and mainnet; both use the same program ID, and `GET /api/v1/venue` returns the authoritative `program_id`. Refer to opcodes and errors by name through the generated constants exported from `@acta-markets/ts-sdk` (`*_DISCRIMINATOR` for opcodes, `ACTA_CONTRACT_ERROR__*` for errors), not by number. The package README and changelog cover the vault builders.
+This guide covers version 0.5.2. It speaks WS protocol `1.0.0` and targets the program deployed to devnet and mainnet; both use the same program ID, and `GET /api/v1/venue` returns the authoritative `program_id`. Refer to opcodes and errors by name through the generated constants exported from `@acta-markets/ts-sdk` (`*_DISCRIMINATOR` for opcodes, `ACTA_CONTRACT_ERROR__*` for errors), not by number. The package README and changelog cover the vault builders.
 
 The wire is closed. The client does not dispatch a frame that lacks a required field or carries an unknown enum value. A message whose type the SDK does not know is reported on the `unknownMessage` event. Facts that are absent arrive as explicit `null`, typed `T | null`. State-dependent shapes are tagged unions. Wire addresses are validated when a frame is decoded. `server_time_unix_ms` and `sent_at_unix_ms` use milliseconds, and `expires_at` uses Unix seconds.
 
@@ -206,12 +206,16 @@ const terms = {
   underlyingDecimals: 9,
 };
 
+// Fees belong to the quote token (`getTokens()` or `/api/v1/tokens`).
+const fees = quoteToken.protocol_fees;
+if (fees.type !== "quote") throw new Error("quote token has no fee config");
+
 // collateral, grossPremium, protocolFee, netPremium (quote atoms)
 const economics = spreadPremium(
   terms,
   BigInt(quote.price),                 // gross price, 0 < price < width
-  venue.protocol_fee_bps_premium,
-  venue.protocol_fee_bps_volume,
+  fees.premium_bps,
+  fees.volume_bps,
 );
 
 // At settlement price S: holderPayoff and writerReturn sum to economics.collateral

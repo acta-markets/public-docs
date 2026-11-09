@@ -240,7 +240,7 @@ The receipt and `RfqCreated` can arrive in either order. `order_options` is the 
 
 ### 8) QuoteReceived (streamed, 0..N)
 
-Each quote is firm and hash-bound through `order_id`. `net_price` is a display estimate and is `null` for spreads and cash puts. Two makers respond:
+Each quote is firm and hash-bound through `order_id`. `net_price` is a display estimate of what you receive per unit after the protocol fee. Two makers respond:
 
 ```json
 {
@@ -454,7 +454,7 @@ A put spread on a put market. The market lists `put_spread` in `products`. The s
 
 ### QuoteReceived
 
-The gross price `G = 1.2` is below the width `10`. `net_price` is `null`.
+The gross price `G = 1.2` is below the width `10`. At 50 bps premium and 10 bps volume the fee is `min(0.006, 0.01)`, so `net_price` is `1.194`.
 
 ```json
 {
@@ -468,12 +468,12 @@ The gross price `G = 1.2` is below the width `10`. `net_price` is `null`.
     "valid_until": 1710000330,
     "nonce": 11,
     "order_id": "0x3333333333333333333333333333333333333333333333333333333333333333",
-    "net_price": null
+    "net_price": 1194000000
   }
 }
 ```
 
-Gross premium is `6000000` quote atoms. With a premium fee of 50 bps and a volume fee of 10 bps on the `50000000` exposure, the fee is `min(30000, 50000) = 30000` and the net premium is `5970000`. Read the fee bps from `GET /api/v1/venue`. Accept, sign and submit as in steps 9 and 10.
+Gross premium is `6000000` quote atoms. With a premium fee of 50 bps and a volume fee of 10 bps on the `50000000` exposure, the fee is `min(30000, 50000) = 30000` and the net premium is `5970000`. Read the fee bps from the quote token's `protocol_fees` in `GET /api/v1/tokens`. Accept, sign and submit as in steps 9 and 10.
 
 ### Settled position
 

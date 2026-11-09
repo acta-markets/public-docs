@@ -131,7 +131,7 @@ A spread quote repeats the RFQ's two strikes:
 
 Spread and cash-put prices must satisfy `0 < price < width`, where `width` is `upper_strike − lower_strike` (`strike` for a cash put). The gross premium in quote atoms must be positive and below the collateral `C = ceil(width * quantity * 10^quote_decimals / (1e9 * 10^underlying_decimals))`. Otherwise the quote is rejected with `spread_premium_invalid`. For the 100/120 call spread above with 1 SOL (`quantity` 1000000000, 9 and 6 decimals), `C` is 20000000 and the gross premium is 5000000.
 
-The protocol fee is `min(premium fee, volume fee)`. The venue publishes `protocol_fee_bps_premium` and `protocol_fee_bps_volume` on `GET /api/v1/venue`. The formulas are under [Cash settlement and fees](../reference/maker-api.md#cash-settlement-and-fees). The authoritative net premium for a fill is `total_premium` on its position row. The maker's cost is the gross premium, and the fee is that cost minus `total_premium`.
+The protocol fee is `min(premium fee, volume fee)`. Each quote token publishes its fees as `protocol_fees` (`premium_bps`, `volume_bps`) on `GET /api/v1/tokens`. The formulas are under [Cash settlement and fees](../reference/maker-api.md#cash-settlement-and-fees). The authoritative net premium for a fill is `total_premium` on its position row. The maker's cost is the gross premium, and the fee is that cost minus `total_premium`.
 
 When an RFQ permits several strikes, each strike requires a distinct quote. Prefer `BatchQuotes` for several strikes or RFQs: one frame and one `BatchQuotesAck` instead of one message per quote. Each quote requires its own `order_id` and `nonce`. A new quote on the same `(rfq_id, terms)` replaces the prior quote for that pair.
 

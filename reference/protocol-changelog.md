@@ -1,5 +1,17 @@
 # Protocol changelog
 
+## 2026-11-09 (later)
+
+`acta-maker-sdk` 0.8.2 and `@acta-markets/ts-sdk` 0.5.2. The program is unchanged. One breaking change: `/venue` no longer carries protocol fees, so `venue()` in 0.8.1 and 0.5.1 fails; everything else is additive.
+
+- `TokenInfo.session` (`/tokens`, WS `Tokens`): `continuous`, or `pyth_schedule` with the Pyth trading-hours string of the token's feed, so a maker no longer configures TSLA or XAU hours by hand.
+- `/venue` reports `max_page_size` (200). The Rust SDK exports `paging::MAX_PAGE_SIZE`.
+- Protocol fees moved from `/venue` to each quote token: `TokenInfo.protocol_fees` (`quote` with `premium_bps` and `volume_bps`, or `none`). Quote tokens can have different fees; `/venue` used to answer `503` when they did.
+- The indicative response window is 5 seconds (it was 800 ms). The [indicative rules](maker-api.md#indicative-rules) document timing, replacement, partial answers, units, fees and rate limits.
+- Rust SDK: `build_maker_withdraw_native_sol_ixs` unwraps exactly the withdrawn amount; other wSOL stays wrapped.
+- TS SDK: a `PositionUpdated` push keeps the token symbols of a maker row in the client cache.
+- Taker-facing prices (`net_price`, indicatives, `MyActiveRfqs.best_price`, earn APR) apply the protocol fee as the program does: the smaller of the premium fee and the volume fee on the strike or spread width. Spreads and cash puts now carry `net_price`; before, it was `null` for them and the volume cap was ignored.
+
 ## 2026-11-09
 
 `acta-maker-sdk` 0.8.1 and `@acta-markets/ts-sdk` 0.5.1. The wire changes below are breaking; the protocol version string stays `1.0.0`, so an older client passes `Hello` and then fails on the changed messages. `acta-maker-sdk` 0.8.0 and `@acta-markets/ts-sdk` 0.5.0 sent `1.1.0` and are refused at `Hello`; use 0.8.1 and 0.5.1. The program is unchanged.

@@ -289,7 +289,7 @@ Spreads and cash puts are cash-settled in the quote mint. Their lifecycle is Ope
 - **Width** `W` is `upper_strike - lower_strike` for a spread and `strike` for a cash put.
 - **Collateral** `C = ceil(W * quantity * 10^quote_decimals / (1e9 * 10^underlying_decimals))`, in quote atoms. The taker posts `C`.
 - **Gross price** `G` is per underlying unit, `1e9`-scaled, and satisfies `0 < G < W`. A maker quote outside that range is rejected with `spread_premium_invalid`, so a taker never receives one.
-- **Protocol fee** is `min(premium_fee, volume_fee)`. With `quote(x) = floor(x * quantity * 10^quote_decimals / (1e9 * 10^underlying_decimals))`, `premium_fee` is `quote(G) - quote(G - floor(G * protocol_fee_bps_premium / 10000))`. `volume_fee` is `floor(quote(exposure) * protocol_fee_bps_volume / 10000)`, where `exposure` is `W` for spreads and cash puts and `strike` for physical products. Read both rates from `GET /api/v1/venue`.
+- **Protocol fee** is `min(premium_fee, volume_fee)`. With `quote(x) = floor(x * quantity * 10^quote_decimals / (1e9 * 10^underlying_decimals))`, `premium_fee` is `quote(G) - quote(G - floor(G * protocol_fee_bps_premium / 10000))`. `volume_fee` is `floor(quote(exposure) * protocol_fee_bps_volume / 10000)`, where `exposure` is `W` for spreads and cash puts and `strike` for physical products. Read both rates from the quote token's `protocol_fees` in `GET /api/v1/tokens`.
 - **Net premium** is gross premium minus the fee, in quote atoms. The taker receives it at open. It is the `total_premium` of the position row.
 - **Roles.** The text below describes `side: "sell"`, where the taker writes. On `side: "buy"` the roles swap: the taker pays the gross premium, the maker locks `C` from custody, and at expiry the taker receives the payoff. `holder_payoff` and `writer_return` in the position row keep their chain roles, holder and writer, so on a buy the taker's payoff is `holder_payoff`.
 - **At expiry** the maker receives `ceil(min(intrinsic, W) * quantity ...)` in quote atoms, capped at `C`. The taker receives the rest of `C`. `intrinsic` is `max(settlement_price - lower_strike, 0)` for a call spread, `max(upper_strike - settlement_price, 0)` for a put spread, and `max(strike - settlement_price, 0)` for a cash put.
@@ -307,7 +307,7 @@ Example: put spread `(130, 140)`, 5 SOL (`quantity = 5000000000`), SOL has 9 dec
 | Settlement price `140` or above | maker `0`, taker `50000000` |
 | Settlement price `130` or below | maker `50000000`, taker `0` |
 
-The fee bps in the example are illustrative. `QuoteReceived.net_price` is `null` for spreads and cash puts; compute the net premium from the formulas above or read `total_premium` from the position row. `QuoteFilled` carries no fee or net fields.
+The fee bps in the example are illustrative. `QuoteReceived.net_price` shows the same per-unit result; the position's `total_premium` is the exact figure after rounding in quote atoms. `QuoteFilled` carries no fee or net fields.
 
 ---
 
@@ -383,14 +383,14 @@ The server accepted `RfqRequest`, `AcceptQuote` or `SubmitSignedSponsoredTx`. It
     "valid_until": 1710000350,
     "nonce": 42,
     "order_id": "0x1111111111111111111111111111111111111111111111111111111111111111",
-    "net_price": null
+    "net_price": 1194000000
   }
 }
 ```
 
 - `terms` is one of the RFQ's `order_options`.
 - `price` is the gross price from the maker. It is hash-bound through `order_id`; use it for `AcceptQuote` and all order operations.
-- `net_price` is `Price | null`, for display only. It is `null` for spreads and cash puts and when the server has no fee configuration. The contract computes the authoritative fee at open as `min(premium_fee, volume_fee)` after token-decimal scaling.
+- `net_price` is `Price | null`, for display only: what the taker receives per unit on a sell, `price - min(premium_fee, volume_fee)` with the volume fee on the strike (physical products and cash puts) or the width (spreads), and the gross `price` on a buy. It is `null` only when the server has no fee configuration. The contract computes the authoritative fee at open after token-decimal scaling.
 
 ### QuotesUpdate (server -> taker)
 

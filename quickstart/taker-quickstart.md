@@ -211,7 +211,7 @@ Call spreads, put spreads and cash puts are cash-settled in the quote mint. A ca
 - Width `W` is `upper_strike - lower_strike` for a spread and `strike` for a cash put.
 - The taker posts collateral `C = ceil(W * quantity * 10^quote_decimals / (1e9 * 10^underlying_decimals))` in quote atoms and receives the net premium.
 - The gross price `G` satisfies `0 < G < W`.
-- The protocol fee is `min(premium_fee, volume_fee)`. The volume fee applies to the exposure: the width notional for spreads and cash puts, the strike notional for physical products. Read `protocol_fee_bps_premium` and `protocol_fee_bps_volume` from `GET /api/v1/venue`.
+- The protocol fee is `min(premium_fee, volume_fee)`. The volume fee applies to the exposure: the width notional for spreads and cash puts, the strike notional for physical products. Read the quote token's `protocol_fees` (`premium_bps`, `volume_bps`) from `GET /api/v1/tokens`.
 - At expiry the maker receives `ceil(min(intrinsic, W) * quantity ...)` in quote atoms, capped at `C`, and the taker receives the rest. `intrinsic` is `max(S - lower_strike, 0)` for a call spread, `max(upper_strike - S, 0)` for a put spread and `max(strike - S, 0)` for a cash put, where `S` is the settlement price.
 
 Worked numbers are in [`../reference/taker-api.md`](../reference/taker-api.md#economics-of-spreads-and-cash-puts).

@@ -63,8 +63,16 @@ type TokenInfo = {
         strike_tick: number;       // strike ladder spacing, 1e9 scale
         quote_mints: string[];     // quote mints of its active markets
       };
+  session:                         // when the price feed trades
+    | { type: "continuous" }
+    | { type: "pyth_schedule"; schedule: string };  // Pyth TZ;Mon,..,Sun;MMDD/spec,...
+  protocol_fees:                   // fees of markets quoted in this token
+    | { type: "none" }
+    | { type: "quote"; premium_bps: number; volume_bps: number };
 };
 ```
+
+Outside a `pyth_schedule` session the oracle keeps its last price; see [`/api/v1/tokens`](http-api.md#get-apiv1tokens) for the schedule format.
 
 A valid `quantity` satisfies `min_size <= quantity <= max_size` and `(quantity - min_size) % step == 0`.
 Only tokens of active markets are listed.
@@ -285,7 +293,7 @@ Validate the entire challenge **before invoking the signer**. Require the exact 
 
 After validation, sign the original UTF-8 bytes without normalization, additional prefix or hashing. The fixed text already supplies the authentication domain. Signing arbitrary endpoint text with the order key can authorize an order instead of authentication.
 
-Rust SDK (`acta-maker-sdk` 0.8.1) and TS SDK (`@acta-markets/ts-sdk` 0.5.1) validate authentication messages before invoking signers in their managed clients. Raw Rust clients use `validate_maker_auth_challenge`, or `validate_vault_auth_challenge(challenge, operator, vault)` for a vault session; raw TS clients use `validateAuthChallenge`, which checks the grammar of the maker and taker formats and rejects the vault format, and `assertVaultAuthChallenge(challenge, operator, vault)` for a vault session. This does not establish endpoint trust or prevent relay of a genuine server challenge.
+Rust SDK (`acta-maker-sdk` 0.8.2) and TS SDK (`@acta-markets/ts-sdk` 0.5.2) validate authentication messages before invoking signers in their managed clients. Raw Rust clients use `validate_maker_auth_challenge`, or `validate_vault_auth_challenge(challenge, operator, vault)` for a vault session; raw TS clients use `validateAuthChallenge`, which checks the grammar of the maker and taker formats and rejects the vault format, and `assertVaultAuthChallenge(challenge, operator, vault)` for a vault session. This does not establish endpoint trust or prevent relay of a genuine server challenge.
 
 ### AuthChallenge (client -> server)
 
@@ -405,8 +413,8 @@ Unit variant, no `data` field. Server responds with `LogoutSuccess` and closes t
 ## Fee model
 
 The protocol charges a fee per trade. Fees are set per quote mint in basis points (bps). The
-on-chain config stores `protocol_fee_bps_premium` and `protocol_fee_bps_volume`; the venue
-publishes both at `GET /api/v1/venue`.
+on-chain config stores `protocol_fee_bps_premium` and `protocol_fee_bps_volume`; each quote token
+publishes its own as `protocol_fees` in `GET /api/v1/tokens` and WS `Tokens`.
 
 - `price` in the `Quote` message is the gross premium per 1 underlying unit (1e9 scale). The maker
   signs it, and it goes into the order id preimage as `gross_price`.
@@ -935,7 +943,7 @@ On client side:
 
 ## Paging
 
-Every WS list request requires `limit` (1 through 200) and `cursor`. Start with
+Every WS list request requires `limit` (1 through 200; `max_page_size` in [`/venue`](http-api.md#get-apiv1venue), `MAX_PAGE_SIZE` in the Rust SDK, `PAGE_LIMIT` in the TS SDK) and `cursor`. Start with
 `{"type":"start"}`. Each response includes `next_cursor`, an opaque string or
 null. For the next page, send `{"type":"after","id":"<next_cursor>"}` with the
 same filters. Stop at null. Never construct a cursor from a returned row.
@@ -957,7 +965,7 @@ rejected, never clamped. Compound replies share one page budget across their
 collections. Scalars repeat on each page. Token-market strike lists can span
 pages; merge fragments by market PDA and position type.
 
-Rust SDK `0.8.1` and TypeScript SDK `0.5.1` use one shared `fetch_all` or
+Rust SDK `0.8.2` and TypeScript SDK `0.5.2` use one shared `fetch_all` or
 `fetchAllPages` helper. Their normal list methods collect every page. Use an
 explicit page method for incremental UI loading, such as
 `getPositionsPageAsync` in TypeScript. Raw WS `request` methods return one page.

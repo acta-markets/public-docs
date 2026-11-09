@@ -103,14 +103,12 @@ filtered query, so compare it only with that request.
 
 ### GET `/api/v1/venue`
 
-Program id, protocol fees and the limits the server validates against. The values come from server
+Program id and the limits the server validates against. Protocol fees belong to each quote token; read them from [`/tokens`](#get-apiv1tokens). The values come from server
 configuration and change only on restart. `program_id` is authoritative; devnet and mainnet use the
 same program id.
 
 ```json
 {
-  "protocol_fee_bps_premium": 100,
-  "protocol_fee_bps_volume": 10,
   "program_id": "ProgramIdBase58",
   "min_quote_validity_seconds": 60,
   "settlement_buffer_seconds": 50,
@@ -120,14 +118,13 @@ same program id.
   "signature_timeout_seconds": 30,
   "max_quotes_per_rfq": { "type": "limited", "value": 50 },
   "max_active_rfqs_per_taker": { "type": "limited", "value": 50 },
-  "pre_expiry_cutoff_seconds": 10800
+  "pre_expiry_cutoff_seconds": 10800,
+  "max_page_size": 200
 }
 ```
 
 | Field | Meaning |
 |---|---|
-| `protocol_fee_bps_premium` | Premium fee in basis points of the premium. See the [fee model](ws-common.md#fee-model) |
-| `protocol_fee_bps_volume` | Volume fee in basis points of the exposure: strike notional for physical products, width notional for spreads and cash puts. The charged fee is the smaller of the two fees |
 | `program_id` | The Acta program id |
 | `min_quote_validity_seconds` | Minimum `valid_until - now` accepted on a quote; at least `settlement_buffer_seconds + quote_refresh_lead_seconds`. Use this value, not the sum |
 | `settlement_buffer_seconds` | A quote stops being acceptable at `valid_until - settlement_buffer_seconds` |
@@ -137,12 +134,13 @@ same program id.
 | `max_quotes_per_rfq` | `CountLimit`: quotes kept per RFQ |
 | `max_active_rfqs_per_taker` | `CountLimit`: concurrent open RFQs per taker |
 | `pre_expiry_cutoff_seconds` | Default no-trade window before market expiry; a market may override it |
+| `max_page_size` | Largest `limit` any paged request accepts, on WS and REST |
 
 `CountLimit` is a tagged union: `{ "type": "unlimited" }` or `{ "type": "limited", "value": N }`.
 
 The example shows one configuration; read the live endpoint for the values.
 
-`503` `venue_unavailable` when the program id or protocol fees are not available.
+`503` `venue_unavailable` when the program id is not available.
 
 ### GET `/api/v1/tokens`
 
@@ -163,6 +161,14 @@ Every token of the active markets, once, sorted by mint. Markets reference token
       ],
       "role": {
         "type": "quote"
+      },
+      "session": {
+        "type": "continuous"
+      },
+      "protocol_fees": {
+        "type": "quote",
+        "premium_bps": 1250,
+        "volume_bps": 50
       }
     },
     {
@@ -183,6 +189,12 @@ Every token of the active markets, once, sorted by mint. Markets reference token
         "quote_mints": [
           "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
         ]
+      },
+      "session": {
+        "type": "continuous"
+      },
+      "protocol_fees": {
+        "type": "none"
       }
     }
   ],
@@ -195,6 +207,20 @@ Every token of the active markets, once, sorted by mint. Markets reference token
 `strike_tick` and `quote_mints` exist only inside the `underlying` role. `strike_tick` is 1e9
 scaled like strikes (`500000000` is 0.5 quote units). `oracle_feed_ids` is `[]` when no feed is
 known.
+
+`session` says when the token's price feed trades. `{ "type": "continuous" }` trades around the
+clock. A token with trading hours, such as TSLA or XAU, has
+`{ "type": "pyth_schedule", "schedule": "America/New_York;0930-1600,0930-1600,0930-1600,0930-1600,0930-1600,C,C;1225/C" }`:
+the Pyth schedule of its feed, `TZ;Mon,..,Sun;MMDD/spec,...`. Each spec is `O` (open all day), `C`
+(closed) or `HHMM-HHMM` windows joined by `&`, in the listed timezone; a holiday entry replaces that
+date's weekday entry. While the market is closed the oracle keeps its last price, and the server
+prices RFQs from it.
+
+`protocol_fees` is `{ "type": "quote", "premium_bps", "volume_bps" }` for a token that quotes
+markets, from its on-chain config, and `{ "type": "none" }` otherwise. Each quote token has its own
+fees. The program charges the smaller of `premium_bps` of the premium and `volume_bps` of the
+exposure: the strike notional for physical products and cash puts, the width notional for spreads.
+See the [fee model](ws-common.md#fee-model).
 
 `503` when token metadata is inconsistent (for example the same mint with two decimal values) or an
 underlying has no configured size rule (`code: "missing_size_rule_for_underlying_mint"`, as on WS).

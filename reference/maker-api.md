@@ -331,7 +331,7 @@ With `ud` underlying decimals, `qd` quote decimals and `width = upper_strike - l
 - Premium fee: `gross - quote(price - floor(price * protocol_fee_bps_premium / 10000))`, where `quote(x)` is the same scaled conversion with floor.
 - Volume fee: `floor(exposure * protocol_fee_bps_volume / 10000)`. `exposure` is `quote(width)` for spreads and `cash_put`, and `quote(strike)` for covered calls and cash-secured puts.
 - Protocol fee: `min(premium fee, volume fee)`. Net premium: `gross - protocol fee`.
-- `protocol_fee_bps_premium` and `protocol_fee_bps_volume` come from `GET /api/v1/venue`.
+- `protocol_fee_bps_premium` and `protocol_fee_bps_volume` are the quote token's `protocol_fees.premium_bps` and `volume_bps` in `GET /api/v1/tokens`; each quote token has its own.
 
 Worked example. A call spread 100 to 120 on 1 SOL (`quantity` 1000000000, `ud` 9, `qd` 6) at `price` 5000000000, with fees of 50 and 10 bps:
 
@@ -754,7 +754,7 @@ decimals for the market come from `GetMarketDescriptors`.
 
 The authoritative net premium is `total_premium` on the `PositionUpdated` row, applied by `revision`. `MakerPositions` and `MmSummary` return the same row.
 
-To have the amounts at once, compute them locally with the rates from `GET /api/v1/venue`: the Rust SDK's `physical_premium` for covered calls and cash-secured puts, and `SpreadTerms::premium` for spreads and cash puts. The result is an estimate if the venue rates changed.
+To have the amounts at once, compute them locally with the quote token's rates (`protocol_fees` in `GET /api/v1/tokens`): the Rust SDK's `physical_premium` for covered calls and cash-secured puts, and `SpreadTerms::premium` for spreads and cash puts. The result is an estimate if the rates changed.
 
 `quantity` is in underlying atoms and `price` is 1e9-scaled per underlying token, so the gross
 premium (before protocol fees) in quote atoms is `floor(price * quantity * 10^quote_decimals / (1e9 * 10^underlying_decimals))`
@@ -2113,6 +2113,16 @@ Indicative pricing covers covered calls and cash-secured puts only. Each request
   }
 }
 ```
+
+### Indicative rules
+
+- **Timing.** The server asks every market about every 30 seconds, once per side. A `request_id` stays open for 5 seconds; a response after that, or for an unknown `request_id`, is dropped without an error.
+- **One answer per request.** Only your first response to a `request_id` counts. Each round replaces the previous one: the published price per strike is the median of the answers that round.
+- **Partial and empty answers.** Price any subset of the requested strikes; strikes not in the request are ignored. An empty `prices` means you abstain this round; it does not clear other makers' prices. A strike nobody prices shows `best_price: null`.
+- **Strikes.** A request carries the strike ladder the taker sees, usually 4 to 10 strikes, at most 1000.
+- **Price.** Per one unit of the underlying, `1e9`-scaled, gross like a `Quote` price; there is no size. The server applies the protocol fee when it shows the price to takers.
+- **Rate limits.** A response the server accepts does not count against any rate limit. A late or unknown one counts against the session message bucket, which for a registered maker rejects excess frames instead of closing the connection.
+- **Commitment.** Indicatives are not binding and never become orders.
 
 ---
 
