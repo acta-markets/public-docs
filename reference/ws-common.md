@@ -381,9 +381,11 @@ and per-wallet message limits close it.
 | Quote messages (`Quote`, `ReplaceQuote`, `BatchQuotes`, `CancelQuote`, `CancelAllQuotes`) | Maker and Vault connections | 50/s, burst 100 | The message is rejected and the connection stays open. `Quote` and `ReplaceQuote` get `QuoteRejected` with reason `rate_limited`; `BatchQuotes` gets `BatchQuotesAck` with every result rejected the same way; cancels get a `rate_limited` error |
 | Query messages (`Get*`, `CheckQuote`, subscription messages) | Every connection | 20/s, burst 40 | `rate_limited` error for that message; the connection stays open |
 
-Once a maker or Vault operator authenticates, one shared bucket (default 1000/s, burst 2000) replaces
-all of the limits above: every message spends from it, and an exceeded budget rejects the message with
-`rate_limited` instead of closing the connection.
+Once a maker or Vault operator authenticates, one shared bucket replaces all of the limits above:
+every message spends from it, and an exceeded budget rejects the message with `rate_limited`. The
+default is 1000/s, burst 2000 for makers and 100/s, burst 200 for Vault operators. A maker connection
+stays open; a Vault connection whose messages keep being rejected for 10 seconds, with no break longer
+than a second, is closed with `4003`.
 
 `BatchQuotes` spends one token per quote in the batch, and `SwapQuote` spends five. Every other
 message spends one. Quote messages are counted only by the quote bucket, not by the connection
