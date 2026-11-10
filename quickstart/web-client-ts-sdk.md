@@ -157,7 +157,7 @@ ws.on("rfqCreated", (rfq) => console.log(rfq.rfq_id, rfq.expires_at, rfq.order_o
 
 ws.on("quoteReceived", (quote) => {
   // quote.terms is one of rfq.order_options. price is gross; AcceptQuote uses the gross price, hash-bound via order_id.
-  // net_price is Price | null: null for spreads and cash puts.
+  // net_price is what a seller receives after the protocol fee; null only without a fee configuration.
   console.log("Quote:", quote.net_price ?? quote.price, "from", quote.maker);
 });
 
@@ -182,7 +182,7 @@ Other products:
 
 Spread and cash put strikes must be multiples of the underlying's `strike_tick` (`1e9`-scaled; read it from `TokenInfo.role`). A spread needs `lower_strike < upper_strike`, and a call spread needs `lower_strike > 0`. The market's `is_put` must match the product's side.
 
-`createRfq` resolves with `requestId` on the server's `CommandAccepted` and rejects with `ActaWsRequestError` on the matching `RequestError`, a timeout or a disconnect. `RfqCreated` echoes `request_id` and may arrive before or after that receipt. Repeating a `createRfq` with the same `requestId` returns the same `rfq_id` while the RFQ is active. The RFQ TTL is server-defined within the venue range `min_rfq_timeout_seconds` .. `max_rfq_timeout_seconds` from `GET /api/v1/venue`.
+`createRfq` resolves with `requestId` on the server's `CommandAccepted` and rejects with `ActaWsRequestError` on the matching `RequestError`, a timeout or a disconnect. `RfqCreated` echoes `request_id` and may arrive before or after that receipt. Repeating a `createRfq` with the same `requestId` while the RFQ is open is rejected with `duplicate_rfq_id`, which means the first attempt created it; after the RFQ closes the same id opens a new one. `createRfqOnce` handles this: it owns the id and resends a lost reply only while the RFQ could still be open. The RFQ TTL is server-defined within the venue range `min_rfq_timeout_seconds` .. `max_rfq_timeout_seconds` from `GET /api/v1/venue`.
 
 For spreads and cash puts, `order_options` holds exactly your `terms`.
 
@@ -360,14 +360,12 @@ ws.on("sponsoredTxToSign", async (id, txBase64, signatureDeadline, lastValidBloc
     return;
   }
   if (epoch !== connectionEpoch || id !== orderIdHex || !walletMatches() || expired()) return;
-  try {
-    await ws.submitSignedSponsoredTx({ orderIdHex: id, txBase64: signedTxBase64 });
-  } catch (err) {
-    if (err instanceof ActaWsRequestError && err.delivery === "not_forwarded") {
-      // This attempt was not sent: retry, or choose another quote if no earlier attempt was unknown.
-    } else {
-      ws.getOrderStatus(id); // May have been sent: resolve before anything else.
-    }
+  // Sends the order at most once; a lost reply is resolved with GetOrderStatus, not a resend.
+  const outcome = await ws.submitOrderOnce({ orderIdHex: id, txBase64: signedTxBase64 });
+  if (outcome.type === "rejected") {
+    // Not forwarded: act on outcome.action (fix_request, refresh, ...), or choose another quote.
+  } else if (outcome.type === "reconciled" && outcome.state.type !== "confirmed") {
+    // pending or unknown: wait for OrderConfirmed / OrderFailed; never sign this order again.
   }
 });
 
@@ -378,7 +376,7 @@ try {
 }
 ```
 
-`acceptQuote` resolves on `CommandAccepted` and rejects with `ActaWsRequestError` on its `RequestError`, a timeout or a disconnect; `SponsoredTxToSign` may arrive before or after the receipt. A rejected `submitSignedSponsoredTx` carries `err.delivery`. `not_forwarded` means this attempt was not sent; if every attempt for the order returned it, retrying or choosing another quote is safe. `unknown`, or no `delivery` (timeout, disconnect), means it may have been sent: query `GetOrderStatus` before signing or submitting anything for that RFQ. `lastValidBlockHeight` is the block height the served transaction's blockhash is valid through.
+`acceptQuote` resolves on `CommandAccepted` and rejects with `ActaWsRequestError` on its `RequestError`, a timeout or a disconnect; `SponsoredTxToSign` may arrive before or after the receipt. `submitOrderOnce` above applies the following rules for you. A rejected `submitSignedSponsoredTx` carries `err.delivery`. `not_forwarded` means this attempt was not sent; if every attempt for the order returned it, retrying or choosing another quote is safe. `unknown`, or no `delivery` (timeout, disconnect), means it may have been sent: query `GetOrderStatus` before signing or submitting anything for that RFQ. `lastValidBlockHeight` is the block height the served transaction's blockhash is valid through.
 
 `verifyAndSignTakerFill` fills signature slot 1, the taker's slot. The keeper pays fees and signs slot 0, for ordinary and vault makers alike.
 

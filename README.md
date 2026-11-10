@@ -5,6 +5,7 @@
 - **Maker:** [Sandbox](reference/sandbox.md) (keypairs, registration, premium deposit), [Maker quickstart](quickstart/maker-quickstart.md), [Maker wire examples](quickstart/maker-wire-examples.md), [Maker API](reference/maker-api.md). Rust bots start with the [Rust Maker SDK](quickstart/maker-rust-sdk.md).
 - **Taker:** [Taker quickstart](quickstart/taker-quickstart.md), [Taker wire examples](quickstart/taker-wire-examples.md), [Taker API](reference/taker-api.md). TypeScript apps start with the [Web client SDK](quickstart/web-client-ts-sdk.md).
 - **Vault operator:** [Vault operator guide](quickstart/vault-operator-guide.md).
+- **Bot or agent:** [Agents and automation](quickstart/agents.md).
 
 ## Overview
 
@@ -18,6 +19,7 @@
 - [Maker quickstart](quickstart/maker-quickstart.md) — auth, first quote, fills, reconnect
 - [Maker wire examples](quickstart/maker-wire-examples.md) — complete JSON session
 - [Rust Maker SDK](quickstart/maker-rust-sdk.md) — Rust SDK integration guide
+- [Agents and automation](quickstart/agents.md) — headless keypair, pricing without an RFQ, submit and reconcile, error actions, units
 
 - [Protocol changelog](reference/protocol-changelog.md) — every wire change, newest first
 
