@@ -37,7 +37,15 @@ Any `protocol_version` other than `1.0.0` gets an `Error` with `unsupported_prot
     "min_supported_version": "1.0.0",
     "server_time_unix_ms": 1710000000000,
     "min_quote_validity_seconds": 60,
-    "settlement_buffer_seconds": 50
+    "settlement_buffer_seconds": 50,
+    "rate_limits": {
+      "connection": { "type": "bucket", "per_second": 30, "burst": 60 },
+      "wallet": { "type": "bucket", "per_second": 50, "burst": 100 },
+      "rfqs": { "type": "bucket", "per_second": 10, "burst": 20 },
+      "quotes": { "type": "unlimited" },
+      "queries": { "type": "bucket", "per_second": 20, "burst": 40 },
+      "liquidity_provider": { "type": "not_applicable" }
+    }
   }
 }
 ```

@@ -2,7 +2,7 @@
 
 How to run a headless client (a bot, a strategy loop or an LLM agent) against Acta. The protocol is
 the same one the web app uses; this page covers what changes when nobody watches the session.
-Examples use the TypeScript SDK (`@acta-markets/ts-sdk` 0.5.4 or later).
+Examples use the TypeScript SDK (`@acta-markets/ts-sdk` 0.5.5 or later).
 
 ## Headless keypair
 
@@ -144,8 +144,8 @@ Most agent bugs here are unit bugs.
 ## Pace
 
 - HTTP replies carry `X-RateLimit-Limit`, `X-RateLimit-Remaining` and, on `429`, `Retry-After`.
-- WebSocket has per-connection and per-wallet limits that close the socket with `4003`, and
-  per-category limits (RFQ, quote, query) that reject one message with `rate_limited`. Keep one
-  connection per wallet and back off on `rate_limited`.
+- `Welcome.rate_limits` lists the WebSocket budgets of the connection. The TS client paces its own
+  messages by them: a message over budget waits instead of being rejected or closing the socket.
+  The wallet budget is shared by all of a wallet's connections, so keep one connection per wallet.
 - Positions and RFQs arrive as events; do not poll them in a loop. Re-read on reconnect, which the SDK
   already does.

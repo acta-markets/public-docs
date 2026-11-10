@@ -1,5 +1,14 @@
 # Protocol changelog
 
+## 2026-11-10
+
+`acta-maker-sdk` 0.8.3 and 0.8.4, `@acta-markets/ts-sdk` 0.5.3 to 0.5.5. The program is unchanged and every change is additive.
+
+- `Welcome.rate_limits` advertises the connection's message budgets: `connection`, `wallet`, `rfqs`, `quotes`, `queries` (each `unlimited` or `bucket` with `per_second` and `burst`) and `liquidity_provider` (`shared` or `not_applicable`). See [Rate limits and admission](ws-common.md#rate-limits-and-admission). The TS client paces its messages by them.
+- Every error has an action: `retry`, `reauthenticate`, `refresh`, `reconcile`, `fix_request` or `stop`, listed in the [error catalogs](ws-common.md#error-actions). Rust: `ServerError::action`; TS: `errorAction` and `ActaWsRequestError.action`.
+- TS: `createRfqOnce` and `submitOrderOnce` resend a lost reply only when it is safe and reconcile otherwise; `previewFill` prices a fill locally; `grossFromIndicative1e9` turns a sell indicative into the gross price `previewFill` takes. See [Agents and automation](../quickstart/agents.md).
+- A repeated `RfqRequest` with an open RFQ's id is rejected with `duplicate_rfq_id`; the docs used to say it returned the RFQ.
+
 ## 2026-11-09 (later)
 
 `acta-maker-sdk` 0.8.2 and `@acta-markets/ts-sdk` 0.5.2. The program is unchanged. One breaking change: `/venue` no longer carries protocol fees, so `venue()` in 0.8.1 and 0.5.1 fails; everything else is additive.

@@ -360,9 +360,18 @@ connections from your IP), `503 too_many_connections`, `503 server_overloaded`,
 
 ### Rate limits and admission
 
-Limits are server configuration; the values below are the defaults. A limit is a token bucket:
-`per_sec` tokens refill each second up to `burst`. A per-type limit rejects the message with
-`rate_limited` and keeps the connection. The per-connection and per-wallet message limits close it.
+Limits are server configuration; the values below are the defaults. `Welcome.rate_limits` carries
+the values in force on that connection, so a client can pace itself instead of hardcoding them. A
+limit is a token bucket: `per_second` tokens refill each second up to `burst`, or `unlimited`. A
+per-type limit rejects the message with `rate_limited` and keeps the connection. The per-connection
+and per-wallet message limits close it.
+
+| `rate_limits` field | Row below |
+|---|---|
+| `connection` | Message rate |
+| `wallet` | Wallet message rate; applies once the wallet authenticates |
+| `rfqs`, `quotes`, `queries` | RFQ, quote and query messages |
+| `liquidity_provider` | Maker and Vault operator budget: `shared` on `/maker`, `/maker/data` and `/vault`, `not_applicable` on `/taker` |
 
 | Limit | Scope | Default | On exceed |
 |---|---|---|---|
@@ -371,6 +380,10 @@ Limits are server configuration; the values below are the defaults. A limit is a
 | RFQ messages (`RfqRequest`, `AcceptQuote`, `CancelRfq`, `SwapQuote`, `SwapSubmit`) | Taker and Vault connections | 10/s, burst 20 | `rate_limited` error for that message; the connection stays open |
 | Quote messages (`Quote`, `ReplaceQuote`, `BatchQuotes`, `CancelQuote`, `CancelAllQuotes`) | Maker and Vault connections | 50/s, burst 100 | The message is rejected and the connection stays open. `Quote` and `ReplaceQuote` get `QuoteRejected` with reason `rate_limited`; `BatchQuotes` gets `BatchQuotesAck` with every result rejected the same way; cancels get a `rate_limited` error |
 | Query messages (`Get*`, `CheckQuote`, subscription messages) | Every connection | 20/s, burst 40 | `rate_limited` error for that message; the connection stays open |
+
+Once a maker or Vault operator authenticates, one shared bucket (default 1000/s, burst 2000) replaces
+all of the limits above: every message spends from it, and an exceeded budget rejects the message with
+`rate_limited` instead of closing the connection.
 
 `BatchQuotes` spends one token per quote in the batch, and `SwapQuote` spends five. Every other
 message spends one. Quote messages are counted only by the quote bucket, not by the connection

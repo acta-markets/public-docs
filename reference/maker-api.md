@@ -131,7 +131,15 @@ A different `protocol_version` gets an `Error` frame and a WebSocket close with 
     "min_supported_version": "1.0.0",
     "server_time_unix_ms": 1710000000000,
     "min_quote_validity_seconds": 60,
-    "settlement_buffer_seconds": 50
+    "settlement_buffer_seconds": 50,
+    "rate_limits": {
+      "connection": { "type": "bucket", "per_second": 30, "burst": 60 },
+      "wallet": { "type": "unlimited" },
+      "rfqs": { "type": "unlimited" },
+      "quotes": { "type": "bucket", "per_second": 50, "burst": 100 },
+      "queries": { "type": "bucket", "per_second": 20, "burst": 40 },
+      "liquidity_provider": { "type": "shared", "per_second": 1000, "burst": 2000 }
+    }
   }
 }
 ```
