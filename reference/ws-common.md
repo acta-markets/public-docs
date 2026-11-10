@@ -580,45 +580,65 @@ Typed variant examples:
 
 Generic codes and `AuthError` reasons are listed in the [WS error code catalog](#ws-error-codes).
 
+### Error actions
+
+Every error maps to one action; the [ServerError catalog](#servererror-catalog) and the
+[WS error code catalog](#ws-error-codes) list it per `type`, `code` or nested reason. Branch on the
+action, not on `message`.
+
+| Action | What the client does |
+|---|---|
+| `retry` | Transient. Send the same request again after a backoff |
+| `reauthenticate` | Authenticate again, then send the same request |
+| `refresh` | An input went stale (quote, RFQ, risk authority). Fetch fresh state and build a new request |
+| `reconcile` | The command may already have taken effect. Look it up (`GetOrderStatus`, `GetSwapStatus`, `MyActiveRfqs`) before anything else |
+| `fix_request` | The request is invalid. Change it before sending again |
+| `stop` | No resend succeeds until the venue, market or account state changes |
+
+`delivery: "unknown"` overrides the action: such a submission may still execute, so the action is
+`reconcile` whatever the error. Only `retry` and `reauthenticate` allow resending an unchanged
+request. The SDKs expose the same table: `errorAction` in TypeScript and `ServerError::action` in
+Rust.
+
 ### ServerError catalog
 
 This is the closed set of `type` values. A variant without `data` has no `data` key: `{ "type": "RfqNotFound" }`. Enum values are lowercase snake_case strings.
 
-| `type` | `data` | Meaning |
-|---|---|---|
-| `Unauthenticated` | `{ action }` | The action needs an authenticated session |
-| `Unauthorized` | `{ role, action }` | Only `role` may do this |
-| `RfqNotFound` | none | The RFQ does not exist |
-| `RfqNotActive` | none | The RFQ is not accepting quotes |
-| `RfqAlreadyLocked` | none | Another order holds the RFQ |
-| `InvalidState` | `{ state }` | The RFQ is in the wrong state for this command |
-| `QuoteLocked` | `{ reason }` | The quote cannot be changed |
-| `QuoteNotFound` | none | The quote does not exist or is already gone |
-| `QuoteExpired` | none | The quote has expired |
-| `QuoteExpiryTooShort` | `{ min_seconds }` | `valid_until` is less than `min_seconds` from now |
-| `InvalidStrike` | none | The strike is not allowed on this RFQ |
-| `InvalidValidUntil` | none | `valid_until` is invalid |
-| `OrderIdMismatch` | none | `order_id` does not match the order |
-| `UnknownOrder` | none | The server does not know this `order_id` |
-| `SignatureTimeout` | none | The signature window closed; select another quote |
-| `OracleNotReady` | none | The underlying oracle is not available yet; retry |
-| `OraclePriceStale` | `{ age_seconds }` | The oracle price is `age_seconds` old |
-| `OraclePriceNotReady` | none | The oracle has no usable price yet |
-| `InvalidPositionType` | none | The product does not fit the market's side |
-| `InvalidMarket` | `{ pubkey }` | `pubkey` is not a valid market |
-| `MarketMetadataIncomplete` | `{ details }` | Active markets lack oracle PDAs or decimals |
-| `TokenMetadataIncomplete` | `{ details }` | Active markets lack token decimals |
-| `RateLimit` | a `RateLimitReason` string | A resource limit was hit |
-| `Cap` | a `CapError` object | A cap was hit. See [`caps.md`](caps.md) |
-| `InternalError` | none | Unexpected server failure |
-| `KernelNotAvailable` | none | The matching engine is not available; retry |
-| `DbDisabled` | `{ feature }` | This read needs a database and the server has none |
-| `ServerShuttingDown` | none | The server is draining; reconnect |
-| `InviteRequired` | none | The taker wallet must redeem an invite |
-| `Invite` | an `InviteErrorReason` string | The invite was refused |
-| `Claim` | a `ClaimErrorReason` string | The referral code claim was refused |
-| `WrongEndpoint` | `{ endpoint, allowed_endpoints }` | The message is not accepted on this endpoint |
-| `Generic` | `{ code, message }` | `code` is in the [WS error code catalog](#ws-error-codes) |
+| `type` | `data` | Action | Meaning |
+|---|---|---|---|
+| `Unauthenticated` | `{ action }` | `reauthenticate` | The action needs an authenticated session |
+| `Unauthorized` | `{ role, action }` | `stop` | Only `role` may do this |
+| `RfqNotFound` | none | `stop` | The RFQ does not exist |
+| `RfqNotActive` | none | `stop` | The RFQ is not accepting quotes |
+| `RfqAlreadyLocked` | none | `stop` | Another order holds the RFQ |
+| `InvalidState` | `{ state }` | `stop` | The RFQ is in the wrong state for this command |
+| `QuoteLocked` | `{ reason }` | `rfq_locked`: `stop`; `order_submitted`: `reconcile` | The quote cannot be changed |
+| `QuoteNotFound` | none | `stop` | The quote does not exist or is already gone |
+| `QuoteExpired` | none | `refresh` | The quote has expired |
+| `QuoteExpiryTooShort` | `{ min_seconds }` | `fix_request` | `valid_until` is less than `min_seconds` from now |
+| `InvalidStrike` | none | `fix_request` | The strike is not allowed on this RFQ |
+| `InvalidValidUntil` | none | `fix_request` | `valid_until` is invalid |
+| `OrderIdMismatch` | none | `fix_request` | `order_id` does not match the order |
+| `UnknownOrder` | none | `stop` | The server does not know this `order_id` |
+| `SignatureTimeout` | none | `refresh` | The signature window closed; select another quote |
+| `OracleNotReady` | none | `retry` | The underlying oracle is not available yet; retry |
+| `OraclePriceStale` | `{ age_seconds }` | `retry` | The oracle price is `age_seconds` old |
+| `OraclePriceNotReady` | none | `retry` | The oracle has no usable price yet |
+| `InvalidPositionType` | none | `fix_request` | The product does not fit the market's side |
+| `InvalidMarket` | `{ pubkey }` | `fix_request` | `pubkey` is not a valid market |
+| `MarketMetadataIncomplete` | `{ details }` | `retry` | Active markets lack oracle PDAs or decimals |
+| `TokenMetadataIncomplete` | `{ details }` | `retry` | Active markets lack token decimals |
+| `RateLimit` | a `RateLimitReason` string | `too_many_active_rfqs_per_taker`, `too_many_active_rfqs_total`: `retry`; `too_many_failed_orders_per_rfq`: `reconcile`; `too_many_quotes_per_rfq`, `too_many_sessions_per_user`: `stop` | A resource limit was hit |
+| `Cap` | a `CapError` object | `caps_unavailable`: `retry`; any exceeded cap: `fix_request` | A cap was hit. See [`caps.md`](caps.md) |
+| `InternalError` | none | `retry` | Unexpected server failure |
+| `KernelNotAvailable` | none | `retry` | The matching engine is not available; retry |
+| `DbDisabled` | `{ feature }` | `stop` | This read needs a database and the server has none |
+| `ServerShuttingDown` | none | `retry` | The server is draining; reconnect |
+| `InviteRequired` | none | `stop` | The taker wallet must redeem an invite |
+| `Invite` | an `InviteErrorReason` string | `internal_error`: `retry`; `invalid_code`: `fix_request`; other reasons: `stop` | The invite was refused |
+| `Claim` | a `ClaimErrorReason` string | `internal_error`: `retry`; `not_registered`: `stop`; other reasons: `fix_request` | The referral code claim was refused |
+| `WrongEndpoint` | `{ endpoint, allowed_endpoints }` | `fix_request` | The message is not accepted on this endpoint |
+| `Generic` | `{ code, message }` | by `code` | `code` is in the [WS error code catalog](#ws-error-codes) |
 
 | Field or string | Values |
 |---|---|
@@ -659,100 +679,100 @@ The closed set of `Generic.code` values (in `Error.data` and `RequestError.data.
 variants (`RfqNotFound`, `Unauthenticated`, `WrongEndpoint`, …) are not codes. A client that
 receives a code outside this set fails to decode the frame.
 
-| Code | Frames | Meaning |
-|---|---|---|
-| `parse_error` | Generic | The frame is not valid JSON or not a known message |
-| `too_many_parse_errors` | Generic | Consecutive parse errors exhausted the budget; the connection closes |
-| `hello_required` | Generic | The first message was not `Hello`; the connection closes |
-| `hello_timeout` | Generic | No `Hello` in time; followed by close `4005` |
-| `hello_already_sent` | Generic | A second `Hello` on one connection |
-| `rate_limited` | Generic | Connection or wallet rate limits close with `4003`; a per-type limit rejects only the message |
-| `server_overloaded` | Generic | The admission limit for this message class is full; retry with backoff. A full connection command queue sends it uncorrelated and closes with `4003` |
-| `server_busy` | Generic, AuthError | A bounded internal queue (auth, RFQ creation) is full; retry |
-| `internal_error` | Generic | Unexpected server failure; the message is sanitized |
-| `temporarily_unavailable` | Generic, AuthError | A dependency (database, matching engine, registry) is not ready; retry with backoff |
-| `clock_error` | Generic, AuthError | The server clock is before the Unix epoch |
-| `time_overflow` | Generic | The requested deadline cannot be represented |
-| `trading_paused` | Generic | Venue trading is paused; order-path messages are rejected |
-| `batch_quotes_too_large` | Generic | `BatchQuotes` exceeds `max_batch_quotes` |
-| `session_replaced` | Generic | A newer connection took over this session; do not reconnect automatically |
-| `session_expired` | Generic, AuthError | The session or resume credential expired; authenticate again |
-| `session_limit_exceeded` | AuthError | Too many concurrent sessions for this identity |
-| `session_conflict` | Generic | The server no longer binds this session to the identity |
-| `blacklisted` | Generic, AuthError | The identity is blacklisted; terminal |
-| `maker_unregistered` | Generic | The maker left the registry while connected; the connection closes |
-| `maker_not_registered` | Generic, AuthError | The pubkey is not a registered maker |
-| `auth_timeout` | AuthError | Authentication did not finish in time; followed by close `4001` |
-| `too_many_auth_attempts` | AuthError | Auth attempt budget exhausted; the connection closes |
-| `already_authenticated` | AuthError | Auth started on an authenticated connection |
-| `challenge_not_issued` | AuthError | `AuthChallenge` without a preceding `AuthRequest` |
-| `challenge_mismatch` | AuthError | The signed challenge differs from the issued one |
-| `pubkey_mismatch` | AuthError | `AuthChallenge.pubkey` differs from the `StartAuth` pubkey |
-| `invalid_signature` | AuthError | The challenge signature does not verify |
-| `operator_mismatch` | AuthError | The Vault challenge was signed by another operator |
-| `vault_auth_not_started` | AuthError | Vault challenge answered without `StartVaultAuth` |
-| `vault_auth_required` | Generic | A Vault message on a session without Vault authority |
-| `vault_resume_not_supported` | AuthError | `ResumeAuth` on `/vault` |
-| `vault_operator_unauthorized` | AuthError | The operator holds no current grant for the Vault |
-| `vault_authorization_unavailable` | AuthError | Vault authority could not be read; retry |
-| `vault_session_invalidated` | Generic | The Vault grant changed or was revoked; the session closes |
-| `invalid_vault_subscription` | Generic | The subscription is not allowed for a Vault session |
-| `invalid_products` | Generic | `Subscribe.products` is empty |
-| `subscription_scope_too_large` | Generic | The two mint lists exceed 1024 entries after each is deduplicated; the existing scope stays unchanged. See [Subscribe](maker-api.md#subscribe) |
-| `history_projection_incomplete` | Generic | A history read lacks listener metadata; retrying does not help until reconciliation |
-| `invalid_limit` | Generic | Page `limit` outside the accepted range for the query |
-| `invalid_cursor` | Generic | Page cursor is malformed or does not match the requested cursor format |
-| `invalid_timeout` | Generic | `timeout_seconds` outside the venue's `min_rfq_timeout_seconds` to `max_rfq_timeout_seconds` |
-| `market_not_found` | Generic | The market is not in the registry |
-| `invalid_program_id` | Generic | The server program id is misconfigured |
-| `unsupported_protocol_version` | Generic | `Hello.protocol_version` is not `1.0.0`; followed by close `4006` |
-| `invalid_strike_notional` | Generic | Strike × quantity is zero or not representable on chain |
-| `insufficient_collateral` | Generic | Wallet taker cannot fund the RFQ collateral. `RfqRequest` is rejected before maker broadcast; `message` includes `required` and `available` in collateral atoms |
-| `invalid_quantity_size_rule` | Generic | The quantity is outside the size rule |
-| `product_not_allowed` | Generic | The pair policy is absent or does not allow the requested product |
-| `missing_size_rule_for_underlying_mint` | Generic | No size rule is configured for the underlying |
-| `invalid_underlying_mint_key` | Generic | The tick configuration key is not a valid mint |
-| `missing_tick_for_underlying_mint` | Generic | No strike tick is configured for the underlying |
-| `ladder_strike_source_unavailable` | Generic | The strike ladder source failed |
-| `invalid_strikes` | Generic | The requested strike set is invalid |
-| `taker_buy_unsupported` | Generic | `RfqRequest` with `side: "buy"` from a vault session; a vault writes buys only by quoting |
-| `spread_invalid_strikes` | Generic | Zero, reversed or otherwise invalid spread strikes |
-| `spread_tick_violation` | Generic | A spread strike is off the underlying mint's strike tick |
-| `spread_premium_invalid` | Generic | Price is at or above the width, the gross transfer is zero, or the cash arithmetic is unrepresentable |
-| `duplicate_rfq_id` | Generic | The RFQ id already exists |
-| `rfq_closed` | Generic | The RFQ is closed |
-| `market_finalized` | Generic | The market is finalized |
-| `market_disabled` | Generic | The market is disabled |
-| `market_expired` | Generic | The market expired |
-| `market_pre_expiry` | Generic | The market is in its pre-expiry window |
-| `quote_identity_mismatch` | Generic | The quote `terms` or `side` differ from the RFQ |
-| `quote_refresh_required` | Generic | The quote must be refreshed; the maker got `QuoteRefreshRequested` |
-| `duplicate_quote` | Generic | Duplicate quote `order_id` |
-| `resource_limit` | Generic | A per-identity resource limit was reached |
-| `kernel_timeout` | Generic | The matching engine did not answer in time; a submission's outcome is unknown |
-| `caps_authority_unavailable` | Generic | Quote risk authority changed; request a new quote |
-| `vault_not_tradable` | Generic | A Vault counterparty cannot take this position now |
-| `invalid_vault_counterparty` | Generic | Writer and holder must be distinct Vaults |
-| `tx_build_failed` | Generic | The sponsored transaction could not be built; the message is from a fixed list |
-| `order_already_submitted` | Generic | The order was already handed to settlement |
-| `sponsored_tx_not_ready` | Generic | The sponsored transaction is not ready yet |
-| `invalid_signed_tx` | Generic | The signed transaction does not decode or match |
-| `invalid_amount` | Generic | The swap amount is not a positive u64 string |
-| `vault_authorization_failed` | Generic | Vault authorization is no longer valid |
-| `vault_projection_unavailable` | Generic | Vault state is temporarily unavailable |
-| `vault_safety_mode` | Generic | Vault safety mode forbids the action |
-| `vault_pending_capital` | Generic | The idle capital window must be closed and unpriced |
-| `vault_trading_closed` | Generic | The Vault cycle does not permit trading |
-| `vault_mismatch` | Generic | The request Vault differs from the session Vault |
-| `vault_governance_required` | Generic | Recovery and closing swaps need governance |
-| `vault_swap_invalid_state` | Generic | Vault state does not permit this swap |
-| `vault_swap_invalid_amount` | Generic | The swap amount is invalid for the Vault |
-| `vault_swap_idempotency_conflict` | Generic | The swap id is already bound to different swap data |
-| `vault_swap_quote_expired` | Generic | The swap quote expired; request a new one |
-| `vault_swap_signed_tx_rejected` | Generic | The signed swap transaction was rejected |
-| `vault_swap_oracle_stale` | Generic | The Pyth price is too old; retry within seconds |
-| `vault_swap_route_unavailable` | Generic | No swap route right now |
-| `vault_swap_service_unavailable` | Generic | Another transient swap-service failure |
+| Code | Frames | Action | Meaning |
+|---|---|---|---|
+| `parse_error` | Generic | `fix_request` | The frame is not valid JSON or not a known message |
+| `too_many_parse_errors` | Generic | `fix_request` | Consecutive parse errors exhausted the budget; the connection closes |
+| `hello_required` | Generic | `fix_request` | The first message was not `Hello`; the connection closes |
+| `hello_timeout` | Generic | `retry` | No `Hello` in time; followed by close `4005` |
+| `hello_already_sent` | Generic | `fix_request` | A second `Hello` on one connection |
+| `rate_limited` | Generic | `retry` | Connection or wallet rate limits close with `4003`; a per-type limit rejects only the message |
+| `server_overloaded` | Generic | `retry` | The admission limit for this message class is full; retry with backoff. A full connection command queue sends it uncorrelated and closes with `4003` |
+| `server_busy` | Generic, AuthError | `retry` | A bounded internal queue (auth, RFQ creation) is full; retry |
+| `internal_error` | Generic | `retry` | Unexpected server failure; the message is sanitized |
+| `temporarily_unavailable` | Generic, AuthError | `retry` | A dependency (database, matching engine, registry) is not ready; retry with backoff |
+| `clock_error` | Generic, AuthError | `retry` | The server clock is before the Unix epoch |
+| `time_overflow` | Generic | `fix_request` | The requested deadline cannot be represented |
+| `trading_paused` | Generic | `stop` | Venue trading is paused; order-path messages are rejected |
+| `batch_quotes_too_large` | Generic | `fix_request` | `BatchQuotes` exceeds `max_batch_quotes` |
+| `session_replaced` | Generic | `stop` | A newer connection took over this session; do not reconnect automatically |
+| `session_expired` | Generic, AuthError | `reauthenticate` | The session or resume credential expired; authenticate again |
+| `session_limit_exceeded` | AuthError | `stop` | Too many concurrent sessions for this identity |
+| `session_conflict` | Generic | `reauthenticate` | The server no longer binds this session to the identity |
+| `blacklisted` | Generic, AuthError | `stop` | The identity is blacklisted; terminal |
+| `maker_unregistered` | Generic | `stop` | The maker left the registry while connected; the connection closes |
+| `maker_not_registered` | Generic, AuthError | `stop` | The pubkey is not a registered maker |
+| `auth_timeout` | AuthError | `reauthenticate` | Authentication did not finish in time; followed by close `4001` |
+| `too_many_auth_attempts` | AuthError | `retry` | Auth attempt budget exhausted; the connection closes |
+| `already_authenticated` | AuthError | `fix_request` | Auth started on an authenticated connection |
+| `challenge_not_issued` | AuthError | `fix_request` | `AuthChallenge` without a preceding `AuthRequest` |
+| `challenge_mismatch` | AuthError | `fix_request` | The signed challenge differs from the issued one |
+| `pubkey_mismatch` | AuthError | `fix_request` | `AuthChallenge.pubkey` differs from the `StartAuth` pubkey |
+| `invalid_signature` | AuthError | `fix_request` | The challenge signature does not verify |
+| `operator_mismatch` | AuthError | `fix_request` | The Vault challenge was signed by another operator |
+| `vault_auth_not_started` | AuthError | `fix_request` | Vault challenge answered without `StartVaultAuth` |
+| `vault_auth_required` | Generic | `reauthenticate` | A Vault message on a session without Vault authority |
+| `vault_resume_not_supported` | AuthError | `fix_request` | `ResumeAuth` on `/vault` |
+| `vault_operator_unauthorized` | AuthError | `stop` | The operator holds no current grant for the Vault |
+| `vault_authorization_unavailable` | AuthError | `retry` | Vault authority could not be read; retry |
+| `vault_session_invalidated` | Generic | `reauthenticate` | The Vault grant changed or was revoked; the session closes |
+| `invalid_vault_subscription` | Generic | `fix_request` | The subscription is not allowed for a Vault session |
+| `invalid_products` | Generic | `fix_request` | `Subscribe.products` is empty |
+| `subscription_scope_too_large` | Generic | `fix_request` | The two mint lists exceed 1024 entries after each is deduplicated; the existing scope stays unchanged. See [Subscribe](maker-api.md#subscribe) |
+| `history_projection_incomplete` | Generic | `stop` | A history read lacks listener metadata; retrying does not help until reconciliation |
+| `invalid_limit` | Generic | `fix_request` | Page `limit` outside the accepted range for the query |
+| `invalid_cursor` | Generic | `fix_request` | Page cursor is malformed or does not match the requested cursor format |
+| `invalid_timeout` | Generic | `fix_request` | `timeout_seconds` outside the venue's `min_rfq_timeout_seconds` to `max_rfq_timeout_seconds` |
+| `market_not_found` | Generic | `fix_request` | The market is not in the registry |
+| `invalid_program_id` | Generic | `stop` | The server program id is misconfigured |
+| `unsupported_protocol_version` | Generic | `stop` | `Hello.protocol_version` is not `1.0.0`; followed by close `4006` |
+| `invalid_strike_notional` | Generic | `fix_request` | Strike × quantity is zero or not representable on chain |
+| `insufficient_collateral` | Generic | `fix_request` | Wallet taker cannot fund the RFQ collateral. `RfqRequest` is rejected before maker broadcast; `message` includes `required` and `available` in collateral atoms |
+| `invalid_quantity_size_rule` | Generic | `fix_request` | The quantity is outside the size rule |
+| `product_not_allowed` | Generic | `fix_request` | The pair policy is absent or does not allow the requested product |
+| `missing_size_rule_for_underlying_mint` | Generic | `stop` | No size rule is configured for the underlying |
+| `invalid_underlying_mint_key` | Generic | `stop` | The tick configuration key is not a valid mint |
+| `missing_tick_for_underlying_mint` | Generic | `stop` | No strike tick is configured for the underlying |
+| `ladder_strike_source_unavailable` | Generic | `retry` | The strike ladder source failed |
+| `invalid_strikes` | Generic | `fix_request` | The requested strike set is invalid |
+| `taker_buy_unsupported` | Generic | `fix_request` | `RfqRequest` with `side: "buy"` from a vault session; a vault writes buys only by quoting |
+| `spread_invalid_strikes` | Generic | `fix_request` | Zero, reversed or otherwise invalid spread strikes |
+| `spread_tick_violation` | Generic | `fix_request` | A spread strike is off the underlying mint's strike tick |
+| `spread_premium_invalid` | Generic | `fix_request` | Price is at or above the width, the gross transfer is zero, or the cash arithmetic is unrepresentable |
+| `duplicate_rfq_id` | Generic | `reconcile` | The RFQ id already exists |
+| `rfq_closed` | Generic | `refresh` | The RFQ is closed |
+| `market_finalized` | Generic | `stop` | The market is finalized |
+| `market_disabled` | Generic | `stop` | The market is disabled |
+| `market_expired` | Generic | `stop` | The market expired |
+| `market_pre_expiry` | Generic | `stop` | The market is in its pre-expiry window |
+| `quote_identity_mismatch` | Generic | `fix_request` | The quote `terms` or `side` differ from the RFQ |
+| `quote_refresh_required` | Generic | `refresh` | The quote must be refreshed; the maker got `QuoteRefreshRequested` |
+| `duplicate_quote` | Generic | `reconcile` | Duplicate quote `order_id` |
+| `resource_limit` | Generic | `retry` | A per-identity resource limit was reached |
+| `kernel_timeout` | Generic | `reconcile` | The matching engine did not answer in time; a submission's outcome is unknown |
+| `caps_authority_unavailable` | Generic | `refresh` | Quote risk authority changed; request a new quote |
+| `vault_not_tradable` | Generic | `stop` | A Vault counterparty cannot take this position now |
+| `invalid_vault_counterparty` | Generic | `fix_request` | Writer and holder must be distinct Vaults |
+| `tx_build_failed` | Generic | `retry` | The sponsored transaction could not be built; the message is from a fixed list |
+| `order_already_submitted` | Generic | `reconcile` | The order was already handed to settlement |
+| `sponsored_tx_not_ready` | Generic | `retry` | The sponsored transaction is not ready yet |
+| `invalid_signed_tx` | Generic | `fix_request` | The signed transaction does not decode or match |
+| `invalid_amount` | Generic | `fix_request` | The swap amount is not a positive u64 string |
+| `vault_authorization_failed` | Generic | `reauthenticate` | Vault authorization is no longer valid |
+| `vault_projection_unavailable` | Generic | `retry` | Vault state is temporarily unavailable |
+| `vault_safety_mode` | Generic | `stop` | Vault safety mode forbids the action |
+| `vault_pending_capital` | Generic | `stop` | The idle capital window must be closed and unpriced |
+| `vault_trading_closed` | Generic | `stop` | The Vault cycle does not permit trading |
+| `vault_mismatch` | Generic | `fix_request` | The request Vault differs from the session Vault |
+| `vault_governance_required` | Generic | `stop` | Recovery and closing swaps need governance |
+| `vault_swap_invalid_state` | Generic | `stop` | Vault state does not permit this swap |
+| `vault_swap_invalid_amount` | Generic | `fix_request` | The swap amount is invalid for the Vault |
+| `vault_swap_idempotency_conflict` | Generic | `fix_request` | The swap id is already bound to different swap data |
+| `vault_swap_quote_expired` | Generic | `refresh` | The swap quote expired; request a new one |
+| `vault_swap_signed_tx_rejected` | Generic | `refresh` | The signed swap transaction was rejected |
+| `vault_swap_oracle_stale` | Generic | `retry` | The Pyth price is too old; retry within seconds |
+| `vault_swap_route_unavailable` | Generic | `retry` | No swap route right now |
+| `vault_swap_service_unavailable` | Generic | `retry` | Another transient swap-service failure |
 
 ## Correlation semantics
 

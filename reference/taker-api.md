@@ -329,7 +329,7 @@ The fee bps in the example are illustrative. `QuoteReceived.net_price` shows the
 }
 ```
 
-`request_id` correlates the reply and is the idempotency key: repeating it returns the RFQ it created. The reply is exactly one `CommandAccepted { request_id }` or `RequestError { request_id, error, delivery }`; see [correlation semantics](ws-common.md#correlation-semantics). `quantity` is in underlying atoms for every product. `timeout_seconds` must be within the venue range `min_rfq_timeout_seconds` to `max_rfq_timeout_seconds`; a value outside it is rejected with `invalid_timeout`.
+`request_id` correlates the reply and becomes the RFQ id. While that RFQ is open, repeating the request is rejected with `duplicate_rfq_id`, which proves the first attempt created it; after it closes, the same id creates a new RFQ. `createRfqOnce` in the TypeScript SDK resends a lost reply only inside that window. The reply is exactly one `CommandAccepted { request_id }` or `RequestError { request_id, error, delivery }`; see [correlation semantics](ws-common.md#correlation-semantics). `quantity` is in underlying atoms for every product. `timeout_seconds` must be within the venue range `min_rfq_timeout_seconds` to `max_rfq_timeout_seconds`; a value outside it is rejected with `invalid_timeout`.
 
 A wallet taker's collateral is checked before broadcast. The wallet's token account must hold the full amount, or the RFQ is rejected with `insufficient_collateral`. If the server cannot read the balance, the RFQ goes ahead and an underfunded fill fails on chain:
 
