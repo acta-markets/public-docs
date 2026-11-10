@@ -64,7 +64,7 @@ Before signing, validate the complete challenge with the [canonical auth rules](
 }
 ```
 
-The signature is verified directly against `pubkey`. Auth must finish within 15 seconds of the challenge. The default allows three failed attempts and closes the connection on the fourth. On success the server sends `AuthSuccess { session_id, expires_at, maker_pda }` (`maker_pda` is `null` for a taker) followed by `Snapshot`.
+The signature is verified directly against `pubkey`. Auth must finish within 15 seconds of the challenge. The default allows three failed attempts and closes the connection on the fourth. On success the server sends `AuthSuccess { session_id, expires_at, role }` (`role` is `{ "type": "taker" }` for a taker) followed by `Snapshot`.
 
 ### Session resume
 
@@ -200,7 +200,7 @@ Makers stream `QuoteReceived`. Each quote is firm and hash-bound through `order_
 
 - `terms` is one of the RFQ's `order_options`.
 - `price` is the gross premium per underlying unit (`1e9` scale). Use it with `order_id` for all order operations.
-- `net_price` is `Price | null`. It is a display estimate after the protocol fee. It is `null` for spreads and cash puts, and when the server has no fee configuration. The authoritative net premium is computed on chain at open and appears as `total_premium` on the position row.
+- `net_price` is a display estimate after the protocol fee: what you receive on a sell, the gross price on a buy. The authoritative net premium is computed on chain at open and appears as `total_premium` on the position row.
 
 You pick the winner; the server's ranking is advisory. One quote fills the full quantity, with no partial fills.
 

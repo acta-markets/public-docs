@@ -193,16 +193,21 @@ The two mint lists may contain at most 1024 entries in total after each list is 
         "quote": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "expiry_ts": 1710600000,
         "is_put": false,
-        "products": ["covered_call", "call_spread"],
+        "products": [
+          "covered_call",
+          "call_spread"
+        ],
         "status": "active",
-        "settlement_price": null
+        "settlement": {
+          "type": "pending"
+        }
       }
     ]
   }
 }
 ```
 
-`Snapshot.markets` lists the active markets as compact [`MarketInfo`](ws-common.md#marketinfo). `settlement_price` is `null` until the market settles. `products` is described under [Market products](#market-products). This is a different DTO from the `MarketDescriptor` in `RfqBroadcast`, which has additional fields (`chain_id`, `program_id`, `market_pda`, `underlying_mint`, `quote_mint`, `collateral_mint`, `settlement_mint`). Use `GetMarketDescriptors` for the full market descriptor.
+`Snapshot.markets` lists the active markets as compact [`MarketInfo`](ws-common.md#marketinfo). `settlement` is `{ "type": "pending" }` until the market settles, then `{ "type": "fixed", "price" }`. `products` is described under [Market products](#market-products). This is a different DTO from the `MarketDescriptor` in `RfqBroadcast`, which has additional fields (`chain_id`, `program_id`, `market_pda`, `underlying_mint`, `quote_mint`, `collateral_mint`, `settlement_mint`). Use `GetMarketDescriptors` for the full market descriptor.
 
 ---
 
@@ -512,7 +517,7 @@ A cash put is economically a put spread with lower strike 0. The wire name is `c
 
 `gross_price` is the same value as `price` in the `Quote` message.
 
-`maker` is the `maker_owner` pubkey. It is not the maker PDA (`AuthSuccess.maker_pda`) and not the `quote_signing` key. For a vault operator's quote it is the vault PDA. `taker` is `RfqBroadcast.taker`.
+`maker` is the `maker_owner` pubkey. It is not the maker PDA (`AuthSuccess.role.maker_pda`) and not the `quote_signing` key. For a vault operator's quote it is the vault PDA. `taker` is `RfqBroadcast.taker`.
 
 #### Test vectors
 
@@ -560,7 +565,7 @@ Atomic cancel-and-resubmit for a specific quote. Cancels the quote identified by
 }
 ```
 
-`old_order_id` identifies the specific quote being replaced. Server responds with `QuoteAcknowledged` (with `replaced_order_id`) on success, or `QuoteRejected` / `Error` on failure.
+`old_order_id` identifies the specific quote being replaced. Server responds with `QuoteAcknowledged` (with `replaced`) on success, or `QuoteRejected` / `Error` on failure.
 
 **Errors:**
 - `QuoteRejected` with standard reasons (`invalid_strike`, `cap_exceeded`, etc.) — new quote failed validation; old quote remains active
@@ -615,7 +620,9 @@ Each `results` entry is `{ "status": "acknowledged", "data": <QuoteAcknowledged>
         "data": {
           "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
           "order_id": "0xaaaa2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-          "replaced_order_id": null
+          "replaced": {
+            "type": "none"
+          }
         }
       },
       {
@@ -754,7 +761,7 @@ Identified by `(rfq_id, terms)`, not `order_id`. If quoting several terms per RF
 ```
 
 `QuoteFilled` is the fill-details event for the winning maker. `market_pda`,
-`expiry_ts` (market expiry, Unix seconds; `null` if the server no longer knows the market, so resolve it from `market_pda`), `terms` and `side` identify the
+`expiry_ts` (market expiry, Unix seconds), `terms` and `side` identify the
 market and product without the RFQ, so a fill can be attributed after a restart. Mint
 decimals for the market come from `GetMarketDescriptors`.
 
@@ -784,12 +791,14 @@ Current runtime behavior for successful fills:
   "data": {
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-    "replaced_order_id": null
+    "replaced": {
+      "type": "none"
+    }
   }
 }
 ```
 
-`replaced_order_id` is the displaced order when the new quote replaced a prior quote from the same maker on the same `(rfq, terms)`. It is `null` otherwise.
+`replaced` is `{ "type": "replaced", "order_id" }` with the displaced order when the new quote replaced a prior quote from the same maker on the same `(rfq, terms)`, and `{ "type": "none" }` otherwise.
 
 ### QuoteBestStatus (server -> maker)
 
@@ -800,13 +809,16 @@ Current runtime behavior for successful fills:
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
     "is_best": true,
-    "current_best_price": 5000000000
+    "current_best_price": {
+      "type": "quoted",
+      "price": 5000000000
+    }
   }
 }
 ```
 
 `is_best`: whether the maker's quote is currently the highest premium.
-`current_best_price`: the best price on the RFQ (may be another maker's price). `null` when there is none.
+`current_best_price`: the best price on the RFQ (may be another maker's price), as `{ "type": "quoted", "price" }`, or `{ "type": "none" }` when there is none.
 
 ### QuoteOutbid (server -> maker)
 
@@ -817,13 +829,16 @@ Current runtime behavior for successful fills:
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
     "your_price": 5000000000,
-    "current_best_price": 5500000000
+    "current_best_price": {
+      "type": "quoted",
+      "price": 5500000000
+    }
   }
 }
 ```
 
 `your_price`: the maker's current quote price.
-`current_best_price`: the new best price that outbid the maker. `null` when there is none.
+`current_best_price`: the new best price that outbid the maker, as `{ "type": "quoted", "price" }`, or `{ "type": "none" }` when there is none.
 
 ### QuoteExpired (server -> maker)
 
@@ -868,14 +883,19 @@ Always sent when a quote expires.
     "rfq_version": 3,
     "reason": "filled",
     "your_quote": {
+      "type": "quoted",
       "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
       "status": "outbid",
       "price": 5000000000
     },
     "winner": {
+      "type": "winner",
       "maker": "A87ysNWAmmqQHafLSQGbYSLhtcV3BjXctR88EWuSobGP",
       "price": 5500000000,
-      "tx_signature": "<base58 transaction signature>"
+      "transaction": {
+        "type": "sent",
+        "signature": "<base58 transaction signature>"
+      }
     },
     "closed_at": 1710000042
   }
@@ -884,11 +904,11 @@ Always sent when a quote expires.
 
 `reason` values: `expired`, `taker_cancelled`, `filled`, `market_expired`.
 
-`your_quote` is this session's quote on the RFQ, or `null` when it has none. `your_quote.status` values: `expired`, `outbid`, `cancelled`, `filled`. A session with several quotes gets one of them; a session that won gets the winning quote.
+`your_quote` is `{ "type": "quoted", "order_id", "status", "price" }` with this session's quote on the RFQ, or `{ "type": "none" }` when it has none. `your_quote.status` values: `expired`, `outbid`, `cancelled`, `filled`. A session with several quotes gets one of them; a session that won gets the winning quote.
 
-`winner` is set on `filled` and `null` otherwise.
+`winner` is `{ "type": "winner", "maker", "price", "transaction" }` on `filled` and `{ "type": "none" }` otherwise. `transaction` is `{ "type": "sent", "signature" }` once the transaction is sent, otherwise `{ "type": "pending" }`.
 
-- On `filled`, every recipient gets `winner`, including `winner.tx_signature`. The winning session gets `your_quote.status` `filled`, a session with another live quote gets `outbid`, and a session whose quotes are already gone gets `null`.
+- On `filled`, every recipient gets `winner`, including `winner.transaction`. The winning session gets `your_quote.status` `filled`, a session with another live quote gets `outbid`, and a session whose quotes are already gone gets `{ "type": "none" }`.
 - On any other reason, a session with a live quote gets it with status `expired` (reason `expired`) or `cancelled`. A session whose quotes are already gone gets `null`.
 
 ### RfqLocked (server -> maker)
@@ -1261,7 +1281,9 @@ Uses [common paging](ws-common.md#paging).
           "call_spread"
         ],
         "status": "active",
-        "settlement_price": null
+        "settlement": {
+          "type": "pending"
+        }
       }
     ],
     "next_cursor": null
@@ -1269,7 +1291,7 @@ Uses [common paging](ws-common.md#paging).
 }
 ```
 
-Same compact [`MarketInfo`](ws-common.md#marketinfo) shape as `Snapshot.markets`; active markets only. `status` is `active`, `closed` or `finalized`. `settlement_price` is `null` until the market settles.
+Same compact [`MarketInfo`](ws-common.md#marketinfo) shape as `Snapshot.markets`; active markets only. `status` is `active`, `closed` or `finalized`. `settlement` is `{ "type": "pending" }` until the market settles.
 
 ### Expiries payload
 
@@ -1383,7 +1405,7 @@ type MarketDescriptorInfo = {
 
 Uses [common paging](ws-common.md#paging).
 
-`MakerPositions` returns `MakerPositionInfo[]`:
+`MakerPositions` returns `PositionInfo[]`, the same row takers get, with token symbols:
 
 ```json
 {
@@ -1475,7 +1497,7 @@ Field semantics:
 
 #### Position revisions
 
-Every full position row (`MakerPositionInfo`, and `PositionInfo` in `PositionUpdated`) carries `revision`. Compare `(slot, transaction_index, instruction_index)` lexicographically. Apply a row only when its revision is greater than the stored revision for the same `pda`. Rows with equal revisions describe the same state on every read path (`PositionUpdated`, `GetMakerPositions`, `MmSummary`), regardless of filters.
+Every full position row (`PositionInfo` in `MakerPositions`, `MmSummary` and `PositionUpdated`) carries `revision`. Compare `(slot, transaction_index, instruction_index)` lexicographically. Apply a row only when its revision is greater than the stored revision for the same `pda`. Rows with equal revisions describe the same state on every read path (`PositionUpdated`, `GetMakerPositions`, `MmSummary`), regardless of filters.
 
 `PositionUpdated` is coalesced per `pda` to the newest revision. It is not a log with one message per transition.
 
@@ -1663,7 +1685,7 @@ heavy read.
 Field semantics:
 - `maker_pda`: on-chain maker account PDA (base58)
 - `caps`: same shape as the [`MyCaps`](#mycaps-payload) response (echoes `request_id` from `GetMmSummary`)
-- `positions`: `MakerPositionInfo[]` — see [MakerPositions payload](#makerpositions-payload). Positions are ordered newest first; follow `next_cursor` to continue the compound reply.
+- `positions`: `PositionInfo[]` — see [MakerPositions payload](#makerpositions-payload). Positions are ordered newest first; follow `next_cursor` to continue the compound reply.
 - `active_quotes`: `MakerQuoteInfo[]` — see [MyQuotes payload](#myquotes-payload)
 - `markets`: `MakerMarketInfo[]` — see [MakerMarkets payload](#makermarkets-payload)
 - `tokens`: `TokenInfo[]` — see [`TokenInfo`](ws-common.md#tokeninfo)
@@ -1694,7 +1716,10 @@ Uses [common paging](ws-common.md#paging).
         "quantity": 1000000000,
         "expires_at": 1710000050,
         "quotes_count": 3,
-        "best_price": 5500000000,
+        "best_price": {
+          "type": "quoted",
+          "price": 5500000000
+        },
         "order_options": [
           {
             "type": "covered_call",
@@ -1712,7 +1737,7 @@ Uses [common paging](ws-common.md#paging).
 }
 ```
 
-`best_price` is `null` if no quotes have been submitted yet.
+`best_price` is `{ "type": "none" }` if no quotes have been submitted yet, otherwise `{ "type": "quoted", "price" }`.
 
 ### GetMyTrades (maker -> server)
 
@@ -1770,7 +1795,10 @@ Uses [common paging](ws-common.md#paging).
         "quantity": 1000000000,
         "price": 5000000000,
         "tx_signature": "<base58 transaction signature>",
-        "position_pda": "75NqraLLofiLUpNQg2wUPG6CJpxcaGEZUwuNrnAgvcTP",
+        "position": {
+          "type": "confirmed",
+          "position_pda": "75NqraLLofiLUpNQg2wUPG6CJpxcaGEZUwuNrnAgvcTP"
+        },
         "confirmed_at": 1710000042
       }
     ],
@@ -1782,7 +1810,7 @@ Uses [common paging](ws-common.md#paging).
 Field semantics:
 - `price`: gross premium per 1 underlying unit (1e9 scale)
 - `confirmed_at`: Unix timestamp seconds when the trade was confirmed on-chain
-- `tx_signature` is always present; `position_pda` may be `null`
+- `tx_signature` is always present; `position` is `{ "type": "confirmed", "position_pda" }` or `{ "type": "pending" }`
 
 `MyTrades` returns **confirmed trades only** — in-flight orders are visible via `GetOrderStatus` and the order push flow, not here. The cursor is therefore stable.
 
@@ -1887,7 +1915,12 @@ Received when subscribed to the corresponding channel.
   "type": "StatsUpdate",
   "data": {
     "stats": {
-      "usd": { "notional_24h": "1500.00", "premium_24h": "49.00", "priced_trades_24h": 149 },
+      "usd": {
+        "type": "available",
+        "notional_24h": "1500.00",
+        "premium_24h": "49.00",
+        "priced_trades_24h": 149
+      },
       "total_volume_24h": 1000000,
       "total_trades_24h": 150,
       "spread_trades_24h": 12,
@@ -1914,14 +1947,23 @@ the last representable value after overflow; prefer the USD object.
   "type": "PositionUpdated",
   "data": {
     "position": {
-      "revision": { "slot": 250000000, "transaction_index": 12, "instruction_index": 1 },
+      "revision": {
+        "slot": 250000000,
+        "transaction_index": 12,
+        "instruction_index": 1
+      },
       "pda": "75NqraLLofiLUpNQg2wUPG6CJpxcaGEZUwuNrnAgvcTP",
       "market": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
       "underlying_mint": "So11111111111111111111111111111111111111112",
+      "underlying_symbol": "SOL",
       "underlying_decimals": 9,
       "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "quote_symbol": "USDC",
       "quote_decimals": 6,
-      "terms": { "type": "covered_call", "strike": 160000000000 },
+      "terms": {
+        "type": "covered_call",
+        "strike": 160000000000
+      },
       "side": "sell",
       "state": "funded",
       "quantity": 1000000000,
@@ -1929,7 +1971,11 @@ the last representable value after overflow; prefer the USD object.
       "total_premium": 4975000,
       "created_at": 1710000042,
       "expiry_ts": 1710600000,
-      "underlying_price": { "type": "available", "price": 151000000000, "published_at": 1710000040 }
+      "underlying_price": {
+        "type": "available",
+        "price": 151000000000,
+        "published_at": 1710000040
+      }
     },
     "update_type": "funded"
   }
@@ -1986,9 +2032,14 @@ Sent to the owner's sessions when the maker's capacity changes without a positio
     "quote": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
     "expiry_ts": 1710600000,
     "is_put": false,
-    "products": ["covered_call", "call_spread"],
+    "products": [
+      "covered_call",
+      "call_spread"
+    ],
     "status": "active",
-    "settlement_price": null
+    "settlement": {
+      "type": "pending"
+    }
   }
 }
 ```

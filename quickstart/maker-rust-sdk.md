@@ -220,7 +220,7 @@ Lifecycle events arrive through the managed message receiver with a connection e
 
 | Event | Meaning |
 |---|---|
-| `QuoteAcknowledged` | Server accepted the quote. `replaced_order_id` is `Some` on a replace. |
+| `QuoteAcknowledged` | Server accepted the quote. `replaced` is `ReplacedQuote::Replaced` on a replace. |
 | `QuoteRejected` | Refused; see `reason`. Bare retries fail identically. |
 | `QuoteBestStatus` / `QuoteOutbid` | Current book position. |
 | `QuoteRefreshRequested` | Settlement-buffer cutoff approaching. Resubmit with `valid_until ≥ min_valid_until`. Identified by `(rfq_id, terms)`. |
@@ -239,13 +239,13 @@ Use `ReplaceQuote` for repricing. The prior quote is removed only after the repl
 quote_client.replace_in_epoch(quote.into_replacement(old_order_id), recovery_epoch).await?;
 ```
 
-The preimage is constructed identically to a fresh `Quote` with a new `nonce` and `order_id`. The server confirms with `QuoteAcknowledged { replaced_order_id: Some(old_order_id) }`. Retain `old_order_id` until the replacement is acknowledged, since events keyed to the old id may still be in flight.
+The preimage is constructed identically to a fresh `Quote` with a new `nonce` and `order_id`. The server confirms with `QuoteAcknowledged { replaced: ReplacedQuote::Replaced { order_id: old_order_id } }`. Retain `old_order_id` until the replacement is acknowledged, since events keyed to the old id may still be in flight.
 
 ---
 
 ## Positions and money
 
-Position rows (`MakerPositionInfo`, and `PositionInfo` in `PositionUpdated`) carry:
+Position rows (`PositionInfo`, in `MakerPositions`, `MmSummary` and `PositionUpdated`) carry:
 
 - `state`: `Open`, `Funded`, `Liquidated`, or `Settled { settlement }`. `settlement` is `Physical { settlement_price, is_otm }` or `Cash { settlement_price, holder_payoff, writer_return }`.
 - `terms` and `side`.

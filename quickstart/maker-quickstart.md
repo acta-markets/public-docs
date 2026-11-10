@@ -147,7 +147,7 @@ Lifecycle events are keyed by `order_id`. `RfqClosed` is the terminal event for 
 
 | Event | Description |
 |---|---|
-| `QuoteAcknowledged` | Server accepted the quote. `replaced_order_id` is set on a replace and `null` otherwise. |
+| `QuoteAcknowledged` | Server accepted the quote. `replaced` is `{ "type": "replaced", "order_id" }` on a replace and `{ "type": "none" }` otherwise. |
 | `QuoteRejected` | Server refused the quote; see `reason`. |
 | `QuoteBestStatus` | Quote is currently the best in the book. |
 | `QuoteOutbid` | Quote has been displaced by a better one. |

@@ -90,7 +90,7 @@ type MarketInfo = {
   is_put: boolean;
   products: Product[];               // non-empty; see below
   status: "active" | "closed" | "finalized";
-  settlement_price: number | null;   // 1e9 scale; null until the market is settled
+  settlement: { type: "pending" } | { type: "fixed"; price: number }; // price 1e9 scale
 };
 
 type Product =
@@ -437,7 +437,7 @@ publishes its own as `protocol_fees` in `GET /api/v1/tokens` and WS `Tokens`.
   `protocol_fee_bps_premium` of the premium. The volume fee is `protocol_fee_bps_volume` of the
   exposure: the strike notional for physical products, the width notional for spreads and cash puts.
   The charged fee is `min(premium_fee, volume_fee)`.
-- `net_price` in `QuoteReceived` is `Price | null` and is for display only. The authoritative
+- `net_price` in `QuoteReceived` is a `Price` for display only. The authoritative
   amount is the net premium after the fee and token-decimal scaling.
 - `total_premium` in position rows is the net premium in quote atoms after the protocol fee. It is
   the authoritative money figure. `QuoteFilled` carries no fee or net fields.
@@ -453,7 +453,10 @@ publishes its own as `protocol_fees` in `GET /api/v1/tokens` and WS `Tokens`.
   "data": {
     "session_id": "uuid",
     "expires_at": 1710086400,
-    "maker_pda": "MakerPdaBase58"
+    "role": {
+      "type": "maker",
+      "maker_pda": "MakerPdaBase58"
+    }
   }
 }
 ```
@@ -462,9 +465,9 @@ publishes its own as `protocol_fees` in `GET /api/v1/tokens` and WS `Tokens`.
 - Required JSON integer in Unix seconds, for makers and takers. This is the resume credential deadline, not the lifetime of the authenticated socket.
 - Used for session resume by both makers and takers.
 
-`maker_pda` wire contract:
-- Set to the on-chain maker account PDA (base58) for authenticated **makers** that are registered on-chain.
-- Explicit `null` for non-makers (admins, takers) and for makers not yet registered on-chain.
+`role` wire contract:
+- `{ "type": "maker", "maker_pda" }` for authenticated makers, with the on-chain maker account PDA (base58).
+- `{ "type": "taker" }` for every other session.
 
 ### AuthError
 
@@ -523,15 +526,17 @@ echoes the client's `request_id` from the originating message:
   "type": "RequestError",
   "data": {
     "request_id": "1e3a5c7e-9b0d-4f26-8a4c-6e8a0c2e4f93",
-    "error": { "type": "RfqNotFound" },
-    "delivery": null
+    "error": {
+      "type": "RfqNotFound"
+    },
+    "delivery": "not_applicable"
   }
 }
 ```
 
 The inner `error` has the same `ServerError` shape as `Error.data`.
 
-`delivery` is always present. It is `null` except on failures of `SubmitSignedSponsoredTx` and `SwapSubmit`:
+`delivery` is always present. It is `not_applicable` except on failures of `SubmitSignedSponsoredTx` and `SwapSubmit`:
 
 ```json
 {

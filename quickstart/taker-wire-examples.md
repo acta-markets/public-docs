@@ -90,12 +90,14 @@ The signature is verified directly against `pubkey`. On success:
   "data": {
     "session_id": "6d1f0c2a-9b7e-4a35-8c41-2e5f7a9b0d13",
     "expires_at": 1710086400,
-    "maker_pda": null
+    "role": {
+      "type": "taker"
+    }
   }
 }
 ```
 
-For takers `expires_at` is a number and `maker_pda` is `null`. Persist `session_id` and `expires_at` for `ResumeAuth`.
+For takers `expires_at` is a number and `role` is `{ "type": "taker" }`. Persist `session_id` and `expires_at` for `ResumeAuth`.
 
 ### 4) Snapshot (server -> client)
 
@@ -112,9 +114,14 @@ Sent automatically after `AuthSuccess`. `markets` lists the active markets in th
         "quote": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "expiry_ts": 1710600000,
         "is_put": false,
-        "products": ["covered_call", "call_spread"],
+        "products": [
+          "covered_call",
+          "call_spread"
+        ],
         "status": "active",
-        "settlement_price": null
+        "settlement": {
+          "type": "pending"
+        }
       }
     ]
   }
@@ -365,7 +372,7 @@ The receipt and the lifecycle push (`SponsoredTxToSign` here, `OrderAccepted` in
 
 ### 11) RfqClosed (server -> client)
 
-Terminal RFQ event; it follows `OrderConfirmed` on a fill. Drop per-RFQ state here. `your_quote` and `winner` are always present and `null` when they do not apply.
+Terminal RFQ event; it follows `OrderConfirmed` on a fill. Drop per-RFQ state here. `your_quote` and `winner` are always present and `{ "type": "none" }` when they do not apply.
 
 ```json
 {
@@ -374,11 +381,17 @@ Terminal RFQ event; it follows `OrderConfirmed` on a fill. Drop per-RFQ state he
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "rfq_version": 2,
     "reason": "filled",
-    "your_quote": null,
+    "your_quote": {
+      "type": "none"
+    },
     "winner": {
+      "type": "winner",
       "maker": "MakerBOwnerPubkeyBase58",
       "price": 51000000,
-      "tx_signature": "5eyk...base58sig"
+      "transaction": {
+        "type": "sent",
+        "signature": "5eyk...base58sig"
+      }
     },
     "closed_at": 1710000012
   }
@@ -394,14 +407,23 @@ After the position is projected, the session receives the full row. No subscript
   "type": "PositionUpdated",
   "data": {
     "position": {
-      "revision": { "slot": 312456800, "transaction_index": 14, "instruction_index": 2 },
+      "revision": {
+        "slot": 312456800,
+        "transaction_index": 14,
+        "instruction_index": 2
+      },
       "pda": "PositionPdaBase58",
       "market": "MarketPdaBase58",
       "underlying_mint": "So11111111111111111111111111111111111111112",
+      "underlying_symbol": "SOL",
       "underlying_decimals": 9,
       "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "quote_symbol": "USDC",
       "quote_decimals": 6,
-      "terms": { "type": "covered_call", "strike": 136000000000 },
+      "terms": {
+        "type": "covered_call",
+        "strike": 136000000000
+      },
       "side": "sell",
       "state": "open",
       "quantity": 5000000000,
@@ -409,7 +431,11 @@ After the position is projected, the session receives the full row. No subscript
       "total_premium": 253725,
       "created_at": 1710000012,
       "expiry_ts": 1710600000,
-      "underlying_price": { "type": "available", "price": 151000000000, "published_at": 1710000010 }
+      "underlying_price": {
+        "type": "available",
+        "price": 151000000000,
+        "published_at": 1710000010
+      }
     },
     "update_type": "created"
   }
@@ -492,14 +518,24 @@ At settlement price `133` the intrinsic value is `7`. The maker receives `350000
   "type": "PositionUpdated",
   "data": {
     "position": {
-      "revision": { "slot": 312999000, "transaction_index": 3, "instruction_index": 1 },
+      "revision": {
+        "slot": 312999000,
+        "transaction_index": 3,
+        "instruction_index": 1
+      },
       "pda": "PositionPdaBase58",
       "market": "PutMarketPdaBase58",
       "underlying_mint": "So11111111111111111111111111111111111111112",
+      "underlying_symbol": "SOL",
       "underlying_decimals": 9,
       "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "quote_symbol": "USDC",
       "quote_decimals": 6,
-      "terms": { "type": "put_spread", "lower_strike": 130000000000, "upper_strike": 140000000000 },
+      "terms": {
+        "type": "put_spread",
+        "lower_strike": 130000000000,
+        "upper_strike": 140000000000
+      },
       "side": "sell",
       "state": "settled",
       "settlement": {
@@ -513,7 +549,9 @@ At settlement price `133` the intrinsic value is `7`. The maker receives `350000
       "total_premium": 5970000,
       "created_at": 1710000012,
       "expiry_ts": 1710600000,
-      "underlying_price": { "type": "unavailable" }
+      "underlying_price": {
+        "type": "unavailable"
+      }
     },
     "update_type": "settled"
   }
@@ -547,8 +585,14 @@ A spread whose strikes are unordered, or whose lower strike is `0` for a call sp
   "type": "RequestError",
   "data": {
     "request_id": "a1b2c3d4-0001-4a5b-8c6d-7e8f90a1b2c3",
-    "error": { "type": "Generic", "data": { "code": "spread_invalid_strikes", "message": "spreads require ordered strikes; call lower must be positive" } },
-    "delivery": null
+    "error": {
+      "type": "Generic",
+      "data": {
+        "code": "spread_invalid_strikes",
+        "message": "spreads require ordered strikes; call lower must be positive"
+      }
+    },
+    "delivery": "not_applicable"
   }
 }
 ```
@@ -584,8 +628,12 @@ A valid session returns `AuthSuccess` (as in step 3, without `AuthRequest` or si
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "rfq_version": 2,
     "reason": "taker_cancelled",
-    "your_quote": null,
-    "winner": null,
+    "your_quote": {
+      "type": "none"
+    },
+    "winner": {
+      "type": "none"
+    },
     "closed_at": 1710000020
   }
 }
@@ -650,8 +698,12 @@ Treat the order as not executed only if every submission you made returned `not_
     "rfq_id": "9a4f8f7b-5a6d-4c8d-8a2e-2a3b4c5d6e7f",
     "rfq_version": 1,
     "reason": "expired",
-    "your_quote": null,
-    "winner": null,
+    "your_quote": {
+      "type": "none"
+    },
+    "winner": {
+      "type": "none"
+    },
     "closed_at": 1710000060
   }
 }
@@ -691,8 +743,14 @@ An `RfqRequest` before redemption fails with a typed `InviteRequired` error in a
   "type": "RequestError",
   "data": {
     "request_id": "1e3a5c7e-9b0d-4f26-8a4c-6e8a0c2e4f93",
-    "error": { "type": "Generic", "data": { "code": "invalid_quantity_size_rule", "message": "quantity violates min/max/step" } },
-    "delivery": null
+    "error": {
+      "type": "Generic",
+      "data": {
+        "code": "invalid_quantity_size_rule",
+        "message": "quantity violates min/max/step"
+      }
+    },
+    "delivery": "not_applicable"
   }
 }
 ```
@@ -756,8 +814,10 @@ Subscriptions and in-flight state are not replayed. Re-authenticate, resubscribe
         "pda": "PositionPdaBase58",
         "market": "MarketPdaBase58",
         "underlying_mint": "So11111111111111111111111111111111111111112",
+        "underlying_symbol": "SOL",
         "underlying_decimals": 9,
         "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "quote_symbol": "USDC",
         "quote_decimals": 6,
         "terms": {
           "type": "covered_call",
@@ -770,7 +830,11 @@ Subscriptions and in-flight state are not replayed. Re-authenticate, resubscribe
         "total_premium": 253725,
         "created_at": 1710000012,
         "expiry_ts": 1710600000,
-        "underlying_price": { "type": "available", "price": 151000000000, "published_at": 1710000010 }
+        "underlying_price": {
+          "type": "available",
+          "price": 151000000000,
+          "published_at": 1710000010
+        }
       }
     ],
     "next_cursor": null

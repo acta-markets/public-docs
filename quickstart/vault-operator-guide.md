@@ -125,7 +125,7 @@ A swap quote is exact-in: `amount` is the input in raw atoms of the source leg, 
     "quoted_out_amount": "1503221",
     "minimum_out_amount": "1495705",
     "valid_until": "1710000060",
-    "staging": null
+    "staging": "none"
   }
 }
 ```
@@ -188,7 +188,7 @@ A Solana transaction can lock at most 64 accounts. Some paths do not fit in one 
 - `"stage"`: this transaction swaps the input leg into the vault's account of an intermediate mint, the staging mint (for example hyloSOL). The vault records the staged amount.
 - `"unstage"`: this transaction swaps the staged balance into the output leg.
 
-`staging` is `null` for a one-transaction swap. After a `stage` is finalized, send the same `SwapQuote` again with a new `request_id`: as long as the vault has something staged, every swap quote is the `unstage` of the whole staged amount into the requested output leg. `in_amount` is the staged amount, not your original `amount`. Each half is a full swap: it has its own `execution_id`, status and `SwapSettled`, its own minimum output, and its own oracle drift check.
+`staging` is `"none"` for a one-transaction swap. After a `stage` is finalized, send the same `SwapQuote` again with a new `request_id`: as long as the vault has something staged, every swap quote is the `unstage` of the whole staged amount into the requested output leg. `in_amount` is the staged amount, not your original `amount`. Each half is a full swap: it has its own `execution_id`, status and `SwapSettled`, its own minimum output, and its own oracle drift check.
 
 While something is staged, the vault's `staging` field (HTTP) is set. Equity processing, cycle finalization, final withdrawal, starting Closing, recovery, manager top-ups, fee updates and closing the vault all wait until it is unstaged. A delegate can unstage into main while the vault is `normal`. From 300 s after the first stage, governance can unstage into main in any safety mode. The server splits a swap only in `rebalance` mode.
 

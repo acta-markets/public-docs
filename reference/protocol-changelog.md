@@ -1,5 +1,23 @@
 # Protocol changelog
 
+## Next (not deployed)
+
+`acta-maker-sdk` 0.9.0 and `@acta-markets/ts-sdk` 0.6.0. Breaking: absent facts are tagged unions
+instead of `null`. The protocol string stays `1.0.0`, so older clients pass `Hello` and then fail on
+the changed messages. The program is unchanged.
+
+- `AuthSuccess.role`: `{ type: "taker" }` or `{ type: "maker", maker_pda }` (was nullable `maker_pda`).
+- Indicatives: `freshness` is `no_data`, `fresh { updated_at }` or `stale { updated_at }` (was `updated_at: 0` and `is_stale`); each strike has `price: { type: "none" } | { type: "quoted", price }` (was nullable `best_price`).
+- `ActiveRfqInfo.best_price`, `MyActiveRfqInfo.best_price`, `QuoteBestStatus.current_best_price` and `QuoteOutbid.current_best_price` are `QuotedPrice`; `MyActiveRfqInfo.lock` is `unlocked` or `locked { order_id }` (was `locked_order_id`).
+- `RfqClosed.winner` is `none` or `winner { maker, price, transaction }` with `transaction` `pending` or `sent { signature }`; `your_quote` is `none` or `quoted { order_id, status, price }`.
+- `QuoteAcknowledged.replaced` is `none` or `replaced { order_id }` (was `replaced_order_id`).
+- `MarketInfo.settlement` is `pending` or `fixed { price }` (was nullable `settlement_price`); `GlobalStats.usd` is `unavailable` or `available { … }`.
+- `MakerTradeInfo.position` is `pending` or `confirmed { position_pda }`.
+- `SwapQuoteResult.staging` is `"none"`, `"stage"` or `"unstage"`; `RequestError.delivery` gains `not_applicable` instead of `null`.
+- Always set now: `RfqCreated.request_id` (equals `rfq_id`), `QuoteFilled.expiry_ts`, `QuoteReceived.net_price` (equals `price` without a fee configuration).
+- `PositionInfo` carries `underlying_symbol` and `quote_symbol`; `MakerPositionInfo` is gone, maker reads return `PositionInfo`.
+- `null` remains only for `next_cursor` on the last page.
+
 ## 2026-11-10
 
 `acta-maker-sdk` 0.8.3 and 0.8.4, `@acta-markets/ts-sdk` 0.5.3 to 0.5.5. The program is unchanged and every change is additive.

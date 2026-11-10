@@ -50,7 +50,7 @@ const preview = previewFill({
   side: "sell",
   quantity: 1_000_000_000,
   // A sell indicative is already net of the fee; previewFill takes the gross price.
-  price1e9: grossFromIndicative1e9(indicative.best_price, "sell", terms, fees),
+  price1e9: grossFromIndicative1e9(strikePrice, "sell", terms, fees), // a strike's `price` of type "quoted"
   fees,
   underlyingDecimals: 9,
   quoteDecimals: 6,

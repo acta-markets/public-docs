@@ -157,8 +157,8 @@ ws.on("rfqCreated", (rfq) => console.log(rfq.rfq_id, rfq.expires_at, rfq.order_o
 
 ws.on("quoteReceived", (quote) => {
   // quote.terms is one of rfq.order_options. price is gross; AcceptQuote uses the gross price, hash-bound via order_id.
-  // net_price is what a seller receives after the protocol fee; null only without a fee configuration.
-  console.log("Quote:", quote.net_price ?? quote.price, "from", quote.maker);
+  // net_price is what a seller receives after the protocol fee, or the gross price a buyer pays.
+  console.log("Quote:", quote.net_price, "from", quote.maker);
 });
 
 await ws.createRfq({
@@ -470,7 +470,7 @@ ws.on("error", (e) => {
 });
 
 ws.on("requestError", (envelope) => {
-  // { request_id, error: ServerError, delivery: "not_forwarded" | "unknown" | null }
+  // { request_id, error: ServerError, delivery: "not_applicable" | "not_forwarded" | "unknown" }
 });
 ```
 
@@ -486,9 +486,9 @@ Error codes and `OrderFailed` reasons: [taker-api.md](../reference/taker-api.md#
 - **Token caps.** `getTokenCaps(includeMarkets)` -> `tokenCaps` event. The flag is required and the server ignores it. The response carries `tokens`, `markets`, `quotes` and `quote_liabilities`, all always present. Schema: [taker-api.md](../reference/taker-api.md#token-caps) and [caps.md](../reference/caps.md).
 - **Earn summary.** `getEarnSummary()` -> `earnSummary` event. APR range (`apr` is `unavailable` or `available { min, max }`) and capacity per asset for landing pages.
 - **Market price snapshot.** `getTokenMarketsInfo(underlyingMint)` -> `tokenMarketsInfo` returns backend `reference_price`, size rules, decimals and indicative premiums together. See [TokenMarketsInfo](../reference/taker-api.md#tokenmarketsinfo). Correlate the response with the returned request ID and the mint you requested; the response does not echo the mint. Refresh while the view is active; the Acta web app uses 30 seconds.
-- **Indicative prices.** `getIndicativePrices({ market, position_type, side })` -> `indicativePrices` event. Available for `covered_call` and `cash_secured_put`, per taker `side`: `best_price` is the median maker price, net of the protocol fee for `sell` and the gross price paid for `buy`. A spread or cash put request returns an `Error` with `spread_invalid_strikes`. Non-binding UI reference prices; the server refreshes roughly every 30s.
+- **Indicative prices.** `getIndicativePrices({ market, position_type, side })` -> `indicativePrices` event. Available for `covered_call` and `cash_secured_put`, per taker `side`: each strike's `price` is the median maker price (`{ type: "quoted", price }`, or `{ type: "none" }`), net of the protocol fee for `sell` and the gross price paid for `buy`. A spread or cash put request returns an `Error` with `spread_invalid_strikes`. Non-binding UI reference prices; the server refreshes roughly every 30s.
 - **Expiries.** `getExpiries({ underlying_mint, quote_mint, is_put })` takes `{ type: "all" }` or `{ type: "only", value }` for each filter.
-- **APR inputs.** Use spot and indicative premium from the same `TokenMarketsInfo` response. Suppress the preview when the price is unavailable or the indicative has `is_stale: true`. Clear cached metadata after a failed refresh or disconnect. Pyth credentials belong on the backend, not in browser code.
+- **APR inputs.** Use spot and indicative premium from the same `TokenMarketsInfo` response. Suppress the preview when the price is unavailable or the indicative `freshness` is not `fresh`. Clear cached metadata after a failed refresh or disconnect. Pyth credentials belong on the backend, not in browser code.
 - **APR and APY helper.** `computeApyFromScaledPrices({ underlyingAmount, grossPremiumPerUnit1e9, spotPrice1e9, secondsToExpiry })` from `@acta-markets/ts-sdk/ws` returns `{ premiumNotional, collateralNotional, termYield, apr, apy }`. `spotPrice1e9` is required: collateral is valued at spot for calls and puts. `computeApyFromAmounts({ underlyingAmount, premiumPerUnderlying, spotPrice, secondsToExpiry })` takes human units. For the market preview, pass the `sell` side `best_price` as `grossPremiumPerUnit1e9`: the backend already nets the protocol fee out of it. Do not subtract the fee a second time.
 - **Fill premium.** `totalPremiumQuoteAtoms(price, quantity, underlyingDecimals, quoteDecimals)` returns the gross premium in quote atoms as a `bigint`, rounded as the contract rounds it. The net premium is `total_premium` on the position row.
 - **Nonces.** `generateNonce()` from `@acta-markets/ts-sdk/ws` returns a fresh `bigint` nonce for signed orders.

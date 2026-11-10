@@ -252,7 +252,10 @@ Query (all optional):
       "expiry_ts": 1767225600,
       "is_put": true,
       "status": "finalized",
-      "settlement_price": 150000000000,
+      "settlement": {
+        "type": "fixed",
+        "price": 150000000000
+      },
       "products": [
         "cash_secured_put",
         "put_spread",
@@ -266,7 +269,9 @@ Query (all optional):
       "expiry_ts": 4102444800,
       "is_put": false,
       "status": "active",
-      "settlement_price": null,
+      "settlement": {
+        "type": "pending"
+      },
       "products": [
         "covered_call",
         "call_spread"
@@ -279,8 +284,8 @@ Query (all optional):
 
 `products` lists the products enabled for the pair that fit the market's side: a subset of
 `cash_secured_put`, `put_spread` and `cash_put` on a put market, a subset of `covered_call` and
-`call_spread` on a call market. A market with none is not listed. `settlement_price` is `null`
-until the market is settled.
+`call_spread` on a call market. A market with none is not listed. `settlement` is `{ "type": "pending" }`
+until the market is settled, then `{ "type": "fixed", "price" }`.
 
 | `status` | Meaning |
 |---|---|
