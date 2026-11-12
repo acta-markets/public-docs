@@ -1378,6 +1378,7 @@ All four arrays are always present and may be empty. Amounts are `u64`: underlyi
       "step": 100000000
     },
     "reference_price": 150000000000,
+    "session": { "type": "continuous" },
     "markets": [
       {
         "products": [
@@ -1413,7 +1414,7 @@ All four arrays are always present and may be empty. Amounts are `u64`: underlyi
 }
 ```
 
-`reference_price` is the backend-validated underlying/quote spot, `1e9`-scaled. `indicatives` has one entry per `position_type` and taker `side` with data. each strike's `price` is `{ "type": "quoted", "price" }` with the median of the makers' non-binding indicative premiums per underlying unit, `1e9`-scaled, as the taker sees it. For `side: "sell"` it is net of the protocol fee (what the writer receives); for `side: "buy"` it is the gross price the buyer pays. It is an estimate, not an executable quote. Size-rule quantities are underlying atoms. Examples illustrate units, not current prices or limits.
+`reference_price` is the backend-validated underlying/quote spot, `1e9`-scaled. `session` says whether the underlying's price feed trades now: `continuous` (around the clock), `open { closes_at }`, `closed { opens_at }` (Unix seconds) or `halted` (no session in the next two weeks). Outside a session `reference_price` and the oracle are the last published price, and RFQs still price against it. `indicatives` has one entry per `position_type` and taker `side` with data. each strike's `price` is `{ "type": "quoted", "price" }` with the median of the makers' non-binding indicative premiums per underlying unit, `1e9`-scaled, as the taker sees it. For `side: "sell"` it is net of the protocol fee (what the writer receives); for `side: "buy"` it is the gross price the buyer pays. It is an estimate, not an executable quote. Size-rule quantities are underlying atoms. Examples illustrate units, not current prices or limits.
 
 The response does not echo `underlying_mint`; keep it with the request ID. Use spot and premiums from the same response for an APR estimate, and suppress the estimate when the indicative is stale or missing. `freshness` describes the maker indicative premiums, not the oracle spot: `{ "type": "no_data" }` before any maker answered, otherwise `fresh` or `stale` with `updated_at` (Unix seconds). The response has no oracle publish timestamp, confidence or age.
 
