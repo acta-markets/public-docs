@@ -12,7 +12,7 @@ npm install @acta-markets/ts-sdk
 
 This guide covers version 0.5.2. It speaks WS protocol `1.0.0` and targets the program deployed to devnet and mainnet; both use the same program ID, and `GET /api/v1/venue` returns the authoritative `program_id`. Refer to opcodes and errors by name through the generated constants exported from `@acta-markets/ts-sdk` (`*_DISCRIMINATOR` for opcodes, `ACTA_CONTRACT_ERROR__*` for errors), not by number. The package README and changelog cover the vault builders.
 
-The wire is closed. The client does not dispatch a frame that lacks a required field or carries an unknown enum value. A message whose type the SDK does not know is reported on the `unknownMessage` event. Facts that are absent arrive as explicit `null`, typed `T | null`. State-dependent shapes are tagged unions. Wire addresses are validated when a frame is decoded. `server_time_unix_ms` and `sent_at_unix_ms` use milliseconds, and `expires_at` uses Unix seconds.
+The wire is closed. The client does not dispatch a frame that lacks a required field or carries an unknown enum value. A message whose type the SDK does not know is reported on the `unknownMessage` event. Facts that are absent arrive as explicit `null`, typed `T | null`. State-dependent shapes are tagged unions. Wire addresses are validated when a frame is decoded. `server_now_at_ms` and `sent_at_ms` use milliseconds, and `expires_at` uses Unix seconds.
 
 Taker-only apps should import **`@acta-markets/ts-sdk/ws`**: client, auth, RFQ and sponsored-tx signing, without instruction builders or IDL. The SDK is built on `@solana/kit`; you do not need `@solana/web3.js`. Spread economics helpers and account reads are in `@acta-markets/ts-sdk/chain`, and public reads such as the venue are in `@acta-markets/ts-sdk/http`.
 
@@ -158,11 +158,11 @@ ws.on("rfqCreated", (rfq) => console.log(rfq.rfq_id, rfq.expires_at, rfq.order_o
 ws.on("quoteReceived", (quote) => {
   // quote.terms is one of rfq.order_options. price is gross; AcceptQuote uses the gross price, hash-bound via order_id.
   // net_price is what a seller receives after the protocol fee, or the gross price a buyer pays.
-  console.log("Quote:", quote.net_price, "from", quote.maker);
+  console.log("Quote:", quote.net_price, "from", quote.maker_owner);
 });
 
 await ws.createRfq({
-  market: marketPdaBase58,
+  market_pda: marketPdaBase58,
   terms: { type: "covered_call", strike: 136_000_000_000 },
   side: "sell",
   quantity: 1_000_000_000, // 1 SOL in lamports; must satisfy size_rule
@@ -230,7 +230,7 @@ With `side: "buy"` you buy the product. The maker writes it from its Maker PDA c
 
 ```typescript
 await ws.createRfq({
-  market: marketPdaBase58,
+  market_pda: marketPdaBase58,
   terms: { type: "covered_call", strike: 150_000_000_000 },
   side: "buy",
   quantity: 1_000_000_000,
@@ -282,8 +282,8 @@ A mismatch throws `VaultIntentError` and nothing is signed.
 Inputs the helper needs:
 
 - `keeper`: the canonical `GlobalConfig.hotAuthority` address. Read it once from chain.
-- `makerVault`: `await fetchMakerVault(rpc, quote.maker)`, which is a decoded `Vault` when the quote's maker is a vault PDA and `null` for an ordinary maker. A vault maker needs the account; without it the fill is verified as an ordinary maker's. On a buy from a vault the helper checks `OpenPositionForVaultWriter` (or `OpenSpreadForVaultWriter`) with holder byte `1`: your wallet signs and pays from its quote ATA, and the vault delegate's Ed25519 check covers only the order id.
-- `rfq`: a `TakerFillRfq` built from the RFQ (below). Both variants need `rfq_id`, `market` (the descriptor's `market`), `terms`, `side`, `quantity` and `order_options`. A spread or cash put also needs `underlying_decimals` and `quote_decimals` from the descriptor, and its `order_options` must hold exactly `terms`.
+- `makerVault`: `await fetchMakerVault(rpc, quote.maker_owner)`, which is a decoded `Vault` when the quote's maker is a vault PDA and `null` for an ordinary maker. A vault maker needs the account; without it the fill is verified as an ordinary maker's. On a buy from a vault the helper checks `OpenPositionForVaultWriter` (or `OpenSpreadForVaultWriter`) with holder byte `1`: your wallet signs and pays from its quote ATA, and the vault delegate's Ed25519 check covers only the order id.
+- `rfq`: a `TakerFillRfq` built from the RFQ (below). Both variants need `rfq_id`, `market_descriptor` (the descriptor's `market_descriptor`), `terms`, `side`, `quantity` and `order_options`. A spread or cash put also needs `underlying_decimals` and `quote_decimals` from the descriptor, and its `order_options` must hold exactly `terms`.
 - `tables`: address lookup tables, `{}` for sponsored fills.
 
 `TakerFillRfq` is a union: the physical variant (`terms` is `covered_call` or `cash_secured_put`) and the cash variant (`terms` is a spread or `cash_put`, with decimals). Build it with a function that narrows `terms`:
@@ -295,7 +295,7 @@ import type {
 } from "@acta-markets/ts-sdk/ws";
 
 function fillRfq(created: RfqCreatedMessage, descriptor: MarketDescriptorInfo, quantity: number): TakerFillRfq {
-  const base = { rfq_id: created.rfq_id, market: descriptor.market, side: created.side, quantity };
+  const base = { rfq_id: created.rfq_id, market_descriptor: descriptor.market_descriptor, side: created.side, quantity };
   const { terms } = created;
   if (terms.type === "covered_call" || terms.type === "cash_secured_put") {
     return {
@@ -350,7 +350,7 @@ ws.on("sponsoredTxToSign", async (id, txBase64, signatureDeadline, lastValidBloc
       rfq: fillRfq(rfqCreated, descriptor, requestedQuantity),
       keeper,
       taker: address(walletPublicKeyBase58),
-      makerVault: await fetchMakerVault(rpc, acceptedQuote.maker),
+      makerVault: await fetchMakerVault(rpc, acceptedQuote.maker_owner),
       tables: {},
       bounds: { maxUnitLimit: 400_000, maxUnitPriceMicroLamports: 100_000 },
       signer: wallet,

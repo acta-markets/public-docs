@@ -46,7 +46,7 @@ Example clock: the session starts at Unix time `1710000000`. The venue window fr
     "protocol_version": "1.0.0",
     "server_version": "0.1.0",
     "min_supported_version": "1.0.0",
-    "server_time_unix_ms": 1710000000000,
+    "server_now_at_ms": 1710000000000,
     "min_quote_validity_seconds": 60,
     "settlement_buffer_seconds": 50,
     "rate_limits": {
@@ -114,8 +114,8 @@ The server verifies the signature by `quote_signing` key.
     "markets": [
       {
         "pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
-        "underlying": "So11111111111111111111111111111111111111112",
-        "quote": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "underlying_mint": "So11111111111111111111111111111111111111112",
+        "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "expiry_ts": 1710600000,
         "is_put": false,
         "products": [
@@ -168,7 +168,7 @@ The server verifies the signature by `quote_signing` key.
   "type": "RfqBroadcast",
   "data": {
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "market": {
+    "market_descriptor": {
       "chain_id": 0,
       "program_id": "33Ezs5eoa16QyPW8wifnyz2nCyMEcq2crqkVBNjnTE8U",
       "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
@@ -188,7 +188,7 @@ The server verifies the signature by `quote_signing` key.
       { "type": "covered_call", "strike": 150000000000 },
       { "type": "covered_call", "strike": 160000000000 }
     ],
-    "sent_at_unix_ms": 1710000000123
+    "sent_at_ms": 1710000000123
   }
 }
 ```
@@ -239,7 +239,7 @@ The server verifies the signature by `quote_signing` key.
     "quantity": 1000000000,
     "terms": { "type": "covered_call", "strike": 160000000000 },
     "side": "sell",
-    "signature_deadline": 1710000040
+    "signature_deadline_at": 1710000040
   }
 }
 ```
@@ -261,7 +261,7 @@ The server verifies the signature by `quote_signing` key.
     },
     "winner": {
       "type": "winner",
-      "maker": "A87ysNWAmmqQHafLSQGbYSLhtcV3BjXctR88EWuSobGP",
+      "maker_owner": "A87ysNWAmmqQHafLSQGbYSLhtcV3BjXctR88EWuSobGP",
       "price": 5000000000,
       "transaction": {
         "type": "sent",
@@ -314,7 +314,7 @@ For successful fills, the winning maker receives `RfqClosed`, then `QuoteFilled`
         "instruction_index": 1
       },
       "pda": "75NqraLLofiLUpNQg2wUPG6CJpxcaGEZUwuNrnAgvcTP",
-      "market": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+      "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
       "underlying_mint": "So11111111111111111111111111111111111111112",
       "underlying_symbol": "SOL",
       "underlying_decimals": 9,
@@ -354,7 +354,7 @@ A spread or cash-put RFQ carries its strikes in `terms`. The quote repeats them 
   "type": "RfqBroadcast",
   "data": {
     "rfq_id": "00000000-0000-0000-0000-000000000001",
-    "market": {
+    "market_descriptor": {
       "chain_id": 0,
       "program_id": "33Ezs5eoa16QyPW8wifnyz2nCyMEcq2crqkVBNjnTE8U",
       "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
@@ -373,7 +373,7 @@ A spread or cash-put RFQ carries its strikes in `terms`. The quote repeats them 
     "order_options": [
       { "type": "call_spread", "lower_strike": 100000000000, "upper_strike": 120000000000 }
     ],
-    "sent_at_unix_ms": 1799999770000
+    "sent_at_ms": 1799999770000
   }
 }
 ```
@@ -415,7 +415,7 @@ Spreads and cash puts go from `open` to `settled` only. A settled row carries th
         "instruction_index": 0
       },
       "pda": "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin",
-      "market": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+      "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
       "underlying_mint": "So11111111111111111111111111111111111111112",
       "underlying_symbol": "SOL",
       "underlying_decimals": 9,
@@ -592,7 +592,7 @@ Use [common paging](../reference/ws-common.md#paging) for maker positions. Start
   "type": "GetMakerPositions",
   "data": {
     "request_id": "a1b2c3d4-0000-4000-8000-000000000011",
-    "market": {
+    "market_pda": {
       "type": "all"
     },
     "underlying_mint": {
@@ -625,7 +625,7 @@ Use [common paging](../reference/ws-common.md#paging) for maker positions. Start
           "instruction_index": 1
         },
         "pda": "75NqraLLofiLUpNQg2wUPG6CJpxcaGEZUwuNrnAgvcTP",
-        "market": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+        "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
         "underlying_mint": "So11111111111111111111111111111111111111112",
         "underlying_symbol": "SOL",
         "underlying_decimals": 9,
@@ -659,7 +659,7 @@ When `next_cursor` is non-null, wrap that opaque string in an `after` cursor. Th
   "type": "GetMakerPositions",
   "data": {
     "request_id": "a1b2c3d4-0000-4000-8000-000000000012",
-    "market": {
+    "market_pda": {
       "type": "all"
     },
     "underlying_mint": {
@@ -736,7 +736,7 @@ A rejected request comes back as a `RequestError`. Stop the loop at the first on
     "request_id": "a1b2c3d4-0000-4000-8000-000000000031",
     "limit": 50,
     "cursor": { "type": "start" },
-    "market": { "type": "all" }
+    "market_pda": { "type": "all" }
   }
 }
 ```
@@ -791,7 +791,7 @@ Next page (keyset pagination). `at` is the last trade's `confirmed_at` and `id` 
     "cursor": {
       "type": "start"
     },
-    "market": {
+    "market_pda": {
       "type": "all"
     }
   }
@@ -845,7 +845,7 @@ Normal SDK list calls collect all pages through one helper. Live quotes and cata
 {
   "type": "ReplaceQuote",
   "data": {
-    "old_order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "replaced_order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "terms": { "type": "covered_call", "strike": 160000000000 },
     "side": "sell",
@@ -952,7 +952,7 @@ The ack has one tagged result per quote. Correlate by `order_id`:
   "type": "RfqSkipped",
   "data": {
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "market_id": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+    "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
     "quantity": 1000000000,
     "cap_detail": {
       "maker_insufficient_balance": { "available": 1000000, "required": 0 }
@@ -970,7 +970,7 @@ The caps filter runs before broadcast and knows no premium, so `required` is `0`
   "type": "CheckQuote",
   "data": {
     "request_id": "a1b2c3d4-0000-4000-8000-000000000051",
-    "market_id": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+    "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
     "terms": { "type": "call_spread", "lower_strike": 100000000000, "upper_strike": 120000000000 },
     "side": "sell",
     "quantity": 1000000000,
@@ -1074,7 +1074,7 @@ Always sent when a quote expires.
   "type": "CancelAllQuotes",
   "data": {
     "request_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    "market": { "type": "only", "value": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi" }
+    "market_pda": { "type": "only", "value": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi" }
   }
 }
 ```
@@ -1162,7 +1162,7 @@ For every market, send `"market": { "type": "all" }`.
     },
     "winner": {
       "type": "winner",
-      "maker": "A87ysNWAmmqQHafLSQGbYSLhtcV3BjXctR88EWuSobGP",
+      "maker_owner": "A87ysNWAmmqQHafLSQGbYSLhtcV3BjXctR88EWuSobGP",
       "price": 5500000000,
       "transaction": {
         "type": "sent",

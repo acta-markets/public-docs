@@ -236,21 +236,21 @@ Query (all optional):
 
 | Parameter | Type | Meaning |
 |---|---|---|
-| `underlying` | mint (base58) | Underlying mint |
-| `quote` | mint (base58) | Quote mint |
-| `expiry` | u64 | Exact `expiry_ts`, Unix seconds |
+| `underlying_mint` | mint (base58) | Underlying mint |
+| `quote_mint` | mint (base58) | Quote mint |
+| `expiry_ts` | u64 | Exact `expiry_ts`, Unix seconds |
 | `is_put` | bool | `true` for puts, `false` for calls |
 | `active` | bool | Default `true`: tradable markets only. `false`: every market the server holds in memory |
 
-`underlying` and `quote` are mints, not symbols. Markets are sorted by `expiry_ts`, then PDA.
+`underlying_mint` and `quote_mint` are mints, not symbols. Markets are sorted by `expiry_ts`, then PDA.
 
 ```json
 {
   "markets": [
     {
       "pda": "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin",
-      "underlying": "So11111111111111111111111111111111111111112",
-      "quote": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "underlying_mint": "So11111111111111111111111111111111111111112",
+      "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
       "expiry_ts": 1767225600,
       "is_put": true,
       "status": "finalized",
@@ -266,8 +266,8 @@ Query (all optional):
     },
     {
       "pda": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
-      "underlying": "So11111111111111111111111111111111111111112",
-      "quote": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "underlying_mint": "So11111111111111111111111111111111111111112",
+      "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
       "expiry_ts": 4102444800,
       "is_put": false,
       "status": "active",
@@ -405,16 +405,16 @@ Optional query: `delegate=<pubkey>` returns only vaults that key can operate as 
       "management_fee_bps": 100,
       "manager_stake_min_bps": 500,
       "share_price_hwm": "1000000000",
-      "last_hwm_update_ts": "1710000000",
-      "last_hwm_reset_ts": "0",
-      "last_settlement_ts": "1710000000",
+      "last_hwm_update_at": "1710000000",
+      "last_hwm_reset_at": "0",
+      "last_settlement_at": "1710000000",
       "capacity": {
         "type": "limited",
         "cap_limit": "1000000000",
         "remaining": "800000000"
       },
-      "capital_fallback_delay_secs": "43200",
-      "deposit_window_set_ts": "1709990000",
+      "capital_fallback_delay_seconds": "43200",
+      "deposit_window_set_at": "1709990000",
       "main_balance": "1000000",
       "second_balance": "0",
       "balance_updated_at": "1710000000",
@@ -438,7 +438,7 @@ Optional query: `delegate=<pubkey>` returns only vaults that key can operate as 
       "created_at": "1700000000",
       "generation_started_at": "1700000100",
       "tvl_usd_1e9": "1000000000000",
-      "price_time": "1710000050",
+      "price_published_at": "1710000050",
       "premium": [
         {
           "quote_mint": "QuoteMintBase58",
@@ -465,19 +465,19 @@ Optional query: `delegate=<pubkey>` returns only vaults that key can operate as 
         "returns": {
           "7d": {
             "return_pct": 0.4,
-            "from_time": "1709395200",
-            "to_time": "1710000000"
+            "window_start_at": "1709395200",
+            "window_end_at": "1710000000"
           },
           "30d": {
             "return_pct": 1.5,
-            "from_time": "1707408000",
-            "to_time": "1710000000"
+            "window_start_at": "1707408000",
+            "window_end_at": "1710000000"
           },
           "90d": null,
           "all": {
             "return_pct": 2.0,
-            "from_time": "1700000100",
-            "to_time": "1710000000"
+            "window_start_at": "1700000100",
+            "window_end_at": "1710000000"
           }
         },
         "apy_30d": 19.9,
@@ -509,14 +509,14 @@ Optional query: `delegate=<pubkey>` returns only vaults that key can operate as 
 | `main_token_program` / `second_token_program` | `legacy_spl`, `token_2022` |
 | `total_shares` | Boundary checkpoint adjusted for contract mint/burn — **not** live SPL supply. Use `live_share_supply` for the observed supply. |
 | `main_balance`, `second_balance`, `balance_updated_at`, `live_share_supply`, `observed_manager_stake_shares`, `balance_chain_slot` | All `null` together when no balance observation has landed yet. |
-| `capital_fallback_delay_secs` | Delay (default `43200`, max `259200`) after which anyone, not only the operator, may process a queued request. In `idle` it counts from the request's `created_at`; in `processing_capital` it counts from `active_expiry`. In `idle`, deposits also need priced equity, which a non-operator can only compute with an aged withdraw request; otherwise cancel the deposit. |
+| `capital_fallback_delay_seconds` | Delay (default `43200`, max `259200`) after which anyone, not only the operator, may process a queued request. In `idle` it counts from the request's `created_at`; in `processing_capital` it counts from `active_expiry`. In `idle`, deposits also need priced equity, which a non-operator can only compute with an aged withdraw request; otherwise cancel the deposit. |
 | `staging` | `null` unless half of a [two-transaction swap](../quickstart/vault-operator-guide.md#two-transaction-swaps) is open: `{ "mint", "from_leg": "main" \| "second", "amount", "staged_at", "generation" }`. `amount` (atoms of `mint`, decimal string) has left `from_leg` for the vault's account of `mint` and is not counted in `equity`. `staged_at` (Unix seconds) is the first stage. Capital processing waits until it is back. |
-| `deposit_window_set_ts` | Chain time of the last `SetAcceptingDeposits`, or `null` if the window was never set. |
+| `deposit_window_set_at` | Chain time of the last `SetAcceptingDeposits`, or `null` if the window was never set. |
 | `projection` | Position of this row in the venue's on-chain event history. Compare `slot` / `transaction_index` / `event_index` to detect staleness. |
 | `second_leg_generation`, `staged_generation` | Generation counters, decimal strings. |
 | `capacity` | Tagged union. `{ "type": "unlimited" }` when the on-chain cap is `0`. Otherwise `{ "type": "limited", "cap_limit", "remaining" }` in main atoms, with `remaining = max(0, cap_limit − equity − pending_deposit_amount)`. |
 | `created_at` | Chain time of the vault's creation; `null` until the stats snapshot has loaded. |
-| `tvl_usd_1e9`, `price_time` | Indicative: `equity` at the main mint's USD oracle price (1e9 scale) and that price's time; both `null` without a fresh price. |
+| `tvl_usd_1e9`, `price_published_at` | Indicative: `equity` at the main mint's USD oracle price (1e9 scale) and that price's time; both `null` without a fresh price. |
 | `generation_started_at`, `premium`, `fees`, `depositors_in_generation` | From one stats snapshot, `null` unless its generation equals `capital_generation` and the generation is covered (see `performance`). `premium`: per quote mint, quote atoms received as writer and paid as holder (gross premium) in the current cycle and the generation. `fees`: assessed management and performance fees and realized fee value of the generation, in main atoms. `depositors_in_generation`: wallets with a processed deposit in the generation. |
 | `performance` | `null` until stats load or when the snapshot is from another generation. `capital_generation` and `computed_at` label the snapshot (refreshed every 60 s). `covered: false` means the generation's history is incomplete: every metric is `null`. `returns` per window (`7d`, `30d`, `90d`, `all`): booked share price return after fees, in percent (`1.0` = 1%), with the checkpoint times it spans; `null` when the generation is younger than the window. `apy_30d`, `apy_90d`: the 30- and 90-day returns annualized by compounding (APY). `max_drawdown_pct`: largest peak-to-trough fall of the booked share price. `worst_cycle_return_pct`, `losing_cycles`, `cycles_completed`: finished cycles of the generation. |
 | `metadata` | `null` when the operator set none. Otherwise an object with `name` and the nullable fields `curator`, `strategy`, `description`, `website` and `logo_url` (`https://` URLs) and `twitter` (a bare handle, no `@`); all seven keys are present. Edits appear within about a minute. Display only; `governance` is the authority, so show it next to the name. |
@@ -543,10 +543,10 @@ Query:
   "positions": [
     {
       "vault": "VaultPdaBase58",
-      "position": "PositionPdaBase58",
+      "position_pda": "PositionPdaBase58",
       "order_id": "<64 hex chars>",
       "role": "writer",
-      "market": "MarketPdaBase58",
+      "market_pda": "MarketPdaBase58",
       "position_type": "covered_call",
       "strike": "1000000000",
       "product": {
@@ -595,20 +595,20 @@ Open and funded positions with an indicative spot. Positions are reloaded after 
   "vault_pda": "VaultPdaBase58",
   "positions": [
     {
-      "position": "PositionPdaBase58",
-      "market": "MarketPdaBase58",
+      "position_pda": "PositionPdaBase58",
+      "market_pda": "MarketPdaBase58",
       "position_type": "covered_call",
       "role": "writer",
       "status": "open",
       "strike": "140000000000",
       "quantity": "2000000000",
-      "expiry": "1710000000",
+      "expiry_ts": "1710000000",
       "underlying_mint": "UnderlyingMintBase58",
       "quote_mint": "QuoteMintBase58",
       "underlying_decimals": 9,
       "quote_decimals": 6,
       "spot": "150000000000",
-      "spot_time": "1709990000",
+      "spot_published_at": "1709990000",
       "distance_pct": -6.666666666666667,
       "itm": true,
       "intrinsic": "-20000000"
@@ -627,7 +627,7 @@ Open and funded positions with an indicative spot. Positions are reloaded after 
 
 | Field | Values / meaning |
 |---|---|
-| `spot`, `spot_time` | Underlying price in quote, 1e9 scale, from the oracle cache; `null` when a leg is stale or retired |
+| `spot`, `spot_published_at` | Underlying price in quote, 1e9 scale, from the oracle cache; `null` when a leg is stale or retired |
 | `distance_pct` | Call `100 × (strike − spot) / spot`, put `100 × (spot − strike) / spot`; positive is out of the money |
 | `itm` | `spot` past the strike; equality is out of the money |
 | `intrinsic` | Value moved if the position expired at `spot`, in quote atoms: `0` out of the money, positive for `holder`, negative for `writer`. Not a cash flow or fair value (time value is ignored). |
@@ -647,7 +647,7 @@ Cycles are returned newest first.
     {
       "cycle_number": "3",
       "capital_generation": "3",
-      "expiry": "1710604800",
+      "expiry_ts": "1710604800",
       "started_at": "1710000000",
       "finished_at": "1710604900",
       "share_price_start": "1000000000",
@@ -741,7 +741,7 @@ Query: optional `limit` (default 50, maximum 200) and `cursor`; see [common pagi
       "second_amount": "0",
       "shares": "1000000000",
       "boundary_price": "1000000000",
-      "event_time": "1710000000",
+      "occurred_at": "1710000000",
       "transaction_signature": "TxSignatureBase58"
     }
   ],

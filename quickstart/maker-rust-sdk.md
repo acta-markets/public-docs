@@ -145,7 +145,7 @@ let terms = SpreadTerms {
 // Fees belong to the quote token: `tokens` from `GetTokens` or `/api/v1/tokens`.
 let Some(TokenProtocolFees::Quote { premium_bps, volume_bps }) = tokens
     .iter()
-    .find(|token| token.mint == rfq.market.quote_mint)
+    .find(|token| token.mint == rfq.market_descriptor.quote_mint)
     .map(|token| token.protocol_fees)
 else {
     return Ok(());
@@ -236,10 +236,10 @@ Use `ReplaceQuote` for repricing. The prior quote is removed only after the repl
 
 ```rust
 // `quote` is a freshly signed QuoteMessage with a new nonce.
-quote_client.replace_in_epoch(quote.into_replacement(old_order_id), recovery_epoch).await?;
+quote_client.replace_in_epoch(quote.into_replacement(replaced_order_id), recovery_epoch).await?;
 ```
 
-The preimage is constructed identically to a fresh `Quote` with a new `nonce` and `order_id`. The server confirms with `QuoteAcknowledged { replaced: ReplacedQuote::Replaced { order_id: old_order_id } }`. Retain `old_order_id` until the replacement is acknowledged, since events keyed to the old id may still be in flight.
+The preimage is constructed identically to a fresh `Quote` with a new `nonce` and `order_id`. The server confirms with `QuoteAcknowledged { replaced: ReplacedQuote::Replaced { order_id: replaced_order_id } }`. Retain `replaced_order_id` until the replacement is acknowledged, since events keyed to the old id may still be in flight.
 
 ---
 

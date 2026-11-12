@@ -35,7 +35,7 @@ Any `protocol_version` other than `1.0.0` gets an `Error` with `unsupported_prot
     "protocol_version": "1.0.0",
     "server_version": "0.1.0",
     "min_supported_version": "1.0.0",
-    "server_time_unix_ms": 1710000000000,
+    "server_now_at_ms": 1710000000000,
     "min_quote_validity_seconds": 60,
     "settlement_buffer_seconds": 50,
     "rate_limits": {
@@ -110,8 +110,8 @@ Sent automatically after `AuthSuccess`. `markets` lists the active markets in th
     "markets": [
       {
         "pda": "MarketPdaBase58",
-        "underlying": "So11111111111111111111111111111111111111112",
-        "quote": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "underlying_mint": "So11111111111111111111111111111111111111112",
+        "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "expiry_ts": 1710600000,
         "is_put": false,
         "products": [
@@ -156,7 +156,7 @@ Full descriptors carry `size_rule`, decimals and oracle PDAs, which you need to 
           "covered_call",
           "call_spread"
         ],
-        "market": {
+        "market_descriptor": {
           "chain_id": 0,
           "program_id": "33Ezs5eoa16QyPW8wifnyz2nCyMEcq2crqkVBNjnTE8U",
           "market_pda": "MarketPdaBase58",
@@ -220,7 +220,7 @@ Every field is required. `underlying_mints: []` and `quote_mints: []` mean every
   "type": "RfqRequest",
   "data": {
     "request_id": "7a4c4b3e-2f1d-4c55-9a51-4f0d0e2b6a42",
-    "market": "MarketPdaBase58",
+    "market_pda": "MarketPdaBase58",
     "terms": { "type": "covered_call", "strike": 136000000000 },
     "side": "sell",
     "quantity": 5000000000,
@@ -264,7 +264,7 @@ Each quote is firm and hash-bound through `order_id`. `net_price` is a display e
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "terms": { "type": "covered_call", "strike": 136000000000 },
     "side": "sell",
-    "maker": "MakerAOwnerPubkeyBase58",
+    "maker_owner": "MakerAOwnerPubkeyBase58",
     "price": 50000000,
     "valid_until": 1710000330,
     "nonce": 42,
@@ -281,7 +281,7 @@ Each quote is firm and hash-bound through `order_id`. `net_price` is a display e
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "terms": { "type": "covered_call", "strike": 136000000000 },
     "side": "sell",
-    "maker": "MakerBOwnerPubkeyBase58",
+    "maker_owner": "MakerBOwnerPubkeyBase58",
     "price": 51000000,
     "valid_until": 1710000335,
     "nonce": 7,
@@ -301,7 +301,7 @@ You pick the winner by `order_id` (here maker B, the higher premium). Show `net_
   "data": {
     "request_id": "0c9e1d52-6c0b-4f7e-b1a9-7d8f3c2e5a10",
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "maker": "MakerBOwnerPubkeyBase58",
+    "maker_owner": "MakerBOwnerPubkeyBase58",
     "order_id": "0x2222222222222222222222222222222222222222222222222222222222222222"
   }
 }
@@ -318,12 +318,12 @@ You pick the winner by `order_id` (here maker B, the higher premium). Show `net_
     "order_id": "0x2222222222222222222222222222222222222222222222222222222222222222",
     "tx_base64": "AQABAg... (base64 v0 VersionedTransaction) ...",
     "last_valid_block_height": 312456789,
-    "signature_deadline": 1710000030
+    "signature_deadline_at": 1710000030
   }
 }
 ```
 
-The receipt and the lifecycle push (`SponsoredTxToSign` here, `OrderAccepted` in step 10) can arrive in either order. Verify the transaction against the accepted quote, sign it and return it before `signature_deadline`. The keeper is the fee payer in signature slot 0. The taker fills signature slot 1. See [Sponsored transaction: raw signing](taker-quickstart.md#sponsored-transaction-raw-signing) for the byte-level layout.
+The receipt and the lifecycle push (`SponsoredTxToSign` here, `OrderAccepted` in step 10) can arrive in either order. Verify the transaction against the accepted quote, sign it and return it before `signature_deadline_at`. The keeper is the fee payer in signature slot 0. The taker fills signature slot 1. See [Sponsored transaction: raw signing](taker-quickstart.md#sponsored-transaction-raw-signing) for the byte-level layout.
 
 ### 10) SubmitSignedSponsoredTx, CommandAccepted, OrderAccepted, OrderSubmitted, OrderConfirmed
 
@@ -386,7 +386,7 @@ Terminal RFQ event; it follows `OrderConfirmed` on a fill. Drop per-RFQ state he
     },
     "winner": {
       "type": "winner",
-      "maker": "MakerBOwnerPubkeyBase58",
+      "maker_owner": "MakerBOwnerPubkeyBase58",
       "price": 51000000,
       "transaction": {
         "type": "sent",
@@ -413,7 +413,7 @@ After the position is projected, the session receives the full row. No subscript
         "instruction_index": 2
       },
       "pda": "PositionPdaBase58",
-      "market": "MarketPdaBase58",
+      "market_pda": "MarketPdaBase58",
       "underlying_mint": "So11111111111111111111111111111111111111112",
       "underlying_symbol": "SOL",
       "underlying_decimals": 9,
@@ -455,7 +455,7 @@ A put spread on a put market. The market lists `put_spread` in `products`. The s
   "type": "RfqRequest",
   "data": {
     "request_id": "a1b2c3d4-0001-4a5b-8c6d-7e8f90a1b2c3",
-    "market": "PutMarketPdaBase58",
+    "market_pda": "PutMarketPdaBase58",
     "terms": { "type": "put_spread", "lower_strike": 130000000000, "upper_strike": 140000000000 },
     "side": "sell",
     "quantity": 5000000000,
@@ -497,7 +497,7 @@ The gross price `G = 1.2` is below the width `10`. At 50 bps premium and 10 bps 
     "rfq_id": "b2c3d4e5-0002-4b6c-9d7e-8f90a1b2c3d4",
     "terms": { "type": "put_spread", "lower_strike": 130000000000, "upper_strike": 140000000000 },
     "side": "sell",
-    "maker": "MakerAOwnerPubkeyBase58",
+    "maker_owner": "MakerAOwnerPubkeyBase58",
     "price": 1200000000,
     "valid_until": 1710000330,
     "nonce": 11,
@@ -524,7 +524,7 @@ At settlement price `133` the intrinsic value is `7`. The maker receives `350000
         "instruction_index": 1
       },
       "pda": "PositionPdaBase58",
-      "market": "PutMarketPdaBase58",
+      "market_pda": "PutMarketPdaBase58",
       "underlying_mint": "So11111111111111111111111111111111111111112",
       "underlying_symbol": "SOL",
       "underlying_decimals": 9,
@@ -567,7 +567,7 @@ A cash put carries one strike `K`. It is economically a put spread with lower st
   "type": "RfqRequest",
   "data": {
     "request_id": "c3d4e5f6-0003-4c7d-8e8f-90a1b2c3d4e5",
-    "market": "PutMarketPdaBase58",
+    "market_pda": "PutMarketPdaBase58",
     "terms": { "type": "cash_put", "strike": 136000000000 },
     "side": "sell",
     "quantity": 5000000000,
@@ -781,7 +781,7 @@ Subscriptions and in-flight state are not replayed. Re-authenticate, resubscribe
   "type": "GetPositions",
   "data": {
     "request_id": "f1b3d5e7-9a2c-4d84-8e6a-4b6c8d0e2f59",
-    "market": {
+    "market_pda": {
       "type": "all"
     },
     "underlying_mint": {
@@ -812,7 +812,7 @@ Subscriptions and in-flight state are not replayed. Re-authenticate, resubscribe
           "instruction_index": 2
         },
         "pda": "PositionPdaBase58",
-        "market": "MarketPdaBase58",
+        "market_pda": "MarketPdaBase58",
         "underlying_mint": "So11111111111111111111111111111111111111112",
         "underlying_symbol": "SOL",
         "underlying_decimals": 9,

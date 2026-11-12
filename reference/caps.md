@@ -30,7 +30,7 @@ expiry share that one budget**; there is no per-strike capacity.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `market_id` | pubkey (base58) | Market PDA |
+| `market_pda` | pubkey (base58) | Market PDA |
 | `current_oi` | u64 | Current market OI |
 | `max_oi` | u64 | Maximum allowed OI |
 | `utilization` | f64 | `current_oi / max_oi` |
@@ -102,7 +102,7 @@ Response `TokenCaps`:
     ],
     "markets": [
       {
-        "market_id": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
+        "market_pda": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
         "current_oi": 100000000000,
         "max_oi": 250000000000,
         "utilization": 0.4
@@ -249,7 +249,7 @@ Response `MyCaps`:
     "request_id": "uuid",
     "terms": { "type": "covered_call", "strike": 150000000000 },
     "side": "sell",
-    "market_id": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
+    "market_pda": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
     "quantity": 1000000000,
     "price": 5000000000
   }
@@ -333,7 +333,7 @@ broadcast, so `maker_insufficient_balance.required` is always `0` there:
   "type": "RfqSkipped",
   "data": {
     "rfq_id": "6f9619ff-8b86-d011-b42d-00c04fc964ff",
-    "market_id": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
+    "market_pda": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
     "quantity": 1000000000,
     "cap_detail": {
       "token_oi_cap_exceeded": {
@@ -353,7 +353,7 @@ These variants appear in `QuoteRejected`, `RfqSkipped` and `QuoteCheck` when a c
 | Variant | Fields | Description |
 |---------|--------|-------------|
 | `token_oi_cap_exceeded` | `underlying_mint`, `current`, `limit` | Platform OI limit reached |
-| `market_oi_cap_exceeded` | `market_id`, `current`, `limit` | Market-specific OI limit |
+| `market_oi_cap_exceeded` | `market_pda`, `current`, `limit` | Market-specific OI limit |
 | `maker_position_cap_exceeded` | `current`, `limit` | Too many open positions |
 | `maker_notional_cap_exceeded` | `underlying_mint`, `current`, `limit` | Notional exposure limit |
 | `maker_insufficient_balance` | `available`, `required` | Not enough deposited balance. `required` is `0` in `RfqSkipped` |

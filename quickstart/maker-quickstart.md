@@ -26,7 +26,7 @@ The first message from the client is `Hello`. All four fields are required.
 - `on_disconnect` sets what happens to this connection's quotes when it ends. With `cancel_quotes`, the engine cancels the session's active and retained non-winning quotes. With `keep_quotes`, resting quotes stay live while the maker is offline. Selected and executing orders survive both.
 - There is no feature negotiation. `QuoteExpired` events are always sent.
 
-The server responds with `Welcome` (`server_time_unix_ms` is for clock sync), then `AuthRequest` with a challenge string. Validate the entire [canonical auth challenge](../reference/ws-common.md#what-to-sign) before invoking your signer. Then sign its original UTF-8 bytes with `quote_signing`, base58-encode the signature, and reply with `AuthChallenge`:
+The server responds with `Welcome` (`server_now_at_ms` is for clock sync), then `AuthRequest` with a challenge string. Validate the entire [canonical auth challenge](../reference/ws-common.md#what-to-sign) before invoking your signer. Then sign its original UTF-8 bytes with `quote_signing`, base58-encode the signature, and reply with `AuthChallenge`:
 
 ```json
 {
@@ -93,7 +93,7 @@ On `RfqBroadcast`, first verify the [market PDA and terms](../reference/maker-ap
 - Covered call and cash-secured put: the strike of `rfq.terms` or of an entry in `rfq.order_options`.
 - Spread and cash put: exactly `rfq.terms`.
 
-Compute the premium, set `now + min_quote_validity_seconds <= valid_until <= market.expiry_ts` (read `min_quote_validity_seconds` from `GET /api/v1/venue` at startup; do not hardcode it) and keep `valid_until − settlement_buffer_seconds` after now. Build the [order preimage](../reference/maker-api.md#order-id-preimage): 182 bytes for covered calls and cash-secured puts, 190 bytes for spreads and cash puts. Its `maker` field is the `maker_owner` pubkey. Check your builder against the [test vectors](../reference/maker-api.md#test-vectors). Hash it to `order_id`, sign the 32-byte hash with `quote_signing`, and send `Quote`:
+Compute the premium, set `now + min_quote_validity_seconds <= valid_until <= market_descriptor.expiry_ts` (read `min_quote_validity_seconds` from `GET /api/v1/venue` at startup; do not hardcode it) and keep `valid_until − settlement_buffer_seconds` after now. Build the [order preimage](../reference/maker-api.md#order-id-preimage): 182 bytes for covered calls and cash-secured puts, 190 bytes for spreads and cash puts. Its `maker` field is the `maker_owner` pubkey. Check your builder against the [test vectors](../reference/maker-api.md#test-vectors). Hash it to `order_id`, sign the 32-byte hash with `quote_signing`, and send `Quote`:
 
 ```json
 {
@@ -180,7 +180,7 @@ When indicative pricing is enabled on the server, a connected `/maker` session s
   "type": "IndicativePricesResponse",
   "data": {
     "request_id": "<from request>",
-    "market": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+    "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
     "position_type": "covered_call",
     "side": "sell",
     "prices": [
@@ -282,7 +282,7 @@ See [common paging](../reference/ws-common.md#paging). History reads run newest 
   "type": "GetMakerPositions",
   "data": {
     "request_id": "a1b2c3d4-0000-4000-8000-000000000011",
-    "market": {
+    "market_pda": {
       "type": "all"
     },
     "underlying_mint": {
@@ -378,7 +378,7 @@ Discovery returns tradable markets only (non-finalized, non-disabled, before the
 
 | Topic | Recommendation |
 |---|---|
-| Application Ping | Approximately every 30 seconds. Each `Pong` carries an updated `server_time_unix_ms`. |
+| Application Ping | Approximately every 30 seconds. Each `Pong` carries an updated `server_now_at_ms`. |
 | Reconnect backoff | Exponential with jitter, e.g. 250 ms initial, 5 s cap, ±20%. |
 | `valid_until` margin | `rfq.expires_at + min_quote_validity_seconds` plus a little slack, capped at `market.expiry_ts`, with `min_quote_validity_seconds` from `GET /api/v1/venue`. Values below `now + min_quote_validity_seconds` or after market expiry are rejected; going far beyond the auction plus the settlement buffer only widens the maker's exposure window. |
 | Clock skew | Track `offset = server_time − local_time` from `Welcome` and `Pong`. Apply when computing `valid_until`. |

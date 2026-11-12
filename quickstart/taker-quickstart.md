@@ -35,7 +35,7 @@ The first message from the client is `Hello`. The server accepts only `protocol_
 
 `protocol_version`, `on_disconnect`, `client_name` and `client_version` are all required, and `Hello` accepts no other fields. `on_disconnect` is `cancel_quotes` or `keep_quotes`; it sets how a maker's quotes are handled on disconnect.
 
-The server responds with `Welcome`. `server_time_unix_ms` is for clock sync, and `min_quote_validity_seconds` and `settlement_buffer_seconds` are the venue's quote window. Taker auth is lazy: you may authenticate immediately or defer until the first authenticated action. Discovery (`GetMarkets`, `GetMarketDescriptors`, `GetTokenCaps`, `GetIndicativePrices` and others) works before auth; see "Authentication requirements" in [`../reference/taker-api.md`](../reference/taker-api.md).
+The server responds with `Welcome`. `server_now_at_ms` is for clock sync, and `min_quote_validity_seconds` and `settlement_buffer_seconds` are the venue's quote window. Taker auth is lazy: you may authenticate immediately or defer until the first authenticated action. Discovery (`GetMarkets`, `GetMarketDescriptors`, `GetTokenCaps`, `GetIndicativePrices` and others) works before auth; see "Authentication requirements" in [`../reference/taker-api.md`](../reference/taker-api.md).
 
 ### Fresh sign
 
@@ -166,7 +166,7 @@ RfqRequest -> RfqCreated -> QuoteReceived (0..N) -> AcceptQuote
   "type": "RfqRequest",
   "data": {
     "request_id": "<uuid>",
-    "market": "<market PDA, base58>",
+    "market_pda": "<market PDA, base58>",
     "terms": { "type": "covered_call", "strike": 136000000000 },
     "side": "sell",
     "quantity": 1000000000,
@@ -188,7 +188,7 @@ Makers stream `QuoteReceived`. Each quote is firm and hash-bound through `order_
     "rfq_id": "<uuid>",
     "terms": { "type": "covered_call", "strike": 136000000000 },
     "side": "sell",
-    "maker": "<maker owner pubkey, base58>",
+    "maker_owner": "<maker owner pubkey, base58>",
     "price": 50000000,
     "valid_until": 1710000350,
     "nonce": 42,
@@ -226,7 +226,7 @@ Name the winning quote by `order_id`:
   "data": {
     "request_id": "<uuid>",
     "rfq_id": "<uuid>",
-    "maker": "<maker owner pubkey, base58>",
+    "maker_owner": "<maker owner pubkey, base58>",
     "order_id": "0x<64 hex>"
   }
 }
@@ -241,7 +241,7 @@ The server locks the quote and builds a transaction to sign:
     "order_id": "0x<64 hex>",
     "tx_base64": "<base64 v0 VersionedTransaction>",
     "last_valid_block_height": 312456789,
-    "signature_deadline": 1710000040
+    "signature_deadline_at": 1710000040
   }
 }
 ```
@@ -252,7 +252,7 @@ The server locks the quote and builds a transaction to sign:
 2. Verify the transaction before signing (see below).
 3. Sign with the taker wallet key. Add the signature to slot 1. Do not touch slot 0, re-order accounts or change the message.
 4. Re-serialize the partially signed transaction and base64-encode it.
-5. Submit before `signature_deadline` (Unix seconds):
+5. Submit before `signature_deadline_at` (Unix seconds):
 
 ```json
 {
@@ -385,7 +385,7 @@ Every position row carries `revision { slot, transaction_index, instruction_inde
   "type": "GetPositions",
   "data": {
     "request_id": "<uuid>",
-    "market": {
+    "market_pda": {
       "type": "all"
     },
     "underlying_mint": {
@@ -431,7 +431,7 @@ Subscriptions do not persist across disconnects, and the server does not replay 
   "type": "GetPositions",
   "data": {
     "request_id": "<uuid>",
-    "market": {
+    "market_pda": {
       "type": "all"
     },
     "underlying_mint": {
@@ -469,10 +469,10 @@ The authenticated session proves wallet ownership; no separate signature is need
 
 | Topic | Value |
 |---|---|
-| Application `Ping` | Optional clock sample, for example every 30s. `Pong` carries `server_time_unix_ms`. Transport pongs maintain liveness; the default idle timeout is 90s. |
+| Application `Ping` | Optional clock sample, for example every 30s. `Pong` carries `server_now_at_ms`. Transport pongs maintain liveness; the default idle timeout is 90s. |
 | Server WebSocket ping | Every 30s. Raw clients must answer protocol pings. |
 | Reconnect backoff | Exponential with jitter, for example 1s initial, 30s cap, ±20%. |
-| Clock skew | Track `offset = server_time − local_time` from `Welcome` and `Pong`. Apply it to `expires_at` and `signature_deadline`. |
+| Clock skew | Track `offset = server_time − local_time` from `Welcome` and `Pong`. Apply it to `expires_at` and `signature_deadline_at`. |
 | Signature deadline | `min(now + 30s, quote effective_expiry, rfq.expires_at)`. Sign promptly after `AcceptQuote`. |
 | Rate limits | See [Rate limits and admission](../reference/ws-common.md#rate-limits-and-admission). `RateLimit` errors carry a reason code. |
 

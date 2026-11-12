@@ -2,6 +2,38 @@
 
 ## Next (not deployed)
 
+`acta-maker-sdk` 0.10.0 and `@acta-markets/ts-sdk` 0.7.0. Breaking: address and time fields are renamed after what they hold. The protocol string stays
+`1.0.0`, so an older client passes `Hello` and then fails on the renamed fields. The program and
+the order ID preimage are unchanged; signatures stay valid.
+
+| Was | Now | Where |
+|---|---|---|
+| `market` (address or filter) | `market_pda` | `RfqRequest`, `PositionInfo`, `TradeInfo`, `ActiveRfqInfo`, `MyActiveRfqInfo`, `MakerQuoteInfo`, indicative prices, `GetPositions`, `GetMakerPositions`, `GetMyTrades`, `CancelAllQuotes`, `PositionOpened`, `MarketCreated`, `MarketFinalized` |
+| `market` (descriptor object) | `market_descriptor` | `RfqBroadcast`, `IndicativePricesRequest`, `MarketDescriptorInfo` |
+| `market_id` | `market_pda` | `RfqSkipped`, `CheckQuote`, `MarketCapInfo`, cap error `market_oi_cap_exceeded` |
+| `maker` (owner wallet) | `maker_owner` | `QuoteReceived`, `QuotesUpdate`, `AcceptQuote`, `RfqClosed.winner` |
+| `maker` (maker PDA) | `maker_pda` | `TradeInfo`, `PositionOpened` |
+| `position` | `position_pda` | `PositionSettled`, `PositionLiquidated`, HTTP vault positions and exposure |
+| `underlying`, `quote` | `underlying_mint`, `quote_mint` | `MarketInfo` (WS and `GET /markets`) |
+| `old_order_id` | `replaced_order_id` | `ReplaceQuote` |
+| `sent_at_unix_ms` | `sent_at_ms` | `RfqBroadcast` |
+| `server_time_unix_ms` | `server_now_at_ms` | `Welcome`, `Pong` |
+| `signature_deadline` | `signature_deadline_at` | `QuoteSelected`, `SponsoredTxToSign` |
+| `expiry` | `expiry_ts` | HTTP vault cycles and exposure |
+| `event_time` | `occurred_at` | HTTP depositor events and vault cycles |
+| `from_time`, `to_time` | `window_start_at`, `window_end_at` | HTTP vault performance windows |
+| `spot_time`, `price_time` | `spot_published_at`, `price_published_at` | HTTP vault exposure, vault |
+| `deposit_window_set_ts`, `last_hwm_reset_ts`, `last_hwm_update_ts`, `last_settlement_ts` | `*_at` | HTTP vault |
+| `capital_fallback_delay_secs` | `capital_fallback_delay_seconds` | HTTP vault |
+| query `underlying`, `quote`, `expiry` | `underlying_mint`, `quote_mint`, `expiry_ts` | `GET /markets`; the old names return 400 instead of an unfiltered list |
+
+- Error action `wait`: a server-side timer may clear the condition, resend the same request after it. `RfqAlreadyLocked` is `wait`; `RfqNotFound` and `RfqNotActive` are `refresh` (were `stop`).
+- `TokenInfo.protocol_fees` is `quote { … }`, `not_quote_token` or `pending` (was `none` for both).
+- `TokenMarketsInfo.session`: `continuous`, `open { closes_at }`, `closed { opens_at }` or `halted`, from the underlying's price-feed schedule.
+- A settled physical position's `settlement` carries `collateral_atoms` and `settlement_atoms`, the amounts the program moves.
+
+## 2026-11-11: 0.9.1 and 0.6.1
+
 Additive; no client changes required.
 
 - `GET /api/v1/venue` adds `max_batch_quotes`, the most quotes one `BatchQuotes` message may carry. `acta-maker-sdk` 0.9.1 and `@acta-markets/ts-sdk` 0.6.1 read it.

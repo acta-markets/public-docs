@@ -129,7 +129,7 @@ A different `protocol_version` gets an `Error` frame and a WebSocket close with 
     "protocol_version": "1.0.0",
     "server_version": "0.1.0",
     "min_supported_version": "1.0.0",
-    "server_time_unix_ms": 1710000000000,
+    "server_now_at_ms": 1710000000000,
     "min_quote_validity_seconds": 60,
     "settlement_buffer_seconds": 50,
     "rate_limits": {
@@ -144,7 +144,7 @@ A different `protocol_version` gets an `Error` frame and a WebSocket close with 
 }
 ```
 
-`server_time_unix_ms` is required. Use it for clock skew estimation (see [WS common conventions](ws-common.md)).
+`server_now_at_ms` is required. Use it for clock skew estimation (see [WS common conventions](ws-common.md)).
 
 `min_quote_validity_seconds` and `settlement_buffer_seconds` are the venue quote window, the same values as `GET /api/v1/venue`: `valid_until` must be at least `now + min_quote_validity_seconds`, and a quote stays executable only while `valid_until - settlement_buffer_seconds > now`. The Rust `QuoteBuilder::welcome(&welcome)` applies both.
 
@@ -189,8 +189,8 @@ The two mint lists may contain at most 1024 entries in total after each list is 
     "markets": [
       {
         "pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
-        "underlying": "So11111111111111111111111111111111111111112",
-        "quote": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "underlying_mint": "So11111111111111111111111111111111111111112",
+        "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "expiry_ts": 1710600000,
         "is_put": false,
         "products": [
@@ -378,7 +378,7 @@ The Rust SDK computes these with `SpreadTerms::premium` (spreads and cash puts) 
   "type": "RfqBroadcast",
   "data": {
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "market": {
+    "market_descriptor": {
       "chain_id": 0,
       "program_id": "33Ezs5eoa16QyPW8wifnyz2nCyMEcq2crqkVBNjnTE8U",
       "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
@@ -398,7 +398,7 @@ The Rust SDK computes these with `SpreadTerms::premium` (spreads and cash puts) 
       { "type": "covered_call", "strike": 150000000000 },
       { "type": "covered_call", "strike": 160000000000 }
     ],
-    "sent_at_unix_ms": 1710000000123
+    "sent_at_ms": 1710000000123
   }
 }
 ```
@@ -418,7 +418,7 @@ Sent instead of `RfqBroadcast` when cap limits pre-filter the maker. `cap_detail
   "type": "RfqSkipped",
   "data": {
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "market_id": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+    "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
     "quantity": 1000000000,
     "cap_detail": {
       "token_oi_cap_exceeded": {
@@ -485,8 +485,8 @@ Before building the preimage, derive the market PDA locally using Solana PDA see
 `["market", underlying_mint[32], quote_mint[32], expiry_ts_u64_le[8], is_put_u8[1]]`
 under the Acta program ID from your deployment configuration. The program ID is the same on devnet and mainnet. `GET /api/v1/venue` returns it as `program_id`. Require chain ID
 `0`, that configured program ID, and equality with `market_pda`. Also check that
-the product fits `is_put`: puts are `cash_secured_put`, `put_spread` and `cash_put`; calls are `covered_call` and `call_spread`. Check the mints on the RFQ's `market`: collateral/settlement are underlying/quote for covered
-calls, quote/underlying for cash-secured puts, and quote/quote for spreads and cash puts. These pairs apply to `RfqBroadcast`, whose `market` is built for the RFQ's product. Rows of `MarketDescriptors` are market-level: they always show the physical pair for the market's side, so on a spread or cash-put RFQ they differ from the broadcast. Do not copy an endpoint-selected program ID
+the product fits `is_put`: puts are `cash_secured_put`, `put_spread` and `cash_put`; calls are `covered_call` and `call_spread`. Check the mints on the RFQ's `market_descriptor`: collateral/settlement are underlying/quote for covered
+calls, quote/underlying for cash-secured puts, and quote/quote for spreads and cash puts. These pairs apply to `RfqBroadcast`, whose `market_descriptor` is built for the RFQ's product. Rows of `MarketDescriptors` are market-level: they always show the physical pair for the market's side, so on a spread or cash-put RFQ they differ from the broadcast. Do not copy an endpoint-selected program ID
 into the derivation. Rust `RfqBinding::from_broadcast` and TS
 `buildSignedQuoteFromRfq` perform these checks before signing. Strategy mint
 allowlists and pricing inputs remain your responsibility; PDA verification does
@@ -547,13 +547,13 @@ order_id: 03b50d62e08b00556ccb458945ebfa2570fdd65b50e9753e911584fb4951c52c
 
 ### ReplaceQuote (maker -> server)
 
-Atomic cancel-and-resubmit for a specific quote. Cancels the quote identified by `old_order_id` and submits a new quote in a single operation. The old quote is removed **only if** the new quote passes all validation (caps, signature, `valid_until`). If validation fails, the old quote remains active.
+Atomic cancel-and-resubmit for a specific quote. Cancels the quote identified by `replaced_order_id` and submits a new quote in a single operation. The old quote is removed **only if** the new quote passes all validation (caps, signature, `valid_until`). If validation fails, the old quote remains active.
 
 ```json
 {
   "type": "ReplaceQuote",
   "data": {
-    "old_order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "replaced_order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "terms": { "type": "covered_call", "strike": 160000000000 },
     "side": "sell",
@@ -566,12 +566,12 @@ Atomic cancel-and-resubmit for a specific quote. Cancels the quote identified by
 }
 ```
 
-`old_order_id` identifies the specific quote being replaced. Server responds with `QuoteAcknowledged` (with `replaced`) on success, or `QuoteRejected` / `Error` on failure.
+`replaced_order_id` identifies the specific quote being replaced. Server responds with `QuoteAcknowledged` (with `replaced`) on success, or `QuoteRejected` / `Error` on failure.
 
 **Errors:**
 - `QuoteRejected` with standard reasons (`invalid_strike`, `cap_exceeded`, etc.) — new quote failed validation; old quote remains active
 - `Error { type: "QuoteLocked", data: { reason } }` — the old quote cannot be replaced: `reason` is `rfq_locked` while the taker's signature is pending and `order_submitted` once the signed transaction is queued
-- `Error { type: "QuoteNotFound" }` — `old_order_id` not found (race: already cancelled/expired)
+- `Error { type: "QuoteNotFound" }` — `replaced_order_id` not found (race: already cancelled/expired)
 
 ### BatchQuotes (maker -> server)
 
@@ -734,7 +734,7 @@ Identified by `(rfq_id, terms)`, not `order_id`. If quoting several terms per RF
     "quantity": 1000000000,
     "terms": { "type": "covered_call", "strike": 160000000000 },
     "side": "sell",
-    "signature_deadline": 1710000040
+    "signature_deadline_at": 1710000040
   }
 }
 ```
@@ -891,7 +891,7 @@ Always sent when a quote expires.
     },
     "winner": {
       "type": "winner",
-      "maker": "A87ysNWAmmqQHafLSQGbYSLhtcV3BjXctR88EWuSobGP",
+      "maker_owner": "A87ysNWAmmqQHafLSQGbYSLhtcV3BjXctR88EWuSobGP",
       "price": 5500000000,
       "transaction": {
         "type": "sent",
@@ -985,14 +985,14 @@ On an Active RFQ an empty list is an idempotent no-op: the connection has no quo
   "type": "CancelAllQuotes",
   "data": {
     "request_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    "market": { "type": "only", "value": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi" }
+    "market_pda": { "type": "only", "value": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi" }
   }
 }
 ```
 
-`market` is a `QueryFilter`. `{ "type": "all" }` considers all markets; `only` restricts cancellation to that market. CancelAll removes this connection's active and retained non-winning quotes, including those inside locked RFQs. Removed retained quotes cannot return on rollback. Selected/awaiting-signature and executing orders are preserved. Cancel-on-disconnect (`on_disconnect: "cancel_quotes"`) applies the same cleanup once the server processes the disconnect. Neither operation is an account-wide persistent halt.
+`market_pda` is a `QueryFilter`. `{ "type": "all" }` considers all markets; `only` restricts cancellation to that market. CancelAll removes this connection's active and retained non-winning quotes, including those inside locked RFQs. Removed retained quotes cannot return on rollback. Selected/awaiting-signature and executing orders are preserved. Cancel-on-disconnect (`on_disconnect: "cancel_quotes"`) applies the same cleanup once the server processes the disconnect. Neither operation is an account-wide persistent halt.
 
-The server responds with `CancelAllQuotesAck` once the cancellation is applied. An invalid `market` returns `RequestError` with `InvalidMarket`; it does not broaden cancellation to all markets.
+The server responds with `CancelAllQuotesAck` once the cancellation is applied. An invalid `market_pda` returns `RequestError` with `InvalidMarket`; it does not broaden cancellation to all markets.
 
 ### CancelAllQuotesAck (server -> maker)
 
@@ -1215,7 +1215,7 @@ Uses [common paging](ws-common.md#paging).
   "type": "GetMakerPositions",
   "data": {
     "request_id": "a1b2c3d4-0000-4000-8000-000000000011",
-    "market": { "type": "all" },
+    "market_pda": { "type": "all" },
     "underlying_mint": { "type": "only", "value": "So11111111111111111111111111111111111111112" },
     "status": ["open", "funded"],
     "min_expiry_ts": { "type": "bounded", "value": 1710000000 },
@@ -1273,8 +1273,8 @@ Uses [common paging](ws-common.md#paging).
     "markets": [
       {
         "pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
-        "underlying": "So11111111111111111111111111111111111111112",
-        "quote": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "underlying_mint": "So11111111111111111111111111111111111111112",
+        "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "expiry_ts": 1710600000,
         "is_put": false,
         "products": [
@@ -1421,7 +1421,7 @@ Uses [common paging](ws-common.md#paging).
           "instruction_index": 1
         },
         "pda": "75NqraLLofiLUpNQg2wUPG6CJpxcaGEZUwuNrnAgvcTP",
-        "market": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+        "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
         "underlying_mint": "So11111111111111111111111111111111111111112",
         "underlying_symbol": "SOL",
         "underlying_decimals": 9,
@@ -1448,7 +1448,7 @@ Uses [common paging](ws-common.md#paging).
           "instruction_index": 0
         },
         "pda": "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin",
-        "market": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
+        "market_pda": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
         "underlying_mint": "So11111111111111111111111111111111111111112",
         "underlying_symbol": "SOL",
         "underlying_decimals": 9,
@@ -1522,7 +1522,7 @@ Uses [common paging](ws-common.md#paging).
       {
         "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
         "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-        "market": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+        "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
         "underlying_mint": "So11111111111111111111111111111111111111112",
         "underlying_symbol": "SOL",
         "underlying_decimals": 9,
@@ -1707,7 +1707,7 @@ Uses [common paging](ws-common.md#paging).
     "rfqs": [
       {
         "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-        "market": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+        "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
         "taker": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
         "terms": {
           "type": "covered_call",
@@ -1753,7 +1753,7 @@ Uses [common paging](ws-common.md#paging).
     "cursor": {
       "type": "start"
     },
-    "market": {
+    "market_pda": {
       "type": "only",
       "value": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi"
     }
@@ -1765,7 +1765,7 @@ All four fields are required.
 
 - `limit`: page size in `1..=200`.
 - `cursor`: the tagged cursor from [common paging](ws-common.md#paging).
-- `market`: a `QueryFilter` on the market PDA.
+- `market_pda`: a `QueryFilter` on the market PDA.
 
 ### MyTrades payload
 
@@ -1829,14 +1829,14 @@ Per-maker position count, notional, balance and quote-liability caps. Full schem
 
 ### CheckQuote / QuoteCheck
 
-Dry run of the cap checks a `Quote` of `quantity` at `price` on `market_id` (the market PDA) would face. Allowed on `/maker`, `/maker/data` and `/vault`. Nothing is reserved: a passing check is advice, not a hold. It checks spread collateral `C` against the quote-liability caps as well as premium capacity.
+Dry run of the cap checks a `Quote` of `quantity` at `price` on `market_pda` (the market PDA) would face. Allowed on `/maker`, `/maker/data` and `/vault`. Nothing is reserved: a passing check is advice, not a hold. It checks spread collateral `C` against the quote-liability caps as well as premium capacity.
 
 ```json
 {
   "type": "CheckQuote",
   "data": {
     "request_id": "a1b2c3d4-0000-4000-8000-000000000015",
-    "market_id": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+    "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
     "terms": { "type": "call_spread", "lower_strike": 100000000000, "upper_strike": 120000000000 },
     "side": "sell",
     "quantity": 1000000000,
@@ -1855,7 +1855,7 @@ Dry run of the cap checks a `Quote` of `quantity` at `price` on `market_id` (the
 }
 ```
 
-`verdict` is `{ "type": "admissible" }` or `{ "type": "rejected", "cap_detail": CapError }`. `quantity` is in underlying base units; `price` is the gross price per underlying unit scaled by 1e9, as on `Quote`. `cap_detail` is the [CapError](caps.md#caperror-variants) a `QuoteRejected` would carry. `"cap_detail": "caps_unavailable"` means retry, not a cap. An unknown `market_id` returns an uncorrelated `Error` with `Generic` code `market_not_found`.
+`verdict` is `{ "type": "admissible" }` or `{ "type": "rejected", "cap_detail": CapError }`. `quantity` is in underlying base units; `price` is the gross price per underlying unit scaled by 1e9, as on `Quote`. `cap_detail` is the [CapError](caps.md#caperror-variants) a `QuoteRejected` would carry. `"cap_detail": "caps_unavailable"` means retry, not a cap. An unknown `market_pda` returns an uncorrelated `Error` with `Generic` code `market_not_found`.
 
 ### Subscriptions payload
 
@@ -1893,13 +1893,13 @@ Received when subscribed to the corresponding channel.
   "data": {
     "trade": {
       "id": "7c2e9a41-6b3d-4f58-9e1a-0d4b6f8a2c35",
-      "market": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+      "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
       "terms": { "type": "covered_call", "strike": 160000000000 },
       "side": "sell",
       "quantity": 1000000000,
       "price": 5000000000,
       "taker": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
-      "maker": "A87ysNWAmmqQHafLSQGbYSLhtcV3BjXctR88EWuSobGP",
+      "maker_pda": "HYe9CryCnQ3ZviCwoG8X7REFoSBK7HCjrhWWMpNtTah1",
       "tx_signature": "<base58 transaction signature>",
       "executed_at": 1710000042
     }
@@ -1954,7 +1954,7 @@ the last representable value after overflow; prefer the USD object.
         "instruction_index": 1
       },
       "pda": "75NqraLLofiLUpNQg2wUPG6CJpxcaGEZUwuNrnAgvcTP",
-      "market": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+      "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
       "underlying_mint": "So11111111111111111111111111111111111111112",
       "underlying_symbol": "SOL",
       "underlying_decimals": 9,
@@ -2029,8 +2029,8 @@ Sent to the owner's sessions when the maker's capacity changes without a positio
   "type": "MarketCreated",
   "data": {
     "pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
-    "underlying": "So11111111111111111111111111111111111111112",
-    "quote": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "underlying_mint": "So11111111111111111111111111111111111111112",
+    "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
     "expiry_ts": 1710600000,
     "is_put": false,
     "products": [
@@ -2069,8 +2069,8 @@ Sent to the owner's sessions when the maker's capacity changes without a positio
     "signature": "<base58 transaction signature>",
     "instruction_index": 0,
     "slot": 250000000,
-    "market": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
-    "maker": "A87ysNWAmmqQHafLSQGbYSLhtcV3BjXctR88EWuSobGP",
+    "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+    "maker_pda": "HYe9CryCnQ3ZviCwoG8X7REFoSBK7HCjrhWWMpNtTah1",
     "taker": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
     "terms": { "type": "covered_call", "strike": 160000000000 },
     "side": "sell",
@@ -2085,12 +2085,12 @@ Variants:
 
 | `event_type` | Additional fields |
 |--------|-------------------|
-| `PositionOpened` | `market`, `maker`, `taker`, `terms`, `side`, `quantity`, `price`, `order_id` |
-| `MarketCreated` | `market`, `underlying_mint`, `quote_mint`, `expiry_ts`, `is_put` |
-| `MarketFinalized` | `market`, `settlement_price` |
+| `PositionOpened` | `market_pda`, `maker_pda`, `taker`, `terms`, `side`, `quantity`, `price`, `order_id` |
+| `MarketCreated` | `market_pda`, `underlying_mint`, `quote_mint`, `expiry_ts`, `is_put` |
+| `MarketFinalized` | `market_pda`, `settlement_price` |
 | `MakerRegistered` | `owner`, `maker_pda`, `quote_signing` |
-| `PositionSettled` | `position` |
-| `PositionLiquidated` | `position` |
+| `PositionSettled` | `position_pda` |
+| `PositionLiquidated` | `position_pda` |
 
 All variants require `signature` (tx signature, base58), `instruction_index` (instruction coordinate) and `slot` (Solana slot number). Deduplicate by `(signature, instruction_index)`; one transaction may contain multiple events.
 
@@ -2141,7 +2141,7 @@ Indicative pricing covers covered calls and cash-secured puts only. Each request
   "type": "IndicativePricesRequest",
   "data": {
     "request_id": "a1b2c3d4-0000-4000-8000-000000000021",
-    "market": {
+    "market_descriptor": {
       "chain_id": 0,
       "program_id": "33Ezs5eoa16QyPW8wifnyz2nCyMEcq2crqkVBNjnTE8U",
       "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
@@ -2166,7 +2166,7 @@ Indicative pricing covers covered calls and cash-secured puts only. Each request
   "type": "IndicativePricesResponse",
   "data": {
     "request_id": "a1b2c3d4-0000-4000-8000-000000000021",
-    "market": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+    "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
     "position_type": "covered_call",
     "side": "sell",
     "prices": [{ "strike": 150000000000, "price": 4200000000 }]

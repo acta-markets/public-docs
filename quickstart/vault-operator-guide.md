@@ -71,13 +71,13 @@ Receiving premium into second needs no bit. Because funding is checked at open, 
    - `ProcessDeposits` / `ProcessWithdrawals`, at most 3 users per instruction;
    - `FinalizeVaultCycle`: needs empty queues and returns the vault to `idle`.
 
-Each capital step needs governance or `PROCESS_CAPITAL` until `active_expiry + capital_fallback_delay_secs`; after that anyone may send it. The delay defaults to 43,200 s (12 h), may range 0–259,200 s, and only Acta cold changes it, through the protocol timelock. In Idle the same delay runs from each request's `created_at`. In Idle, a non-operator can price equity only with a withdrawal request older than the delay; a depositor can cancel instead. The fallback lets others run these steps. It does not swap: rebalance needs `REBALANCE`, recovery needs governance.
+Each capital step needs governance or `PROCESS_CAPITAL` until `active_expiry + capital_fallback_delay_seconds`; after that anyone may send it. The delay defaults to 43,200 s (12 h), may range 0–259,200 s, and only Acta cold changes it, through the protocol timelock. In Idle the same delay runs from each request's `created_at`. In Idle, a non-operator can price equity only with a withdrawal request older than the delay; a depositor can cancel instead. The fallback lets others run these steps. It does not swap: rebalance needs `REBALANCE`, recovery needs governance.
 
 The SDKs include a reference crank: Rust `chain::vault::next_step` with the crate's `vault_capital` example (`cargo run --example vault_capital --features chain-rpc`), TS `flows.nextCapitalStep` / `flows.planWithdrawals`.
 
 ### Closing
 
-Governance calls `StartVaultShutdown` from safety `normal`. Closing is irreversible. It blocks new positions and share minting; withdrawal requests and cancellations stay open in every phase, and existing positions run to settlement. After the last position closes, governance converts second to main (swap mode `closing`; blocked while the protocol is paused). `FinalizeVaultShutdown` assesses fees once and enters `withdraw_only`. It needs zero positions and only dust in second. Governance may call it at once; after `closing_started_at + capital_fallback_delay_secs` anyone may. Management fees stop accruing at `closing_started_at`. Deposit refunds are public in Closing and WithdrawOnly.
+Governance calls `StartVaultShutdown` from safety `normal`. Closing is irreversible. It blocks new positions and share minting; withdrawal requests and cancellations stay open in every phase, and existing positions run to settlement. After the last position closes, governance converts second to main (swap mode `closing`; blocked while the protocol is paused). `FinalizeVaultShutdown` assesses fees once and enters `withdraw_only`. It needs zero positions and only dust in second. Governance may call it at once; after `closing_started_at + capital_fallback_delay_seconds` anyone may. Management fees stop accruing at `closing_started_at`. Deposit refunds are public in Closing and WithdrawOnly.
 
 ### Freeze and emergency
 
@@ -348,6 +348,6 @@ If both governance and delegate stop acting:
 
 - No new positions or rebalances happen.
 - Positions settle permissionlessly after finalization. ITM physical positions the vault holds and never funded are liquidated; the vault loses their intrinsic value. Spreads and cash puts settle in cash with no action from the vault.
-- After `expiry + capital_fallback_delay_secs`, anyone can price equity, process requests and finalize the cycle. Pricing still needs main to cover withdrawals and the liquidity floor. A large second balance can only be converted by `REBALANCE` or governance, so it blocks pricing until someone with those rights acts.
+- After `expiry + capital_fallback_delay_seconds`, anyone can price equity, process requests and finalize the cycle. Pricing still needs main to cover withdrawals and the liquidity floor. A large second balance can only be converted by `REBALANCE` or governance, so it blocks pricing until someone with those rights acts.
 - In Idle, withdrawal requests older than the delay can be priced and processed by anyone; depositors can cancel pending deposits.
 - Closing cannot start without governance. Acta cold can freeze the vault or start an emergency unwind.

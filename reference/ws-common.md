@@ -28,29 +28,25 @@ Unit variants have no `data` field, for example:
 | `size_rule` | min_size, max_size, step in underlying atomic units; always tied to underlying_mint |
 | `strike_tick` | `u64`, strike ladder spacing for an underlying, 1e9 scale |
 | Timestamps | Unix seconds |
-| `server_time_unix_ms` | Unix milliseconds |
+| `server_now_at_ms` | Unix milliseconds |
 
 `price` and `strike` are always 1e9 fixed-point per 1 underlying unit, independent of mint decimals.
 
 ### Address fields
 
-Some addresses appear under different names. Read them by message:
+Address fields are named by what they hold:
 
-| Value | Field | Messages |
-|-------|-------|----------|
-| Market PDA | `market` | Most messages and query filters, for example `RfqRequest`, `PositionInfo`, `TradeInfo`, `ActiveRfqInfo`, `IndicativePricesResponse`, `MarketCreated` |
-| Market PDA | `market_pda` | `MarketDescriptor`, `QuoteFilled`, `MarketFinalized`, `MakerTradeInfo`, `MakerMarketInfo`, `TokenMarketsInfo` entries |
-| Market PDA | `market_id` | `RfqSkipped`, `CheckQuote` |
-| Market PDA | `pda` | `MarketInfo` |
-| Market descriptor (object, address in `market.market_pda`) | `market` | `RfqBroadcast`, `IndicativePricesRequest`, `MarketDescriptorInfo` |
-| Maker owner wallet | `maker` | `QuoteReceived`, `QuotesUpdate`, `AcceptQuote` |
-| Maker PDA | `maker` | `TradeInfo`, `PositionOpened` |
-| Maker PDA | `maker_pda` | `MakerRegistered` (with `owner`), `MmSummary` |
-| Position PDA | `pda` | `PositionInfo` |
-| Position PDA | `position_pda` | `QuoteFilled`, `OrderConfirmed` |
-| Position PDA | `position` | `PositionSettled`, `PositionLiquidated` |
+| Value | Field | Notes |
+|-------|-------|-------|
+| Market PDA | `market_pda` | Every message and query filter that references a market by address |
+| Market descriptor (object) | `market_descriptor` | `RfqBroadcast`, `IndicativePricesRequest`, `MarketDescriptorInfo`; the address is `market_descriptor.market_pda` |
+| Maker owner wallet | `maker_owner` | Quote messages: `QuoteReceived`, `QuotesUpdate`, `AcceptQuote`, `RfqClosed.winner` |
+| Maker PDA | `maker_pda` | Trades and chain events: `TradeInfo`, `PositionOpened`, `MakerRegistered` (with `owner`), `MmSummary`, `AuthSuccess.role` |
+| Position PDA | `position_pda` | `QuoteFilled`, `OrderConfirmed`, `PositionSettled`, `PositionLiquidated` |
+| Mint | `underlying_mint`, `quote_mint` | `MarketInfo`, positions, caps, filters |
+| Own address of a record | `pda` | `MarketInfo`, `PositionInfo` |
 
-`maker` holds the owner wallet in quote messages and the maker PDA in trades and chain events; derive one from the other with the program's maker seed rather than comparing them. A later protocol version names each of these by its role.
+Derive a maker PDA from its owner with the program's maker seed rather than comparing the two.
 
 
 ## Reference data
@@ -243,20 +239,20 @@ rule, so snap its result before sending.
 
 ## Time and clock skew
 
-`server_time_unix_ms` is present in:
-- `Welcome.server_time_unix_ms` (required)
-- `Pong.server_time_unix_ms` (required)
+`server_now_at_ms` is present in:
+- `Welcome.server_now_at_ms` (required)
+- `Pong.server_now_at_ms` (required)
 
-`Snapshot` does not include `server_time_unix_ms` in current protocol.
+`Snapshot` does not include `server_now_at_ms` in current protocol.
 
 Client estimate:
 
 ```
-offset_ms = server_time_unix_ms - local_time_ms
+offset_ms = server_now_at_ms - local_time_ms
 estimated_server_now_ms = local_time_ms + offset_ms
 ```
 
-Use this estimate for `expires_at`, `valid_until`, and `signature_deadline`.
+Use this estimate for `expires_at`, `valid_until`, and `signature_deadline_at`.
 
 ## Authentication protocol
 
@@ -349,7 +345,7 @@ Rust SDK (`acta-maker-sdk` 0.8.2) and TS SDK (`@acta-markets/ts-sdk` 0.5.2) vali
 {
   "type": "Pong",
   "data": {
-    "server_time_unix_ms": 1710000000000
+    "server_now_at_ms": 1710000000000
   }
 }
 ```
@@ -634,6 +630,7 @@ action, not on `message`.
 | `reconcile` | The command may already have taken effect. Look it up (`GetOrderStatus`, `GetSwapStatus`, `MyActiveRfqs`) before anything else |
 | `fix_request` | The request is invalid. Change it before sending again |
 | `stop` | No resend succeeds until the venue, market or account state changes |
+| `wait` | A server-side timer may clear it. Send the same request again after that timer |
 
 `delivery: "unknown"` overrides the action: such a submission may still execute, so the action is
 `reconcile` whatever the error. Only `retry` and `reauthenticate` allow resending an unchanged
@@ -648,9 +645,9 @@ This is the closed set of `type` values. A variant without `data` has no `data` 
 |---|---|---|---|
 | `Unauthenticated` | `{ action }` | `reauthenticate` | The action needs an authenticated session |
 | `Unauthorized` | `{ role, action }` | `stop` | Only `role` may do this |
-| `RfqNotFound` | none | `stop` | The RFQ does not exist |
-| `RfqNotActive` | none | `stop` | The RFQ is not accepting quotes |
-| `RfqAlreadyLocked` | none | `stop` | Another order holds the RFQ |
+| `RfqNotFound` | none | `refresh` | The RFQ does not exist |
+| `RfqNotActive` | none | `refresh` | The RFQ is not accepting quotes |
+| `RfqAlreadyLocked` | none | `wait` | Another order holds the RFQ; it frees when that signature window closes |
 | `InvalidState` | `{ state }` | `stop` | The RFQ is in the wrong state for this command |
 | `QuoteLocked` | `{ reason }` | `rfq_locked`: `stop`; `order_submitted`: `reconcile` | The quote cannot be changed |
 | `QuoteNotFound` | none | `stop` | The quote does not exist or is already gone |
@@ -933,7 +930,7 @@ quote.valid_until                        # Cryptographic expiry (on-chain enforc
   └─ effective_expiry                    # = valid_until - settlement_buffer_seconds (server-side trading cutoff)
        └─ refresh point                  # = effective_expiry - quote_refresh_lead_seconds (quote freezes)
 
-rfq.signature_deadline
+rfq.signature_deadline_at
   └─ tx_submit_timeout
 ```
 
@@ -977,9 +974,9 @@ refresh point:    now + 60s
 - `quote.valid_until <= market.expiry_ts` (hard server-side bound)
 - `effective_expiry = quote.valid_until - settlement_buffer_seconds` (default 50 s)
 - `rfq.expires_at < market.expiry_ts` (recommended client-side validation)
-- `signature_deadline = min(accept time + signature_timeout, effective_expiry, rfq.expires_at)`
+- `signature_deadline_at = min(accept time + signature_timeout, effective_expiry, rfq.expires_at)`
 
-`signature_deadline` appears in `QuoteSelected` (server -> maker; see [maker-api.md](maker-api.md)) and `SponsoredTxToSign` (server -> taker; see [taker-api.md](taker-api.md)).
+`signature_deadline_at` appears in `QuoteSelected` (server -> maker; see [maker-api.md](maker-api.md)) and `SponsoredTxToSign` (server -> taker; see [taker-api.md](taker-api.md)).
 
 ## Reconciliation safety
 

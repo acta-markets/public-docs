@@ -61,7 +61,7 @@ Auth is one of:
     "protocol_version": "1.0.0",
     "server_version": "0.1.0",
     "min_supported_version": "1.0.0",
-    "server_time_unix_ms": 1710000000000,
+    "server_now_at_ms": 1710000000000,
     "min_quote_validity_seconds": 60,
     "settlement_buffer_seconds": 50,
     "rate_limits": {
@@ -200,8 +200,8 @@ The server answers with `SubscribeAck { request_id, subscribed }`, where `subscr
     "markets": [
       {
         "pda": "MarketPdaBase58",
-        "underlying": "So11111111111111111111111111111111111111112",
-        "quote": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "underlying_mint": "So11111111111111111111111111111111111111112",
+        "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "expiry_ts": 1710600000,
         "is_put": false,
         "products": [
@@ -335,7 +335,7 @@ The fee bps in the example are illustrative. `QuoteReceived.net_price` shows the
   "type": "RfqRequest",
   "data": {
     "request_id": "7a4c4b3e-2f1d-4c55-9a51-4f0d0e2b6a42",
-    "market": "MarketPdaBase58",
+    "market_pda": "MarketPdaBase58",
     "terms": { "type": "put_spread", "lower_strike": 130000000000, "upper_strike": 140000000000 },
     "side": "sell",
     "quantity": 5000000000,
@@ -393,7 +393,7 @@ The server accepted `RfqRequest`, `AcceptQuote` or `SubmitSignedSponsoredTx`. It
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "terms": { "type": "put_spread", "lower_strike": 130000000000, "upper_strike": 140000000000 },
     "side": "sell",
-    "maker": "MakerOwnerPubkeyBase58",
+    "maker_owner": "MakerOwnerPubkeyBase58",
     "price": 1200000000,
     "valid_until": 1710000350,
     "nonce": 42,
@@ -421,7 +421,7 @@ The server sends the current executable quote snapshot to the RFQ owner whenever
         "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
         "terms": { "type": "covered_call", "strike": 160000000000 },
         "side": "sell",
-        "maker": "MakerOwnerPubkeyBase58",
+        "maker_owner": "MakerOwnerPubkeyBase58",
         "price": 50000000,
         "valid_until": 1710000350,
         "nonce": 42,
@@ -441,7 +441,7 @@ The server sends the current executable quote snapshot to the RFQ owner whenever
   "data": {
     "request_id": "0c9e1d52-6c0b-4f7e-b1a9-7d8f3c2e5a10",
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "maker": "MakerOwnerPubkeyBase58",
+    "maker_owner": "MakerOwnerPubkeyBase58",
     "order_id": "0x1111111111111111111111111111111111111111111111111111111111111111"
   }
 }
@@ -470,12 +470,12 @@ Success has no `CommandAccepted`: the RFQ, active or awaiting your signature, cl
     "order_id": "0x1111111111111111111111111111111111111111111111111111111111111111",
     "tx_base64": "AQABAg...",
     "last_valid_block_height": 312456789,
-    "signature_deadline": 1710000040
+    "signature_deadline_at": 1710000040
   }
 }
 ```
 
-`tx_base64` is a v0 `VersionedTransaction` with two signature slots. The keeper (fee payer) is slot 0 and the taker is slot 1. The keeper fills slot 0 after you submit. `last_valid_block_height` is the block height the transaction's blockhash is valid through. `signature_deadline` is Unix seconds. Byte-level signing: [Taker quickstart](../quickstart/taker-quickstart.md#sponsored-transaction-raw-signing).
+`tx_base64` is a v0 `VersionedTransaction` with two signature slots. The keeper (fee payer) is slot 0 and the taker is slot 1. The keeper fills slot 0 after you submit. `last_valid_block_height` is the block height the transaction's blockhash is valid through. `signature_deadline_at` is Unix seconds. Byte-level signing: [Taker quickstart](../quickstart/taker-quickstart.md#sponsored-transaction-raw-signing).
 
 ### SubmitSignedSponsoredTx (taker -> server)
 
@@ -606,7 +606,7 @@ The keeper retries retryable submission failures within a five-attempt budget. E
     },
     "winner": {
       "type": "winner",
-      "maker": "MakerOwnerPubkeyBase58",
+      "maker_owner": "MakerOwnerPubkeyBase58",
       "price": 1200000000,
       "transaction": {
         "type": "sent",
@@ -641,7 +641,7 @@ Every filter is required. `[]` for `status` and `unbounded` for `min_expiry_ts` 
   "type": "GetPositions",
   "data": {
     "request_id": "f1b3d5e7-9a2c-4d84-8e6a-4b6c8d0e2f59",
-    "market": {
+    "market_pda": {
       "type": "all"
     },
     "underlying_mint": {
@@ -661,7 +661,7 @@ Every filter is required. `[]` for `status` and `unbounded` for `min_expiry_ts` 
 
 | Field | Values |
 |---|---|
-| `market`, `underlying_mint` | `{ "type": "all" }` or `{ "type": "only", "value": "<base58>" }` |
+| `market_pda`, `underlying_mint` | `{ "type": "all" }` or `{ "type": "only", "value": "<base58>" }` |
 | `status` | list of `open`, `funded`, `liquidated`, `settled`; `[]` means all statuses |
 | `min_expiry_ts` | `{ "type": "unbounded" }` or `{ "type": "bounded", "value": <unix seconds> }`; positions that expire before `value` are excluded |
 
@@ -714,7 +714,7 @@ Open put spread:
           "instruction_index": 2
         },
         "pda": "PositionPdaBase58",
-        "market": "MarketPdaBase58",
+        "market_pda": "MarketPdaBase58",
         "underlying_mint": "So11111111111111111111111111111111111111112",
         "underlying_symbol": "SOL",
         "underlying_decimals": 9,
@@ -755,7 +755,7 @@ Settled cash position (settlement price `133`), the same row after settlement:
     "instruction_index": 1
   },
   "pda": "PositionPdaBase58",
-  "market": "MarketPdaBase58",
+  "market_pda": "MarketPdaBase58",
   "underlying_mint": "So11111111111111111111111111111111111111112",
   "underlying_symbol": "SOL",
   "underlying_decimals": 9,
@@ -813,7 +813,7 @@ The server pushes `PositionUpdated` to the session of the position's taker (and 
         "instruction_index": 1
       },
       "pda": "PositionPdaBase58",
-      "market": "MarketPdaBase58",
+      "market_pda": "MarketPdaBase58",
       "underlying_mint": "So11111111111111111111111111111111111111112",
       "underlying_symbol": "SOL",
       "underlying_decimals": 9,
@@ -865,7 +865,7 @@ Uses [common paging](ws-common.md#paging).
     "rfqs": [
       {
         "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-        "market": "MarketPdaBase58",
+        "market_pda": "MarketPdaBase58",
         "terms": {
           "type": "cash_secured_put",
           "strike": 136000000000
@@ -1012,7 +1012,7 @@ Taker discovery requests. `request_id` is required on each.
   "type": "GetIndicativePrices",
   "data": {
     "request_id": "uuid",
-    "market": "MarketPdaBase58",
+    "market_pda": "MarketPdaBase58",
     "position_type": "covered_call",
     "side": "sell",
     "limit": 200,
@@ -1323,7 +1323,7 @@ Uses [common paging](ws-common.md#paging).
     ],
     "markets": [
       {
-        "market_id": "MarketPdaBase58",
+        "market_pda": "MarketPdaBase58",
         "current_oi": 100000000000,
         "max_oi": 250000000000,
         "utilization": 0.4
@@ -1435,7 +1435,7 @@ Uses [common paging](ws-common.md#paging).
   "type": "GetIndicativePrices",
   "data": {
     "request_id": "uuid",
-    "market": "MarketPdaBase58",
+    "market_pda": "MarketPdaBase58",
     "position_type": "covered_call",
     "side": "sell",
     "limit": 200,
@@ -1455,7 +1455,7 @@ Uses [common paging](ws-common.md#paging).
   "type": "IndicativePrices",
   "data": {
     "request_id": "uuid",
-    "market": "MarketPdaBase58",
+    "market_pda": "MarketPdaBase58",
     "position_type": "covered_call",
     "side": "sell",
     "freshness": {
@@ -1556,13 +1556,13 @@ Field semantics:
 Delivered when subscribed to the channel.
 
 ```json
-{ "type": "TradeExecuted", "data": { "trade": { "id": "uuid", "market": "MarketPdaBase58", "terms": { "type": "covered_call", "strike": 136000000000 }, "side": "sell", "quantity": 5000000000, "price": 50000000, "taker": "TakerPubkeyBase58", "maker": "MakerOwnerPubkeyBase58", "tx_signature": "5eyk...base58sig", "executed_at": 1710000012 } } }
+{ "type": "TradeExecuted", "data": { "trade": { "id": "uuid", "market_pda": "MarketPdaBase58", "terms": { "type": "covered_call", "strike": 136000000000 }, "side": "sell", "quantity": 5000000000, "price": 50000000, "taker": "TakerPubkeyBase58", "maker_pda": "MakerPdaBase58", "tx_signature": "5eyk...base58sig", "executed_at": 1710000012 } } }
 ```
 
 `TradeExecuted` is a best-effort live hint. Merge it with authoritative history by `trade.id`; do not derive counts from frame counts.
 
 ```json
-{ "type": "ChainEvent", "data": { "event_type": "PositionSettled", "signature": "5eyk...base58sig", "instruction_index": 2, "slot": 312999000, "position": "PositionPdaBase58" } }
+{ "type": "ChainEvent", "data": { "event_type": "PositionSettled", "signature": "5eyk...base58sig", "instruction_index": 2, "slot": 312999000, "position_pda": "PositionPdaBase58" } }
 ```
 
 `event_type` is `PositionOpened`, `MarketCreated`, `MarketFinalized`, `MakerRegistered`, `PositionSettled` or `PositionLiquidated`. A chain event is identified by `(signature, instruction_index)`.

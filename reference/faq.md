@@ -40,7 +40,7 @@ The server pre-filters RFQs against the maker's caps before broadcast. When a pr
 
 ### What is the appropriate value for `valid_until`?
 
-The hard floor is `now + min_quote_validity_seconds` (from `Welcome` or `GET /api/v1/venue`); lower values are rejected with `quote_expiry_too_short`. The hard ceiling is the market's `expiry_ts`; later values are rejected with `market_expired`. The server reserves the trailing `settlement_buffer_seconds` as the settlement buffer, so the trading cutoff is `valid_until` minus that buffer. Size the quote against the auction you are quoting into: `rfq.expires_at + min_quote_validity_seconds` covers the whole auction plus the settlement buffer and the refresh lead. Add a few seconds of slack for clock skew, and stay at or below market expiry. Longer windows leave stale quotes live without helping fills, because the taker cannot accept after `rfq.expires_at`. Track server clock offset from `Welcome.server_time_unix_ms` and `Pong.server_time_unix_ms`.
+The hard floor is `now + min_quote_validity_seconds` (from `Welcome` or `GET /api/v1/venue`); lower values are rejected with `quote_expiry_too_short`. The hard ceiling is the market's `expiry_ts`; later values are rejected with `market_expired`. The server reserves the trailing `settlement_buffer_seconds` as the settlement buffer, so the trading cutoff is `valid_until` minus that buffer. Size the quote against the auction you are quoting into: `rfq.expires_at + min_quote_validity_seconds` covers the whole auction plus the settlement buffer and the refresh lead. Add a few seconds of slack for clock skew, and stay at or below market expiry. Longer windows leave stale quotes live without helping fills, because the taker cannot accept after `rfq.expires_at`. Track server clock offset from `Welcome.server_now_at_ms` and `Pong.server_now_at_ms`.
 
 ## Troubleshooting
 
@@ -62,6 +62,6 @@ The RFQ expired or another maker filled it before your quote arrived. You can on
 
 ### Persistent disconnects
 
-The server emits WebSocket-protocol-level pings every 30 seconds and closes idle connections after a 90-second timeout. The Rust and TypeScript SDKs respond to protocol pings automatically. Raw WebSocket clients must respond to protocol pings; those pongs maintain liveness. Application-layer `Ping` is optional and returns `Pong.server_time_unix_ms` for clock-offset estimation.
+The server emits WebSocket-protocol-level pings every 30 seconds and closes idle connections after a 90-second timeout. The Rust and TypeScript SDKs respond to protocol pings automatically. Raw WebSocket clients must respond to protocol pings; those pongs maintain liveness. Application-layer `Ping` is optional and returns `Pong.server_now_at_ms` for clock-offset estimation.
 
 If drops persist with a correctly responding client, check the network path. Corporate proxies and firewalls often terminate TCP connections they consider idle.
