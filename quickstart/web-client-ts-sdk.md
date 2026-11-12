@@ -166,8 +166,8 @@ await ws.createRfq({
   terms: { type: "covered_call", strike: 136_000_000_000 },
   side: "sell",
   quantity: 1_000_000_000, // 1 SOL in lamports; must satisfy size_rule
-  timeoutSeconds: 30,
-  requestId: crypto.randomUUID(), // required; also the idempotency key
+  timeout_seconds: 30,
+  request_id: crypto.randomUUID(), // required; also the idempotency key
 });
 ```
 
@@ -182,7 +182,7 @@ Other products:
 
 Spread and cash put strikes must be multiples of the underlying's `strike_tick` (`1e9`-scaled; read it from `TokenInfo.role`). A spread needs `lower_strike < upper_strike`, and a call spread needs `lower_strike > 0`. The market's `is_put` must match the product's side.
 
-`createRfq` resolves with `requestId` on the server's `CommandAccepted` and rejects with `ActaWsRequestError` on the matching `RequestError`, a timeout or a disconnect. `RfqCreated` echoes `request_id` and may arrive before or after that receipt. Repeating a `createRfq` with the same `requestId` while the RFQ is open is rejected with `duplicate_rfq_id`, which means the first attempt created it; after the RFQ closes the same id opens a new one. `createRfqOnce` handles this: it owns the id and resends a lost reply only while the RFQ could still be open. The RFQ TTL is your `timeoutSeconds`, which must be within the venue range `min_rfq_timeout_seconds` .. `max_rfq_timeout_seconds` from `GET /api/v1/venue`.
+`createRfq` takes the `RfqRequest` message and resolves with its `request_id` on the server's `CommandAccepted` and rejects with `ActaWsRequestError` on the matching `RequestError`, a timeout or a disconnect. `RfqCreated` echoes `request_id` and may arrive before or after that receipt. Repeating a `createRfq` with the same `request_id` while the RFQ is open is rejected with `duplicate_rfq_id`, which means the first attempt created it; after the RFQ closes the same id opens a new one. `createRfqOnce` handles this: it owns the id and resends a lost reply only while the RFQ could still be open. The RFQ TTL is your `timeout_seconds`, which must be within the venue range `min_rfq_timeout_seconds` .. `max_rfq_timeout_seconds` from `GET /api/v1/venue`.
 
 For spreads and cash puts, `order_options` holds exactly your `terms`.
 
@@ -234,8 +234,8 @@ await ws.createRfq({
   terms: { type: "covered_call", strike: 150_000_000_000 },
   side: "buy",
   quantity: 1_000_000_000,
-  timeoutSeconds: 30,
-  requestId: crypto.randomUUID(),
+  timeout_seconds: 30,
+  request_id: crypto.randomUUID(),
 });
 ```
 
@@ -474,7 +474,7 @@ ws.on("requestError", (envelope) => {
 });
 ```
 
-Most query methods (`getMarkets`, `getPositions`, `getOrderStatus`, and others) return a `request_id`. Match it against `msg.request_id` on the corresponding response event to pair UI state with responses. `getPositionsAsync(args)` and `getMyActiveRfqsAsync()` return a promise instead.
+Every query has two forms. `getMarkets()`, `getPositions(args)`, `getOrderStatus(id)` and the rest return a `request_id`; match it against `msg.request_id` on the response event. The `Async` form (`getMarketsAsync()`, `getPositionsAsync(args)`, `getMyCapsAsync()`, …) returns a promise of the whole response, all pages included, and rejects with `ActaWsRequestError`.
 
 Error codes and `OrderFailed` reasons: [taker-api.md](../reference/taker-api.md#errors). Common cases: [faq.md](../reference/faq.md).
 

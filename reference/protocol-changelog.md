@@ -13,6 +13,10 @@ the order ID preimage are unchanged; signatures stay valid.
 | `market_id` | `market_pda` | `RfqSkipped`, `CheckQuote`, `MarketCapInfo`, cap error `market_oi_cap_exceeded` |
 | `maker` (owner wallet) | `maker_owner` | `QuoteReceived`, `QuotesUpdate`, `AcceptQuote`, `RfqClosed.winner` |
 | `maker` (maker PDA) | `maker_pda` | `TradeInfo`, `PositionOpened` |
+| `owner` | `maker_owner` | `MakerRegistered` |
+| `vault` | `vault_pda` | HTTP vault positions, depositors and depositor events |
+| `counterparty` | `counterparty_owner` | HTTP vault positions |
+| `active_expiry` | `active_expiry_ts` | HTTP vault |
 | `position` | `position_pda` | `PositionSettled`, `PositionLiquidated`, HTTP vault positions and exposure |
 | `underlying`, `quote` | `underlying_mint`, `quote_mint` | `MarketInfo` (WS and `GET /markets`) |
 | `old_order_id` | `replaced_order_id` | `ReplaceQuote` |
@@ -28,9 +32,10 @@ the order ID preimage are unchanged; signatures stay valid.
 | query `underlying`, `quote`, `expiry` | `underlying_mint`, `quote_mint`, `expiry_ts` | `GET /markets`; the old names return 400 instead of an unfiltered list |
 
 - `RfqAlreadyLocked` is `reconcile`: another of your orders holds the RFQ, and `MyActiveRfqs` shows it in `lock`. `RfqNotFound` and `RfqNotActive` are `refresh`. All three were `stop`.
-- `TokenInfo.protocol_fees` is `quote { … }`, `not_quote_token` or `pending` (was `none` for both).
-- `TokenMarketsInfo.session`: `continuous`, `open { closes_at }`, `closed { opens_at }` or `halted`, from the underlying's price-feed schedule.
-- A settled physical position's `settlement` carries `collateral_atoms` and `settlement_atoms`, the amounts the program moves.
+- `TokenInfo.protocol_fees` is `quote { … }`, `not_quote_token` or `unavailable` (was `none` for both). `unavailable` is not a zero fee.
+- `TokenMarketsInfo.session`: `continuous`, `open { closes_at }`, `closed { opens_at }`, `closed_indefinitely` (no session in two weeks) or `unknown` (no schedule published or loaded), from the underlying's price-feed schedule.
+- A settled physical position's `settlement` says what each side received: `holder` and `writer`, each `{ collateral_atoms, settlement_atoms }`. Out of the money the holder gets its settlement deposit back only if it made one.
+- `SwapQuoteResult.valid_until` is a number of Unix seconds, like every other `valid_until`.
 
 ## 2026-11-11: 0.9.1 and 0.6.1
 

@@ -72,7 +72,7 @@ twice. The SDK owns both:
 
 ```typescript
 const { rfqId, created } = await ws.createRfqOnce({
-  market, terms, side: "sell", quantity, timeoutSeconds: 30,
+  market_pda: market, terms, side: "sell", quantity, timeout_seconds: 30,
 });
 
 const outcome = await ws.submitOrderOnce({ orderIdHex, txBase64: signedTx });
@@ -120,7 +120,7 @@ try {
 ```
 
 The action of every code is in the [WS error catalog](../reference/ws-common.md#ws-error-codes) and
-the [ServerError catalog](../reference/ws-common.md#servererror-catalog). `errorAction(error, delivery)`
+the [ServerError catalog](../reference/ws-common.md#servererror-catalog). `errorAction(error, "not_applicable")`
 gives the same answer for an `Error` frame.
 
 ## Units

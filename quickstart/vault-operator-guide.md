@@ -124,7 +124,7 @@ A swap quote is exact-in: `amount` is the input in raw atoms of the source leg, 
     "in_amount": "250000000",
     "quoted_out_amount": "1503221",
     "minimum_out_amount": "1495705",
-    "valid_until": "1710000060",
+    "valid_until": 1710000060,
     "staging": "none"
   }
 }

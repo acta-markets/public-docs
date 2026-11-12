@@ -220,7 +220,7 @@ prices RFQs from it.
 
 `protocol_fees` is `{ "type": "quote", "premium_bps", "volume_bps" }` for a token that quotes
 markets, from its on-chain config; `{ "type": "not_quote_token" }` for an underlying, and
-`{ "type": "pending" }` for a quote token whose fee config is not projected yet (not a zero fee). Each quote token has its own
+`{ "type": "unavailable" }` for a quote token whose fee config is not projected yet (not a zero fee). Each quote token has its own
 fees. The program charges the smaller of `premium_bps` of the premium and `volume_bps` of the
 exposure: the strike notional for physical products and cash puts, the width notional for spreads.
 See the [fee model](ws-common.md#fee-model).
@@ -390,7 +390,7 @@ Optional query: `delegate=<pubkey>` returns only vaults that key can operate as 
       "phase": "active",
       "safety": "normal",
       "capabilities": 3,
-      "active_expiry": "1710000000",
+      "active_expiry_ts": "1710000000",
       "open_positions": "2",
       "total_shares": "1000000000",
       "share_price": "1000000000",
@@ -543,7 +543,7 @@ Query:
 {
   "positions": [
     {
-      "vault": "VaultPdaBase58",
+      "vault_pda": "VaultPdaBase58",
       "position_pda": "PositionPdaBase58",
       "order_id": "<64 hex chars>",
       "role": "writer",
@@ -555,7 +555,7 @@ Query:
       },
       "quantity": "1000000",
       "net_premium": "25000000",
-      "counterparty": "CounterpartyBase58",
+      "counterparty_owner": "CounterpartyOwnerBase58",
       "funded_amount": null,
       "status": "open",
       "is_otm": null,
@@ -712,7 +712,7 @@ appear per event as `second_amount` in the history.
 
 ```json
 {
-  "vault": "VaultPdaBase58",
+  "vault_pda": "VaultPdaBase58",
   "wallet": "WalletBase58",
   "deposit_request": { "amount": "1000000", "created_at": "1710000000", "transaction_signature": "TxSignatureBase58" },
   "withdraw_request": null,
@@ -736,7 +736,7 @@ Query: optional `limit` (default 50, maximum 200) and `cursor`; see [common pagi
 {
   "events": [
     {
-      "vault": "VaultPdaBase58",
+      "vault_pda": "VaultPdaBase58",
       "action": "deposit_processed",
       "amount": "1000000",
       "second_amount": "0",
@@ -771,7 +771,7 @@ the same shape as `/vaults/{pda}/depositors/{wallet}`.
   "wallet": "WalletBase58",
   "vaults": [
     {
-      "vault": "VaultPdaBase58",
+      "vault_pda": "VaultPdaBase58",
       "wallet": "WalletBase58",
       "deposit_request": null,
       "withdraw_request": null,

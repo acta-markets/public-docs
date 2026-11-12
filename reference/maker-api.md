@@ -1484,7 +1484,7 @@ Uses [common paging](ws-common.md#paging).
 
 Field semantics:
 - `state` is a tag on the row. `open`, `funded` and `liquidated` rows carry no settlement fields. A `settled` row carries `settlement`, a tagged union:
-  - `{ "type": "physical", "settlement_price", "is_otm", "collateral_atoms", "settlement_atoms" }` for covered calls and cash-secured puts. `is_otm` is derived from the market settlement price and the strike; a settlement price equal to the strike is out of the money. `collateral_atoms` is in the collateral mint (underlying for a covered call, quote for a cash-secured put), `settlement_atoms` in the other mint, both computed as the program does (`settlement_atoms` of a covered call is `floor(strike * quantity * 10^qd / (1e9 * 10^ud))`). In the money the holder receives the collateral and the writer the settlement. Out of the money the writer gets the collateral back, and a holder who funded gets the settlement back. The program moves the whole balance of the position's accounts, so a transfer is never below these amounts.
+  - `{ "type": "physical", "settlement_price", "is_otm", "holder", "writer" }` for covered calls and cash-secured puts, where `holder` and `writer` are each `{ "collateral_atoms", "settlement_atoms" }`: what that side received. `is_otm` is derived from the market settlement price and the strike; a settlement price equal to the strike is out of the money. The collateral mint is the underlying for a covered call and the quote for a cash-secured put; the settlement mint is the other one. Amounts are computed as the program does (the settlement leg of a covered call is `floor(strike * quantity * 10^qd / (1e9 * 10^ud))`). In the money the holder receives the collateral and the writer the settlement. Out of the money the writer gets the collateral back, and the holder gets its settlement deposit back if it made one. The program moves the whole balance of the position's accounts, so a transfer is never below these amounts.
   - `{ "type": "cash", "settlement_price", "holder_payoff", "writer_return" }` for spreads and cash puts, with both amounts in quote atoms. `writer_return` includes any donated collateral.
 - `settlement_price` is 1e9-scaled.
 - A `terminal_pending` row, `{ "state": "terminal_pending", "slot", "outcome" }`, is a position the chain has already settled or liquidated at `slot` while the server has not sealed that slot. It usually lasts under a second. `outcome` is `{ "type": "settled", "is_otm" }` or `{ "type": "liquidated" }`. Show it, but do not count it: caps and balances follow the sealed state, and the sealed row replaces it.
@@ -2088,7 +2088,7 @@ Variants:
 | `PositionOpened` | `market_pda`, `maker_pda`, `taker`, `terms`, `side`, `quantity`, `price`, `order_id` |
 | `MarketCreated` | `market_pda`, `underlying_mint`, `quote_mint`, `expiry_ts`, `is_put` |
 | `MarketFinalized` | `market_pda`, `settlement_price` |
-| `MakerRegistered` | `owner`, `maker_pda`, `quote_signing` |
+| `MakerRegistered` | `maker_owner`, `maker_pda`, `quote_signing` |
 | `PositionSettled` | `position_pda` |
 | `PositionLiquidated` | `position_pda` |
 

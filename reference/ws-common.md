@@ -40,13 +40,30 @@ Address fields are named by what they hold:
 |-------|-------|-------|
 | Market PDA | `market_pda` | Every message and query filter that references a market by address |
 | Market descriptor (object) | `market_descriptor` | `RfqBroadcast`, `IndicativePricesRequest`, `MarketDescriptorInfo`; the address is `market_descriptor.market_pda` |
-| Maker owner wallet | `maker_owner` | Quote messages: `QuoteReceived`, `QuotesUpdate`, `AcceptQuote`, `RfqClosed.winner` |
-| Maker PDA | `maker_pda` | Trades and chain events: `TradeInfo`, `PositionOpened`, `MakerRegistered` (with `owner`), `MmSummary`, `AuthSuccess.role` |
+| Maker owner wallet | `maker_owner` | Quote messages (`QuoteReceived`, `QuotesUpdate`, `AcceptQuote`, `RfqClosed.winner`) and `MakerRegistered` |
+| Maker PDA | `maker_pda` | Trades and chain events: `TradeInfo`, `PositionOpened`, `MakerRegistered`, `MmSummary`, `AuthSuccess.role` |
+| Vault PDA | `vault_pda` | Vault messages and every HTTP vault route |
+| Counterparty wallet | `counterparty_owner` | HTTP vault positions |
 | Position PDA | `position_pda` | `QuoteFilled`, `OrderConfirmed`, `PositionSettled`, `PositionLiquidated` |
 | Mint | `underlying_mint`, `quote_mint` | `MarketInfo`, positions, caps, filters |
 | Own address of a record | `pda` | `MarketInfo`, `PositionInfo` |
 
 Derive a maker PDA from its owner with the program's maker seed rather than comparing the two.
+
+Names follow one rule set:
+
+| Suffix | Holds |
+|---|---|
+| `_pda` | A program-derived account address |
+| `_owner` | The wallet behind an account, as opposed to its PDA |
+| `_mint` | A token mint |
+| `_at` | A Unix time in seconds |
+| `_at_ms` | A Unix time in milliseconds |
+| `_ts` | A market expiry in Unix seconds, named as in the program: `expiry_ts`, `min_expiry_ts`, `max_expiry_ts`, `active_expiry_ts` |
+| `_seconds` | A duration in seconds |
+| `_atoms` | An amount in a mint's base units |
+
+A record's own address is `pda` (`MarketInfo.pda`, `PositionInfo.pda`). Two time fields keep their established names: `valid_until` (Unix seconds, as in the order preimage) and HTTP `as_of` (Unix seconds).
 
 
 ## Reference data
