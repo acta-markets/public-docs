@@ -32,6 +32,26 @@ Unit variants have no `data` field, for example:
 
 `price` and `strike` are always 1e9 fixed-point per 1 underlying unit, independent of mint decimals.
 
+### Address fields
+
+Some addresses appear under different names. Read them by message:
+
+| Value | Field | Messages |
+|-------|-------|----------|
+| Market PDA | `market` | Most messages and query filters, for example `RfqRequest`, `PositionInfo`, `TradeInfo`, `ActiveRfqInfo`, `IndicativePricesResponse`, `MarketCreated` |
+| Market PDA | `market_pda` | `MarketDescriptor`, `QuoteFilled`, `MarketFinalized`, `MakerTradeInfo`, `MakerMarketInfo`, `TokenMarketsInfo` entries |
+| Market PDA | `market_id` | `RfqSkipped`, `CheckQuote` |
+| Market PDA | `pda` | `MarketInfo` |
+| Market descriptor (object, address in `market.market_pda`) | `market` | `RfqBroadcast`, `IndicativePricesRequest`, `MarketDescriptorInfo` |
+| Maker owner wallet | `maker` | `QuoteReceived`, `QuotesUpdate`, `AcceptQuote` |
+| Maker PDA | `maker` | `TradeInfo`, `PositionOpened` |
+| Maker PDA | `maker_pda` | `MakerRegistered` (with `owner`), `MmSummary` |
+| Position PDA | `pda` | `PositionInfo` |
+| Position PDA | `position_pda` | `QuoteFilled`, `OrderConfirmed` |
+| Position PDA | `position` | `PositionSettled`, `PositionLiquidated` |
+
+`maker` holds the owner wallet in quote messages and the maker PDA in trades and chain events; derive one from the other with the program's maker seed rather than comparing them. A later protocol version names each of these by its role.
+
 
 ## Reference data
 

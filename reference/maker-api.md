@@ -345,6 +345,7 @@ With `ud` underlying decimals, `qd` quote decimals and `width = upper_strike - l
 - Volume fee: `floor(exposure * protocol_fee_bps_volume / 10000)`. `exposure` is `quote(width)` for spreads and `cash_put`, and `quote(strike)` for covered calls and cash-secured puts.
 - Protocol fee: `min(premium fee, volume fee)`. Net premium: `gross - protocol fee`.
 - `protocol_fee_bps_premium` and `protocol_fee_bps_volume` are the quote token's `protocol_fees.premium_bps` and `volume_bps` in `GET /api/v1/tokens`; each quote token has its own.
+- The writer bears the fee. On a taker sell you pay the gross premium and the taker receives the net. On a taker buy the taker pays the gross `price` and you, the writer, receive the net premium.
 
 Worked example. A call spread 100 to 120 on 1 SOL (`quantity` 1000000000, `ud` 9, `qd` 6) at `price` 5000000000, with fees of 50 and 10 bps:
 
@@ -574,7 +575,7 @@ Atomic cancel-and-resubmit for a specific quote. Cancels the quote identified by
 
 ### BatchQuotes (maker -> server)
 
-Submit multiple quotes in one message. A batch must contain at most `max_batch_quotes` quotes (default 50). The server charges one quote-rate-limit token per quote element; an empty batch costs one token. Within an accepted batch, each quote is validated like a standalone `Quote`. The server responds with one `BatchQuotesAck` containing `results[]` — one entry (`acknowledged` or `rejected`) per quote that reached quote-level validation. **Correlate results by `order_id`, not by position:** a quote rejected at initial validation (bad signature, expired, unregistered maker) is reported as an inline error and may be omitted from `results[]`. Partial success is allowed. For an implicit same-terms replacement, the aggregated `QuoteAcknowledged` leaves `replaced_order_id` null; the replaced order id is delivered on the asynchronous per-quote `QuoteAcknowledged` event.
+Submit multiple quotes in one message. A batch must contain at most `max_batch_quotes` quotes (`GET /api/v1/venue`, 50 by default). The server charges one quote-rate-limit token per quote element; an empty batch costs one token. Within an accepted batch, each quote is validated like a standalone `Quote`. The server responds with one `BatchQuotesAck` containing `results[]` — one entry (`acknowledged` or `rejected`) per quote that reached quote-level validation. **Correlate results by `order_id`, not by position:** a quote rejected at initial validation (bad signature, expired, unregistered maker) is reported as an inline error and may be omitted from `results[]`. Partial success is allowed. For an implicit same-terms replacement, the aggregated `QuoteAcknowledged` has `replaced: { "type": "none" }`; the replaced order id is delivered on the asynchronous per-quote `QuoteAcknowledged` event.
 
 ```json
 {
@@ -2131,7 +2132,7 @@ An empty Live set, a timeout and `unknown` do not prove that an order did not ex
 
 ## Indicative pricing workflow
 
-Indicative pricing covers covered calls and cash-secured puts only. Each request names one taker `side`: `sell` asks what you pay a taker who writes the option, `buy` what you charge a taker who buys it. Buy requests reach only sessions subscribed to `taker_buy_rfqs`. Echo `side` in the response; a response without it does not parse, and repeated parse errors close the connection. The server publishes the median of maker prices per strike.
+Indicative pricing covers covered calls and cash-secured puts only. Each request names one taker `side`: `sell` asks what you pay a taker who writes the option, `buy` what you charge a taker who buys it. Sell requests reach only sessions subscribed to `rfqs`, buy requests only sessions subscribed to `taker_buy_rfqs`; a session subscribed to neither receives none. Echo `side` in the response; a response without it does not parse, and repeated parse errors close the connection. The server publishes the median of maker prices per strike.
 
 ### Request from taker-side cache (server -> maker)
 
@@ -2177,9 +2178,10 @@ Indicative pricing covers covered calls and cash-secured puts only. Each request
 
 - **Timing.** The server asks every market about every 30 seconds, once per side. A `request_id` stays open for 5 seconds; a response after that, or for an unknown `request_id`, is dropped without an error.
 - **One answer per request.** Only your first response to a `request_id` counts. Each round replaces the previous one: the published price per strike is the median of the answers that round.
-- **Partial and empty answers.** Price any subset of the requested strikes; strikes not in the request are ignored. An empty `prices` means you abstain this round; it does not clear other makers' prices. A strike nobody prices shows `best_price: null`.
+- **Partial and empty answers.** Price any subset of the requested strikes; strikes not in the request are ignored. An empty `prices` means you abstain this round; it does not clear other makers' prices. A strike nobody prices shows `price: { "type": "none" }` to takers.
 - **Strikes.** A request carries the strike ladder the taker sees, usually 4 to 10 strikes, at most 1000.
 - **Price.** Per one unit of the underlying, `1e9`-scaled, gross like a `Quote` price; there is no size. The server applies the protocol fee when it shows the price to takers.
+- **Freshness.** Takers see a market's indicatives as `stale` 60 seconds after the last round any maker answered.
 - **Rate limits.** A response the server accepts does not count against any rate limit. A late or unknown one counts against the session message bucket, which for a registered maker rejects excess frames instead of closing the connection.
 - **Commitment.** Indicatives are not binding and never become orders.
 
@@ -2349,7 +2351,7 @@ Details that are easy to miss in the schemas.
 
 ### Multiple quotes per RFQ
 
-When `RfqBroadcast.order_options` lists several strikes of a covered call or cash-secured put, you can quote each strike independently — each quote needs a distinct `order_id` and `nonce`. Submitting a new quote on the same `(rfq_id, terms)` pair replaces your prior quote on that pair; `QuoteAcknowledged.replaced_order_id` tells you which one was displaced. Across all makers, `max_quotes_per_rfq` from `GET /api/v1/venue` bounds the quotes per RFQ.
+When `RfqBroadcast.order_options` lists several strikes of a covered call or cash-secured put, you can quote each strike independently — each quote needs a distinct `order_id` and `nonce`. Submitting a new quote on the same `(rfq_id, terms)` pair replaces your prior quote on that pair; `QuoteAcknowledged.replaced` (`replaced { order_id }`) tells you which one was displaced. Across all makers, `max_quotes_per_rfq` from `GET /api/v1/venue` bounds the quotes per RFQ.
 
 ### `order_options` validation
 

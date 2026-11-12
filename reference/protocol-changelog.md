@@ -2,6 +2,14 @@
 
 ## Next (not deployed)
 
+Additive; no client changes required.
+
+- `GET /api/v1/venue` adds `max_batch_quotes`, the most quotes one `BatchQuotes` message may carry. `acta-maker-sdk` 0.9.1 and `@acta-markets/ts-sdk` 0.6.1 read it.
+- Vault deposit and withdraw request pages accept `limit` up to 200, like every other list (was 100).
+- Docs: sell indicative requests reach only `rfqs` subscribers, indicatives go stale 60 seconds after the last answered round, the writer bears the protocol fee on a taker buy, and [address fields](ws-common.md#address-fields) lists which name each message uses for market, maker and position addresses.
+
+## 2026-11-11
+
 `acta-maker-sdk` 0.9.0 and `@acta-markets/ts-sdk` 0.6.0. Breaking: absent facts are tagged unions
 instead of `null`. The protocol string stays `1.0.0`, so older clients pass `Hello` and then fail on
 the changed messages. The program is unchanged.

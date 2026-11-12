@@ -119,7 +119,8 @@ same program id.
   "max_quotes_per_rfq": { "type": "limited", "value": 50 },
   "max_active_rfqs_per_taker": { "type": "limited", "value": 50 },
   "pre_expiry_cutoff_seconds": 10800,
-  "max_page_size": 200
+  "max_page_size": 200,
+  "max_batch_quotes": 50
 }
 ```
 
@@ -135,6 +136,7 @@ same program id.
 | `max_active_rfqs_per_taker` | `CountLimit`: concurrent open RFQs per taker |
 | `pre_expiry_cutoff_seconds` | Default no-trade window before market expiry; a market may override it |
 | `max_page_size` | Largest `limit` any paged request accepts, on WS and REST |
+| `max_batch_quotes` | Most quotes one `BatchQuotes` message may carry |
 
 `CountLimit` is a tagged union: `{ "type": "unlimited" }` or `{ "type": "limited", "value": N }`.
 
@@ -673,7 +675,7 @@ finalize.
 Uses [common paging](ws-common.md#paging).
 
 Pending capital requests, for curators batching `ProcessDeposits` / `ProcessWithdrawals`.
-Query: optional `limit` (default 50, maximum 100) and `cursor`; see [common paging](ws-common.md#paging).
+Query: optional `limit` (default 50, maximum 200) and `cursor`; see [common paging](ws-common.md#paging).
 Requests are ordered by wallet; `next_cursor` is `null` on the last page. Withdraw requests carry
 `shares` instead of `amount`. `transaction_signature` may be null.
 
@@ -693,7 +695,7 @@ Requests are ordered by wallet; `next_cursor` is `null` on the last page. Withdr
 
 | Status | Code | When |
 |---|---|---|
-| `400` | `invalid_limit` | `limit` is 0 or above 100 |
+| `400` | `invalid_limit` | `limit` is 0 or above 200 |
 | `400` | `invalid_cursor` | `cursor` is not a wallet address |
 | `404` | `not_found` | the vault is unknown |
 | `429` | `rate_limited` | per-IP limit; retry with backoff |
