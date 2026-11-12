@@ -12,7 +12,7 @@ npm install @acta-markets/ts-sdk
 
 This guide covers version 0.5.2. It speaks WS protocol `1.0.0` and targets the program deployed to devnet and mainnet; both use the same program ID, and `GET /api/v1/venue` returns the authoritative `program_id`. Refer to opcodes and errors by name through the generated constants exported from `@acta-markets/ts-sdk` (`*_DISCRIMINATOR` for opcodes, `ACTA_CONTRACT_ERROR__*` for errors), not by number. The package README and changelog cover the vault builders.
 
-The wire is closed. The client does not dispatch a frame that lacks a required field or carries an unknown enum value. A message whose type the SDK does not know is reported on the `unknownMessage` event. Facts that are absent arrive as explicit `null`, typed `T | null`. State-dependent shapes are tagged unions. Wire addresses are validated when a frame is decoded. `server_now_at_ms` and `sent_at_ms` use milliseconds, and `expires_at` uses Unix seconds.
+The wire is closed. The client does not dispatch a frame that lacks a required field or carries an unknown enum value. A message whose type the SDK does not know is reported on the `unknownMessage` event. Absent facts are tagged unions; `null` appears only as `next_cursor` on the last page. Wire addresses are validated when a frame is decoded. `server_now_at_ms` and `sent_at_ms` use milliseconds, and `expires_at` uses Unix seconds.
 
 Taker-only apps should import **`@acta-markets/ts-sdk/ws`**: client, auth, RFQ and sponsored-tx signing, without instruction builders or IDL. The SDK is built on `@solana/kit`; you do not need `@solana/web3.js`. Spread economics helpers and account reads are in `@acta-markets/ts-sdk/chain`, and public reads such as the venue are in `@acta-markets/ts-sdk/http`.
 
@@ -182,7 +182,7 @@ Other products:
 
 Spread and cash put strikes must be multiples of the underlying's `strike_tick` (`1e9`-scaled; read it from `TokenInfo.role`). A spread needs `lower_strike < upper_strike`, and a call spread needs `lower_strike > 0`. The market's `is_put` must match the product's side.
 
-`createRfq` resolves with `requestId` on the server's `CommandAccepted` and rejects with `ActaWsRequestError` on the matching `RequestError`, a timeout or a disconnect. `RfqCreated` echoes `request_id` and may arrive before or after that receipt. Repeating a `createRfq` with the same `requestId` while the RFQ is open is rejected with `duplicate_rfq_id`, which means the first attempt created it; after the RFQ closes the same id opens a new one. `createRfqOnce` handles this: it owns the id and resends a lost reply only while the RFQ could still be open. The RFQ TTL is server-defined within the venue range `min_rfq_timeout_seconds` .. `max_rfq_timeout_seconds` from `GET /api/v1/venue`.
+`createRfq` resolves with `requestId` on the server's `CommandAccepted` and rejects with `ActaWsRequestError` on the matching `RequestError`, a timeout or a disconnect. `RfqCreated` echoes `request_id` and may arrive before or after that receipt. Repeating a `createRfq` with the same `requestId` while the RFQ is open is rejected with `duplicate_rfq_id`, which means the first attempt created it; after the RFQ closes the same id opens a new one. `createRfqOnce` handles this: it owns the id and resends a lost reply only while the RFQ could still be open. The RFQ TTL is your `timeoutSeconds`, which must be within the venue range `min_rfq_timeout_seconds` .. `max_rfq_timeout_seconds` from `GET /api/v1/venue`.
 
 For spreads and cash puts, `order_options` holds exactly your `terms`.
 

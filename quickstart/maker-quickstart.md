@@ -2,7 +2,7 @@
 
 JSON-layer path for a maker connection: auth, subscribe, quote, handle fills, reconnect. Rust integrations should start with [`maker-rust-sdk.md`](maker-rust-sdk.md). Payload examples are in [`maker-wire-examples.md`](maker-wire-examples.md); onboarding is in [`../reference/sandbox.md`](../reference/sandbox.md); units and envelopes are in [`../reference/ws-common.md`](../reference/ws-common.md); the message catalogue is in [`../reference/maker-api.md`](../reference/maker-api.md).
 
-The wire is closed. Every field is present on every frame, absent facts are explicit `null`, and state-dependent shapes are tagged unions. Unknown message types, error codes, enum values and missing fields are rejected, by the server and by your decoder.
+The wire is closed. Every field is present on every frame, absent facts are tagged unions (`null` only as `next_cursor` on the last page), and state-dependent shapes are tagged unions. Unknown message types, error codes, enum values and missing fields are rejected, by the server and by your decoder.
 
 ---
 
@@ -86,7 +86,7 @@ Details: [Products and terms](../reference/maker-api.md#products-and-terms).
 
 ## Quoting
 
-Units: `rfq.quantity` (and `size_rule`, `QuoteFilled.quantity`) is in underlying atoms; strikes and `price` are 1e9-scaled per underlying token, independent of decimals. Decimals are not in `RfqBroadcast`: read `underlying_decimals` and `quote_decimals` from `GetMarketDescriptors` and cache them by `market.market_pda`. The gross premium (before protocol fees) in quote atoms is `floor(price * quantity * 10^quote_decimals / (1e9 * 10^underlying_decimals))`, the contract's rounding.
+Units: `rfq.quantity` (and `size_rule`, `QuoteFilled.quantity`) is in underlying atoms; strikes and `price` are 1e9-scaled per underlying token, independent of decimals. Decimals are not in `RfqBroadcast`: read `underlying_decimals` and `quote_decimals` from `GetMarketDescriptors` and cache them by `market_descriptor.market_pda`. The gross premium (before protocol fees) in quote atoms is `floor(price * quantity * 10^quote_decimals / (1e9 * 10^underlying_decimals))`, the contract's rounding.
 
 On `RfqBroadcast`, first verify the [market PDA and terms](../reference/maker-api.md#quote-flow) against your configured Acta program. The program ID is the same on devnet and mainnet; `GET /api/v1/venue` returns it as `program_id`. Then choose the terms to quote:
 

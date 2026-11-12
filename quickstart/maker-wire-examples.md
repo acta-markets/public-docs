@@ -2,7 +2,7 @@
 
 Payloads illustrate wire shapes. Replace abbreviated signatures and past timestamps with real values; request/session/RFQ IDs must be UUIDs and order IDs must decode to 32 bytes. These examples are not transactions to send unchanged.
 
-Every frame is closed: all fields are present, absent facts are explicit `null`, and state-dependent shapes are tagged unions. The field reference is in [`../reference/maker-api.md`](../reference/maker-api.md).
+Every frame is closed: all fields are present, absent facts are tagged unions (`null` only as `next_cursor` on the last page), and state-dependent shapes are tagged unions. The field reference is in [`../reference/maker-api.md`](../reference/maker-api.md).
 
 Example clock: the session starts at Unix time `1710000000`. The venue window from `Welcome` is `min_quote_validity_seconds = 60` and `settlement_buffer_seconds = 50`.
 
@@ -1079,7 +1079,7 @@ Always sent when a quote expires.
 }
 ```
 
-For every market, send `"market": { "type": "all" }`.
+For every market, send `"market_pda": { "type": "all" }`.
 
 ### QuoteCancelled
 

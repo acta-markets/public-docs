@@ -27,7 +27,7 @@ the order ID preimage are unchanged; signatures stay valid.
 | `capital_fallback_delay_secs` | `capital_fallback_delay_seconds` | HTTP vault |
 | query `underlying`, `quote`, `expiry` | `underlying_mint`, `quote_mint`, `expiry_ts` | `GET /markets`; the old names return 400 instead of an unfiltered list |
 
-- Error action `wait`: a server-side timer may clear the condition, resend the same request after it. `RfqAlreadyLocked` is `wait`; `RfqNotFound` and `RfqNotActive` are `refresh` (were `stop`).
+- `RfqAlreadyLocked` is `reconcile`: another of your orders holds the RFQ, and `MyActiveRfqs` shows it in `lock`. `RfqNotFound` and `RfqNotActive` are `refresh`. All three were `stop`.
 - `TokenInfo.protocol_fees` is `quote { … }`, `not_quote_token` or `pending` (was `none` for both).
 - `TokenMarketsInfo.session`: `continuous`, `open { closes_at }`, `closed { opens_at }` or `halted`, from the underlying's price-feed schedule.
 - A settled physical position's `settlement` carries `collateral_atoms` and `settlement_atoms`, the amounts the program moves.

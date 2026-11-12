@@ -597,7 +597,7 @@ A spread whose strikes are unordered, or whose lower strike is `0` for a call sp
 }
 ```
 
-Strikes that are not multiples of the underlying's `strike_tick` fail with `spread_tick_violation`. A product that is not enabled for the pair fails with `product_not_allowed`. `"side": "buy"` fails with `taker_buy_unsupported`.
+Strikes that are not multiples of the underlying's `strike_tick` fail with `spread_tick_violation`. A product that is not enabled for the pair fails with `product_not_allowed`. `"side": "buy"` from a vault session fails with `taker_buy_unsupported`.
 
 ---
 

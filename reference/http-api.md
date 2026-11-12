@@ -219,7 +219,8 @@ date's weekday entry. While the market is closed the oracle keeps its last price
 prices RFQs from it.
 
 `protocol_fees` is `{ "type": "quote", "premium_bps", "volume_bps" }` for a token that quotes
-markets, from its on-chain config, and `{ "type": "none" }` otherwise. Each quote token has its own
+markets, from its on-chain config; `{ "type": "not_quote_token" }` for an underlying, and
+`{ "type": "pending" }` for a quote token whose fee config is not projected yet (not a zero fee). Each quote token has its own
 fees. The program charges the smaller of `premium_bps` of the premium and `volume_bps` of the
 exposure: the strike notional for physical products and cash puts, the width notional for spreads.
 See the [fee model](ws-common.md#fee-model).

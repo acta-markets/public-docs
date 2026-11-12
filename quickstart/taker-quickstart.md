@@ -6,7 +6,7 @@ The message catalogue is in [`../reference/taker-api.md`](../reference/taker-api
 
 A taker needs a Solana wallet keypair. There is no registration and no on-chain setup step: any wallet can open RFQs (rate-limited, and invite-gated on closed mainnet; see [Invite gating](#invite-gating-closed-mainnet)).
 
-The wire is closed. Every field is present on every frame, absent facts are `null`, and state-dependent shapes are tagged unions. The server rejects missing fields, unknown message types and unknown enum values.
+The wire is closed. Every field is present on every frame, absent facts are tagged unions (`null` only as `next_cursor` on the last page), and state-dependent shapes are tagged unions. The server rejects missing fields, unknown message types and unknown enum values.
 
 ---
 
@@ -175,7 +175,7 @@ RfqRequest -> RfqCreated -> QuoteReceived (0..N) -> AcceptQuote
 }
 ```
 
-`request_id` is required and is also the idempotency key: repeating a request with the same `request_id` while the RFQ is active returns the same `rfq_id`. The server answers with `CommandAccepted { request_id }` or `RequestError { request_id, error, delivery }`. On success it also sends `RfqCreated { rfq_id, rfq_version, terms, side, request_id, expires_at, created_at, order_options }`, before or after the receipt, and broadcasts the RFQ to eligible makers. `order_options` is the list of `terms` makers may quote. For a spread or cash put it holds exactly your `terms`. For a covered call or cash-secured put it is a strike ladder of the same product.
+`request_id` is required and is also the idempotency key: a repeat with the same `request_id` while the RFQ is open fails with `duplicate_rfq_id`, which proves the first attempt created it; after the RFQ closes the same id opens a new one. The server answers with `CommandAccepted { request_id }` or `RequestError { request_id, error, delivery }`. On success it also sends `RfqCreated { rfq_id, rfq_version, terms, side, request_id, expires_at, created_at, order_options }`, before or after the receipt, and broadcasts the RFQ to eligible makers. `order_options` is the list of `terms` makers may quote. For a spread or cash put it holds exactly your `terms`. For a covered call or cash-secured put it is a strike ladder of the same product.
 
 ### 2. Collect quotes
 
@@ -485,7 +485,7 @@ The reference docs are the language-neutral wire spec. To build a taker client i
 1. An Ed25519 keypair and the ability to sign raw bytes (challenge auth and transaction signing).
 2. A Solana library that can deserialize, partially sign and re-serialize a v0 `VersionedTransaction`, for example `solders` or `solana-py` (Python), `solana-sdk` (Rust), `@solana/web3.js` (TypeScript). Or the raw-byte path above.
 3. A WebSocket client that answers protocol pings.
-4. A strict JSON codec for the closed wire: required fields, explicit `null`, tagged unions.
+4. A strict JSON codec for the closed wire: required fields and tagged unions; `null` only as `next_cursor` on the last page.
 
 The RFQ flow itself needs no RPC: markets, quotes, positions and the sponsored transaction arrive over WebSocket. An RPC read of the `GlobalConfig` account is needed only to learn the keeper address for transaction verification. Contact the Acta team for a Rust or Python starter if you are not on TypeScript.
 

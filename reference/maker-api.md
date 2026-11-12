@@ -31,7 +31,7 @@ push is expected.
 
 The wire is closed.
 
-- Every field is present on every frame. A fact that can be absent is an explicit `null`. A missing key is a decode error.
+- Every field is present on every frame. A fact that can be absent is a tagged union; `null` appears only as `next_cursor` on the last page. A missing key is a decode error.
 - A shape that depends on state is a tagged union, for example `terms`, `state`, `scope`, `cursor`, `verdict` and `role`.
 - Unknown message types, error codes, enum values and fields are rejected.
 - Requests have no defaults. Filters, limits and cursors are required fields.
@@ -1369,7 +1369,7 @@ Uses [common paging](ws-common.md#paging).
 
 Token decimals live here and nowhere in `RfqBroadcast`: `RfqBroadcast.quantity`,
 `QuoteFilled.quantity` and `size_rule` are underlying atoms. Cache
-`underlying_decimals` / `quote_decimals` by `market.market_pda` (the Rust SDK's
+`underlying_decimals` / `quote_decimals` by `market_descriptor.market_pda` (the Rust SDK's
 `MarketDecimals` does this from `MarketDescriptors`).
 
 ```typescript

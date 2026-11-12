@@ -630,7 +630,6 @@ action, not on `message`.
 | `reconcile` | The command may already have taken effect. Look it up (`GetOrderStatus`, `GetSwapStatus`, `MyActiveRfqs`) before anything else |
 | `fix_request` | The request is invalid. Change it before sending again |
 | `stop` | No resend succeeds until the venue, market or account state changes |
-| `wait` | A server-side timer may clear it. Send the same request again after that timer |
 
 `delivery: "unknown"` overrides the action: such a submission may still execute, so the action is
 `reconcile` whatever the error. Only `retry` and `reauthenticate` allow resending an unchanged
@@ -647,7 +646,7 @@ This is the closed set of `type` values. A variant without `data` has no `data` 
 | `Unauthorized` | `{ role, action }` | `stop` | Only `role` may do this |
 | `RfqNotFound` | none | `refresh` | The RFQ does not exist |
 | `RfqNotActive` | none | `refresh` | The RFQ is not accepting quotes |
-| `RfqAlreadyLocked` | none | `wait` | Another order holds the RFQ; it frees when that signature window closes |
+| `RfqAlreadyLocked` | none | `reconcile` | Another of your orders holds the RFQ; `MyActiveRfqs` shows it in `lock` |
 | `InvalidState` | `{ state }` | `stop` | The RFQ is in the wrong state for this command |
 | `QuoteLocked` | `{ reason }` | `rfq_locked`: `stop`; `order_submitted`: `reconcile` | The quote cannot be changed |
 | `QuoteNotFound` | none | `stop` | The quote does not exist or is already gone |
@@ -825,7 +824,7 @@ There's no single global correlation id. Correlation is per-request, via the `re
   the server accepted the command, never that anything landed on chain. Lifecycle pushes
   (`RfqCreated`, `OrderAccepted`, `OrderFailed`, …) stay keyed by `rfq_id` / `order_id` and may
   arrive before or after the receipt. `RfqRequest.request_id` is also the idempotency key: a
-  repeated `request_id` returns the RFQ it created, echoed in `RfqCreated.request_id`.
+  repeat while the RFQ is open fails with `duplicate_rfq_id`, which proves the first one created it.
 - Exception: when the server's inbound queue for a connection is full it sends an uncorrelated
   `Error { code: "server_overloaded" }` and closes the socket with `4003 rate_limited`. Every request
   still outstanding on that connection has an unknown outcome; resolve submissions by status after

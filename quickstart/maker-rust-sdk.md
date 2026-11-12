@@ -12,10 +12,10 @@ For JSON-layer integrations, see [`maker-quickstart.md`](maker-quickstart.md). M
 
 ```toml
 [dependencies]
-acta-maker-sdk = { version = "0.8.2", features = ["ws-client"] }
+acta-maker-sdk = { version = "0.10.0", features = ["ws-client"] }
 ```
 
-Version 0.8.2 speaks WS protocol `1.0.0` (`WS_PROTOCOL_VERSION`). The wire is closed: every field is present, absent facts are explicit `null`, and decoding rejects unknown message types, error codes, enum values and missing fields. This guide covers ordinary makers; vault operators use the `vault` feature, see the [vault operator guide](vault-operator-guide.md).
+Version 0.10.0 speaks WS protocol `1.0.0` (`WS_PROTOCOL_VERSION`). The wire is closed: every field is present, absent facts are tagged unions (`null` only as `next_cursor` on the last page), and decoding rejects unknown message types, error codes, enum values and missing fields. This guide covers ordinary makers; vault operators use the `vault` feature, see the [vault operator guide](vault-operator-guide.md).
 
 Quote-only integrations need `ws-client`. `chain` adds Solana instruction builders (including `chain::vault`); `chain-rpc` adds on-chain reads; `http` adds the read-only HTTP client; `vault` adds the vault operator client and implies `ws-client` and `chain`.
 
@@ -121,7 +121,7 @@ quote_client.quote_in_epoch(quote, recovery_epoch).await?;
 
 With the `http` feature, `.venue(&venue)` replaces `.min_valid_until(...)`: given the `Venue` from `HttpClient::new(DEVNET_API)?.venue().await?`, it sets the floor to `now + min_quote_validity_seconds` at the current clock and refuses a `valid_until` whose `valid_until − settlement_buffer_seconds` is not after now (`QuoteBuildError::ValidUntilWithinSettlementBuffer`). Fetch the venue at startup; the builder reads the clock when `.venue` is called. `DEVNET_API`, `DEVNET_WS`, `MAINNET_API` and `MAINNET_WS` are the public origins.
 
-The builder takes the quote's `terms` and `side` from the RFQ. `QuoteBuilder::sign` selects the 182-byte layout for covered calls and cash-secured puts and the 190-byte layout for spreads and cash puts. `RfqBinding` also supports choosing a permitted strike from `order_options` for covered calls and cash-secured puts; spreads and cash puts quote exactly the RFQ's `terms`. A `buy` side is not executable and is rejected with `taker_buy_unsupported`.
+The builder takes the quote's `terms` and `side` from the RFQ. `QuoteBuilder::sign` selects the 182-byte layout for covered calls and cash-secured puts and the 190-byte layout for spreads and cash puts. `RfqBinding` also supports choosing a permitted strike from `order_options` for covered calls and cash-secured puts; spreads and cash puts quote exactly the RFQ's `terms`. The SDK refuses to send a `buy` `RfqRequest` (`taker_buy_unsupported`); quoting buy RFQs is covered in [Writing taker buys](#writing-taker-buys).
 
 ### Spreads and cash puts
 
