@@ -786,7 +786,7 @@ Settled cash position (settlement price `133`), the same row after settlement:
 }
 ```
 
-A settled physical position carries `"settlement": { "type": "physical", "settlement_price": 150000000000, "is_otm": true }`.
+A settled physical position carries `"settlement": { "type": "physical", "settlement_price": 150000000000, "is_otm": true, "collateral_atoms": 1000000000, "settlement_atoms": 160000000 }` (a 1 SOL covered call struck at 160 USDC): the collateral and settlement amounts in atoms, as in the [maker reference](maker-api.md).
 
 Field semantics:
 - `state`: `open`, `funded`, `liquidated` or `settled`. Only `settled` carries `settlement`.
