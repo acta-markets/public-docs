@@ -196,7 +196,7 @@ Every token of the active markets, once, sorted by mint. Markets reference token
         "type": "continuous"
       },
       "protocol_fees": {
-        "type": "none"
+        "type": "not_quote_token"
       }
     }
   ],
