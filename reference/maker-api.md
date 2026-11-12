@@ -393,7 +393,7 @@ The Rust SDK computes these with `SpreadTerms::premium` (spreads and cash puts) 
     "side": "sell",
     "quantity": 1000000000,
     "expires_at": 1710000050,
-    "taker": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
+    "taker_owner": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
     "order_options": [
       { "type": "covered_call", "strike": 150000000000 },
       { "type": "covered_call", "strike": 160000000000 }
@@ -729,7 +729,7 @@ Identified by `(rfq_id, terms)`, not `order_id`. If quoting several terms per RF
   "data": {
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-    "taker": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
+    "taker_owner": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
     "price": 5000000000,
     "quantity": 1000000000,
     "terms": { "type": "covered_call", "strike": 160000000000 },
@@ -751,11 +751,11 @@ Identified by `(rfq_id, terms)`, not `order_id`. If quoting several terms per RF
     "expiry_ts": 1710600000,
     "terms": { "type": "covered_call", "strike": 160000000000 },
     "side": "sell",
-    "taker": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
+    "taker_owner": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
     "price": 5000000000,
     "quantity": 1000000000,
     "position_pda": "75NqraLLofiLUpNQg2wUPG6CJpxcaGEZUwuNrnAgvcTP",
-    "tx_signature": "<base58 transaction signature>",
+    "transaction_signature": "<base58 transaction signature>",
     "filled_at": 1710000042
   }
 }
@@ -907,7 +907,7 @@ Always sent when a quote expires.
 
 `your_quote` is `{ "type": "quoted", "order_id", "status", "price" }` with this session's quote on the RFQ, or `{ "type": "none" }` when it has none. `your_quote.status` values: `expired`, `outbid`, `cancelled`, `filled`. A session with several quotes gets one of them; a session that won gets the winning quote.
 
-`winner` is `{ "type": "winner", "maker", "price", "transaction" }` on `filled` and `{ "type": "none" }` otherwise. `transaction` is `{ "type": "sent", "signature" }` once the transaction is sent, otherwise `{ "type": "pending" }`.
+`winner` is `{ "type": "winner", "maker_owner", "price", "transaction" }` on `filled` and `{ "type": "none" }` otherwise. `transaction` is `{ "type": "sent", "signature" }` once the transaction is sent, otherwise `{ "type": "pending" }`.
 
 - On `filled`, every recipient gets `winner`, including `winner.transaction`. The winning session gets `your_quote.status` `filled`, a session with another live quote gets `outbid`, and a session whose quotes are already gone gets `{ "type": "none" }`.
 - On any other reason, a session with a live quote gets it with status `expired` (reason `expired`) or `cancelled`. A session whose quotes are already gone gets `null`.
@@ -1708,7 +1708,7 @@ Uses [common paging](ws-common.md#paging).
       {
         "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
         "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
-        "taker": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
+        "taker_owner": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
         "terms": {
           "type": "covered_call",
           "strike": 160000000000
@@ -1792,10 +1792,10 @@ Uses [common paging](ws-common.md#paging).
           "strike": 160000000000
         },
         "side": "sell",
-        "taker": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
+        "taker_owner": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
         "quantity": 1000000000,
         "price": 5000000000,
-        "tx_signature": "<base58 transaction signature>",
+        "transaction_signature": "<base58 transaction signature>",
         "position": {
           "type": "confirmed",
           "position_pda": "75NqraLLofiLUpNQg2wUPG6CJpxcaGEZUwuNrnAgvcTP"
@@ -1811,7 +1811,7 @@ Uses [common paging](ws-common.md#paging).
 Field semantics:
 - `price`: gross premium per 1 underlying unit (1e9 scale)
 - `confirmed_at`: Unix timestamp seconds when the trade was confirmed on-chain
-- `tx_signature` is always present; `position` is `{ "type": "confirmed", "position_pda" }` or `{ "type": "pending" }`
+- `transaction_signature` is always present; `position` is `{ "type": "confirmed", "position_pda" }` or `{ "type": "pending" }`
 
 `MyTrades` returns **confirmed trades only** — in-flight orders are visible via `GetOrderStatus` and the order push flow, not here. The cursor is therefore stable.
 
@@ -1898,9 +1898,9 @@ Received when subscribed to the corresponding channel.
       "side": "sell",
       "quantity": 1000000000,
       "price": 5000000000,
-      "taker": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
+      "taker_owner": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
       "maker_pda": "HYe9CryCnQ3ZviCwoG8X7REFoSBK7HCjrhWWMpNtTah1",
-      "tx_signature": "<base58 transaction signature>",
+      "transaction_signature": "<base58 transaction signature>",
       "executed_at": 1710000042
     }
   }
@@ -2071,7 +2071,7 @@ Sent to the owner's sessions when the maker's capacity changes without a positio
     "slot": 250000000,
     "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
     "maker_pda": "HYe9CryCnQ3ZviCwoG8X7REFoSBK7HCjrhWWMpNtTah1",
-    "taker": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
+    "taker_owner": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
     "terms": { "type": "covered_call", "strike": 160000000000 },
     "side": "sell",
     "quantity": 1000000000,
@@ -2085,7 +2085,7 @@ Variants:
 
 | `event_type` | Additional fields |
 |--------|-------------------|
-| `PositionOpened` | `market_pda`, `maker_pda`, `taker`, `terms`, `side`, `quantity`, `price`, `order_id` |
+| `PositionOpened` | `market_pda`, `maker_pda`, `taker_owner`, `terms`, `side`, `quantity`, `price`, `order_id` |
 | `MarketCreated` | `market_pda`, `underlying_mint`, `quote_mint`, `expiry_ts`, `is_put` |
 | `MarketFinalized` | `market_pda`, `settlement_price` |
 | `MakerRegistered` | `maker_owner`, `maker_pda`, `quote_signing` |
@@ -2312,7 +2312,7 @@ Position status is a lowercase snake_case string on the wire. `funded` and `liqu
 | `open` | none |
 | `funded` | none |
 | `liquidated` | none |
-| `settled` | `settlement`: `physical { settlement_price, is_otm }` or `cash { settlement_price, holder_payoff, writer_return }` |
+| `settled` | `settlement`: `physical { settlement_price, is_otm, holder, writer }` (each side `{ collateral_atoms, settlement_atoms }`), `not_exercised { settlement_price }` or `cash { settlement_price, holder_payoff, writer_return }` |
 
 ### PositionUpdateType (in `PositionUpdated`)
 

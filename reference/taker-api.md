@@ -527,7 +527,7 @@ Sent when `SubmitSignedSponsoredTx` is accepted and queued for execution. It is 
 | `{ "type": "confirmed", "position_pda": "..." }` | Execution is confirmed; this is the resulting position. |
 | `{ "type": "unknown" }` | Available evidence cannot establish the outcome. This is not proof of nonexecution. |
 
-The response has no `order_version`, `rfq_id` or `tx_signature`. Lookup failures return a correlated `RequestError`. Neither an empty position list nor `unknown` authorizes replaying the order.
+The response has no `order_version`, `rfq_id` or `transaction_signature`. Lookup failures return a correlated `RequestError`. Neither an empty position list nor `unknown` authorizes replaying the order.
 
 `order_version` is on lifecycle pushes: accepted `1`, submitted `2`, failed `3`, confirmed `4`. A later chain confirmation can supersede a local failure.
 
@@ -538,7 +538,7 @@ The response has no `order_version`, `rfq_id` or `tx_signature`. Lookup failures
   "type": "OrderSubmitted",
   "data": {
     "order_id": "0x1111111111111111111111111111111111111111111111111111111111111111",
-    "tx_signature": "5eyk...base58sig",
+    "transaction_signature": "5eyk...base58sig",
     "order_version": 2
   }
 }
@@ -618,11 +618,11 @@ The keeper retries retryable submission failures within a five-attempt budget. E
 }
 ```
 
-`reason` is `expired`, `taker_cancelled`, `filled`, `market_expired`, `no_eligible_makers` or `server_shutdown`. `no_eligible_makers` means no maker could receive the RFQ (none subscribed, or every one skipped for caps or custody), so the server closes it at once instead of at its timeout. `server_shutdown` means a graceful server stop closed the RFQ before its order reached the keeper; open a new RFQ after reconnecting. `your_quote` is `null` or `{ order_id, status, price }`. `winner` is `null` or `{ maker, price, tx_signature }`, and `tx_signature` is itself `null` when the signature is not known.
+`reason` is `expired`, `taker_cancelled`, `filled`, `market_expired`, `no_eligible_makers` or `server_shutdown`. `no_eligible_makers` means no maker could receive the RFQ (none subscribed, or every one skipped for caps or custody), so the server closes it at once instead of at its timeout. `server_shutdown` means a graceful server stop closed the RFQ before its order reached the keeper; open a new RFQ after reconnecting. `your_quote` is `{ "type": "none" }` or `{ "type": "quoted", order_id, status, price }`. `winner` is `{ "type": "none" }` or `{ "type": "winner", maker_owner, price, transaction }`, where `transaction` is `{ "type": "pending" }` until the signature is known, then `{ "type": "sent", signature }`.
 
 ### Terminal semantics: OrderConfirmed vs RfqClosed
 
-- `OrderConfirmed` is the order-level confirmation: the selected order is confirmed on chain. It carries `position_pda` and `order_version`. `tx_signature` is delivered earlier, on `OrderSubmitted`.
+- `OrderConfirmed` is the order-level confirmation: the selected order is confirmed on chain. It carries `position_pda` and `order_version`. `transaction_signature` is delivered earlier, on `OrderSubmitted`.
 - `RfqClosed` is the terminal RFQ event. Treat the RFQ as closed for further quoting and accept actions.
 - On a fill, takers receive `OrderConfirmed` followed by `RfqClosed` in close succession.
 
@@ -1556,7 +1556,7 @@ Field semantics:
 Delivered when subscribed to the channel.
 
 ```json
-{ "type": "TradeExecuted", "data": { "trade": { "id": "uuid", "market_pda": "MarketPdaBase58", "terms": { "type": "covered_call", "strike": 136000000000 }, "side": "sell", "quantity": 5000000000, "price": 50000000, "taker": "TakerPubkeyBase58", "maker_pda": "MakerPdaBase58", "tx_signature": "5eyk...base58sig", "executed_at": 1710000012 } } }
+{ "type": "TradeExecuted", "data": { "trade": { "id": "uuid", "market_pda": "MarketPdaBase58", "terms": { "type": "covered_call", "strike": 136000000000 }, "side": "sell", "quantity": 5000000000, "price": 50000000, "taker_owner": "TakerPubkeyBase58", "maker_pda": "MakerPdaBase58", "transaction_signature": "5eyk...base58sig", "executed_at": 1710000012 } } }
 ```
 
 `TradeExecuted` is a best-effort live hint. Merge it with authoritative history by `trade.id`; do not derive counts from frame counts.

@@ -351,7 +351,7 @@ The receipt and the lifecycle push (`SponsoredTxToSign` here, `OrderAccepted` in
   "type": "OrderSubmitted",
   "data": {
     "order_id": "0x2222222222222222222222222222222222222222222222222222222222222222",
-    "tx_signature": "5eyk...base58sig",
+    "transaction_signature": "5eyk...base58sig",
     "order_version": 2
   }
 }
@@ -368,7 +368,7 @@ The receipt and the lifecycle push (`SponsoredTxToSign` here, `OrderAccepted` in
 }
 ```
 
-`tx_signature` arrives on `OrderSubmitted` and is not repeated on `OrderConfirmed`.
+`transaction_signature` arrives on `OrderSubmitted` and is not repeated on `OrderConfirmed`.
 
 ### 11) RfqClosed (server -> client)
 

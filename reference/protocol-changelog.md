@@ -14,6 +14,9 @@ the order ID preimage are unchanged; signatures stay valid.
 | `maker` (owner wallet) | `maker_owner` | `QuoteReceived`, `QuotesUpdate`, `AcceptQuote`, `RfqClosed.winner` |
 | `maker` (maker PDA) | `maker_pda` | `TradeInfo`, `PositionOpened` |
 | `owner` | `maker_owner` | `MakerRegistered` |
+| `owner` | `maker_owner` | HTTP `/makers` |
+| `taker` | `taker_owner` | `TradeInfo`, `MakerTradeInfo`, `RfqBroadcast`, `ActiveRfqInfo`, `QuoteFilled`, `QuoteSelected`, `PositionOpened` |
+| `tx_signature` | `transaction_signature` | `TradeInfo`, `MakerTradeInfo`, `QuoteFilled`, `OrderSubmitted` |
 | `vault` | `vault_pda` | HTTP vault positions, depositors and depositor events |
 | `counterparty` | `counterparty_owner` | HTTP vault positions |
 | `active_expiry` | `active_expiry_ts` | HTTP vault |
@@ -36,6 +39,10 @@ the order ID preimage are unchanged; signatures stay valid.
 - `TokenMarketsInfo.session`: `continuous`, `open { closes_at }`, `closed { opens_at }`, `closed_indefinitely` (no session in two weeks) or `unknown` (no schedule published or loaded), from the underlying's price-feed schedule.
 - A settled physical position's `settlement` says what each side received: `holder` and `writer`, each `{ collateral_atoms, settlement_atoms }`. Out of the money the holder gets its settlement deposit back only if it made one.
 - `SwapQuoteResult.valid_until` is a number of Unix seconds, like every other `valid_until`.
+- HTTP vault routes no longer use `null` for absent facts; each group is a tagged union: `balances` (`observed` or `unobserved`), `deposit_window`, `staging` (`none` or `staged`), `tvl_usd` (`priced` or `unpriced`), `stats` (`not_indexed`, `behind` or `current` with its `generation`), `metadata` (`none` or `set`); derived amounts are `{ "type": "available", "atoms" }` or `unavailable`, windowed metrics `available` or `insufficient_history`. Positions carry `funded_amount`, `close` (`open` or `closed { closed_at, is_otm }`) and `transaction`; exposure rows `decimals`, `spot`, `moneyness`, `intrinsic`; cycles `capital_generation` and `state` (`running`, `priced`, `finished`); depositors `deposit_request`, `withdraw_request` (`none` or `pending`), `totals` (`none` or `recorded`) and `boundary_price`. `product` is tagged by `type`, not `kind`. `null` remains only in `next_cursor` and the operator's free-text metadata.
+- `QuoteLocked { rfq_locked }`, `QuoteNotFound` and `UnknownOrder` are `refresh` (were `stop`): they are races with state that moved on.
+- `Welcome.rate_limits` no longer has `quotes`: quote messages need maker or Vault authentication, after which the shared `liquidity_provider` bucket is the only limit.
+- `TokenInfo.session` is `unknown` when no schedule is known for the feed (was `continuous`).
 
 ## 2026-11-11: 0.9.1 and 0.6.1
 

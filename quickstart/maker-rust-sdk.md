@@ -225,7 +225,7 @@ Lifecycle events arrive through the managed message receiver with a connection e
 | `QuoteBestStatus` / `QuoteOutbid` | Current book position. |
 | `QuoteRefreshRequested` | Settlement-buffer cutoff approaching. Resubmit with `valid_until ≥ min_valid_until`. Identified by `(rfq_id, terms)`. |
 | `QuoteSelected` | Quote locked; awaiting the taker signature. |
-| `QuoteFilled` | Position opened on-chain. Carries `market_pda`, `expiry_ts`, `terms`, `side`, `position_pda` and `tx_signature`, so it can be attributed without the RFQ. It has no fee or net-premium field. |
+| `QuoteFilled` | Position opened on-chain. Carries `market_pda`, `expiry_ts`, `terms`, `side`, `position_pda` and `transaction_signature`, so it can be attributed without the RFQ. It has no fee or net-premium field. |
 | `QuoteCancelled` | Removes only the listed `order_ids`; an empty list removes nothing. It is not a cancellation-command ACK. Reconcile after disconnect. |
 | `QuoteExpired` | Always sent when a quote expires. `reason` is `Expired` or `ExpiringSoon`. |
 | `RfqLocked` | Another maker's quote was accepted. Yours stays as a backup; do not re-quote until `RfqAvailableAgain`. |
@@ -247,7 +247,7 @@ The preimage is constructed identically to a fresh `Quote` with a new `nonce` an
 
 Position rows (`PositionInfo`, in `MakerPositions`, `MmSummary` and `PositionUpdated`) carry:
 
-- `state`: `Open`, `Funded`, `Liquidated`, or `Settled { settlement }`. `settlement` is `Physical { settlement_price, is_otm }` or `Cash { settlement_price, holder_payoff, writer_return }`.
+- `state`: `Open`, `Funded`, `Liquidated`, or `Settled { settlement }`. `settlement` is `Physical { settlement_price, is_otm, holder, writer }` (each side a `ReceivedAtoms { collateral_atoms, settlement_atoms }`), `NotExercised { settlement_price }` or `Cash { settlement_price, holder_payoff, writer_return }`.
 - `terms` and `side`.
 - `total_premium`: the net premium the taker received, in quote atoms after the protocol fee. This is the authoritative figure for the position, not `QuoteFilled`. The maker's cost is the gross premium, and the fee is that cost minus `total_premium`.
 - `revision`: `PositionRevision { slot, transaction_index, instruction_index }`. It orders lexicographically. Keep a row only when `incoming.revision > stored.revision` for the same PDA.

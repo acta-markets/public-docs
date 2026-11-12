@@ -337,7 +337,7 @@ The server relays keeper progress:
 | Event | Meaning |
 |---|---|
 | `OrderAccepted` | Signed transaction accepted and queued for execution. An exact `AcceptQuote` retry may also receive it as a liveness ACK. It does not confirm chain execution. |
-| `OrderSubmitted` | Transaction sent to Solana. Carries `tx_signature`, `order_version`. |
+| `OrderSubmitted` | Transaction sent to Solana. Carries `transaction_signature`, `order_version`. |
 | `OrderConfirmed` | Position opened on chain. Carries `position_pda`, `order_version`. |
 | `OrderFailed` | Execution failed. Carries `reason`, `order_version`. |
 | `RfqClosed` | Terminal RFQ event. On a fill it follows `OrderConfirmed`. Drop per-RFQ state only here. |
@@ -373,7 +373,7 @@ Once open, the position's collateral is locked in its own escrow. There is no ma
 
 For a covered call or cash-secured put that is in the money, the maker supplies the settlement asset. If it remains unfunded, a permissionless liquidator can supply that asset and receive the corresponding collateral. Locked collateral does not guarantee a liquidation deadline: completion depends on someone providing the funding.
 
-A call spread, put spread or cash put goes from `open` straight to `settled`. Its `settlement` is `{ "type": "cash", "settlement_price", "holder_payoff", "writer_return" }` with amounts in quote atoms. A settled physical position has `{ "type": "physical", "settlement_price", "is_otm" }`.
+A call spread, put spread or cash put goes from `open` straight to `settled`. Its `settlement` is `{ "type": "cash", "settlement_price", "holder_payoff", "writer_return" }` with amounts in quote atoms. A settled physical position has `{ "type": "physical", "settlement_price", "is_otm", "holder", "writer" }`, each side `{ "collateral_atoms", "settlement_atoms" }` it received; an unfunded in-the-money buy has `{ "type": "not_exercised", "settlement_price" }`.
 
 Every position row carries `revision { slot, transaction_index, instruction_index }`, both decimals and `total_premium`, the net premium in quote atoms after the protocol fee. Track positions in two ways:
 

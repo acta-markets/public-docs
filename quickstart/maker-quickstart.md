@@ -153,7 +153,7 @@ Lifecycle events are keyed by `order_id`. `RfqClosed` is the terminal event for 
 | `QuoteOutbid` | Quote has been displaced by a better one. |
 | `QuoteRefreshRequested` | Settlement-buffer cutoff is approaching; resubmit with `valid_until ≥ min_valid_until` before the cutoff. Identified by `(rfq_id, terms)`. `reason` is `expired` or `expiring_soon`. |
 | `QuoteSelected` | Quote locked; awaiting the taker signature. |
-| `QuoteFilled` | Position opened on-chain. Carries `position_pda`, `tx_signature`, `terms` and `side`. It has no fee or net-premium field. |
+| `QuoteFilled` | Position opened on-chain. Carries `position_pda`, `transaction_signature`, `terms` and `side`. It has no fee or net-premium field. |
 | `QuoteCancelled` | Terminal. `reason` ∈ {`requested`, `risk_check`, `rfq_accepted`, `maker_disconnected`}. |
 | `QuoteExpired` | Always sent when a quote expires. `reason` ∈ {`expired`, `expiring_soon`}. |
 | `RfqLocked` | Another maker's quote was accepted. Yours stays as a backup; do not re-quote until `RfqAvailableAgain`. |

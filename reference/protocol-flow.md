@@ -328,7 +328,7 @@ Events worth tracking end to end:
 
 | Event | When |
 | --- | --- |
-| `QuoteFilled` / `OrderConfirmed` | Position opened on chain; carries `position_pda` and `tx_signature`. `QuoteFilled` has no fee or net-premium fields; read the money from the position row. |
+| `QuoteFilled` / `OrderConfirmed` | Position opened on chain; both carry `position_pda`, and `QuoteFilled` also `transaction_signature`. `QuoteFilled` has no fee or net-premium fields; read the money from the position row. |
 | `RfqClosed` | Auction closed; on a fill, `winner = { type: "winner", maker, price, transaction }`. |
 | `ChainEvent(position_opened)` | Position opened, via chain events. |
 | `PositionUpdated { position, update_type }` | Full position row; `update_type` is `created`, `funded`, `liquidated` or `settled`. Apply it only if its `revision` is newer than the stored one. |

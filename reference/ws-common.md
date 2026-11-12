@@ -326,7 +326,7 @@ Validate the entire challenge **before invoking the signer**. Require the exact 
 
 After validation, sign the original UTF-8 bytes without normalization, additional prefix or hashing. The fixed text already supplies the authentication domain. Signing arbitrary endpoint text with the order key can authorize an order instead of authentication.
 
-Rust SDK (`acta-maker-sdk` 0.8.2) and TS SDK (`@acta-markets/ts-sdk` 0.5.2) validate authentication messages before invoking signers in their managed clients. Raw Rust clients use `validate_maker_auth_challenge`, or `validate_vault_auth_challenge(challenge, operator, vault)` for a vault session; raw TS clients use `validateAuthChallenge`, which checks the grammar of the maker and taker formats and rejects the vault format, and `assertVaultAuthChallenge(challenge, operator, vault)` for a vault session. This does not establish endpoint trust or prevent relay of a genuine server challenge.
+Rust SDK (`acta-maker-sdk` 0.10.0) and TS SDK (`@acta-markets/ts-sdk` 0.7.0) validate authentication messages before invoking signers in their managed clients. Raw Rust clients use `validate_maker_auth_challenge`, or `validate_vault_auth_challenge(challenge, operator, vault)` for a vault session; raw TS clients use `validateAuthChallenge`, which checks the grammar of the maker and taker formats and rejects the vault format, and `assertVaultAuthChallenge(challenge, operator, vault)` for a vault session. This does not establish endpoint trust or prevent relay of a genuine server challenge.
 
 ### AuthChallenge (client -> server)
 
@@ -395,15 +395,17 @@ connections from your IP), `503 too_many_connections`, `503 server_overloaded`,
 
 Limits are server configuration; the values below are the defaults. `Welcome.rate_limits` carries
 the values in force on that connection, so a client can pace itself instead of hardcoding them. A
-limit is a token bucket: `per_second` tokens refill each second up to `burst`, or `unlimited`. A
-per-type limit rejects the message with `rate_limited` and keeps the connection. The per-connection
-and per-wallet message limits close it.
+limit is a token bucket: `per_second` tokens refill each second up to `burst`, or `unlimited`. The
+rows below apply until the connection authenticates as a maker or Vault operator; then the shared
+`liquidity_provider` bucket replaces all of them. Quote messages need that authentication, so they
+always spend from the shared bucket. A per-type limit rejects the message with `rate_limited` and
+keeps the connection. The per-connection and per-wallet message limits close it.
 
 | `rate_limits` field | Row below |
 |---|---|
 | `connection` | Message rate |
 | `wallet` | Wallet message rate; applies once the wallet authenticates |
-| `rfqs`, `quotes`, `queries` | RFQ, quote and query messages |
+| `rfqs`, `queries` | RFQ and query messages |
 | `liquidity_provider` | Maker and Vault operator budget: `shared` on `/maker`, `/maker/data` and `/vault`, `not_applicable` on `/taker` |
 
 | Limit | Scope | Default | On exceed |
@@ -411,18 +413,19 @@ and per-wallet message limits close it.
 | Message rate | Every connection | 30/s, burst 60 | `rate_limited` error, then close `4003` |
 | Wallet message rate | All connections of one taker wallet | 50/s, burst 100 | `rate_limited` error, then close `4003` |
 | RFQ messages (`RfqRequest`, `AcceptQuote`, `CancelRfq`, `SwapQuote`, `SwapSubmit`) | Taker and Vault connections | 10/s, burst 20 | `rate_limited` error for that message; the connection stays open |
-| Quote messages (`Quote`, `ReplaceQuote`, `BatchQuotes`, `CancelQuote`, `CancelAllQuotes`) | Maker and Vault connections | 50/s, burst 100 | The message is rejected and the connection stays open. `Quote` and `ReplaceQuote` get `QuoteRejected` with reason `rate_limited`; `BatchQuotes` gets `BatchQuotesAck` with every result rejected the same way; cancels get a `rate_limited` error |
 | Query messages (`Get*`, `CheckQuote`, subscription messages) | Every connection | 20/s, burst 40 | `rate_limited` error for that message; the connection stays open |
 
 Once a maker or Vault operator authenticates, one shared bucket replaces all of the limits above:
-every message spends from it, and an exceeded budget rejects the message with `rate_limited`. The
-default is 1000/s, burst 2000 for makers and 100/s, burst 200 for Vault operators. A maker connection
+every message spends from it, and an exceeded budget rejects the message with `rate_limited`:
+`Quote` and `ReplaceQuote` get `QuoteRejected` with reason `rate_limited`, `BatchQuotes` gets
+`BatchQuotesAck` with every result rejected the same way, and other messages get a `rate_limited`
+error. The default is 1000/s, burst 2000 for makers and 100/s, burst 200 for Vault operators. A maker connection
 stays open; a Vault connection whose messages keep being rejected for 10 seconds, with no break longer
 than a second, is closed with `4003`.
 
 `BatchQuotes` spends one token per quote in the batch, and `SwapQuote` spends five. Every other
-message spends one. Quote messages are counted only by the quote bucket, not by the connection
-message rate, unless the quote bucket is disabled or the batch exceeds `max_batch_quotes`.
+message spends one. A batch over `max_batch_quotes` is rejected before the shared bucket and is
+charged to the connection message rate instead.
 
 Admission limits cap work in flight across the server:
 
@@ -665,14 +668,14 @@ This is the closed set of `type` values. A variant without `data` has no `data` 
 | `RfqNotActive` | none | `refresh` | The RFQ is not accepting quotes |
 | `RfqAlreadyLocked` | none | `reconcile` | Another of your orders holds the RFQ; `MyActiveRfqs` shows it in `lock` |
 | `InvalidState` | `{ state }` | `stop` | The RFQ is in the wrong state for this command |
-| `QuoteLocked` | `{ reason }` | `rfq_locked`: `stop`; `order_submitted`: `reconcile` | The quote cannot be changed |
-| `QuoteNotFound` | none | `stop` | The quote does not exist or is already gone |
+| `QuoteLocked` | `{ reason }` | `rfq_locked`: `refresh`; `order_submitted`: `reconcile` | The quote cannot be changed |
+| `QuoteNotFound` | none | `refresh` | The quote does not exist or is already gone |
 | `QuoteExpired` | none | `refresh` | The quote has expired |
 | `QuoteExpiryTooShort` | `{ min_seconds }` | `fix_request` | `valid_until` is less than `min_seconds` from now |
 | `InvalidStrike` | none | `fix_request` | The strike is not allowed on this RFQ |
 | `InvalidValidUntil` | none | `fix_request` | `valid_until` is invalid |
 | `OrderIdMismatch` | none | `fix_request` | `order_id` does not match the order |
-| `UnknownOrder` | none | `stop` | The server does not know this `order_id` |
+| `UnknownOrder` | none | `refresh` | The server does not know this `order_id` |
 | `SignatureTimeout` | none | `refresh` | The signature window closed; select another quote |
 | `OracleNotReady` | none | `retry` | The underlying oracle is not available yet; retry |
 | `OraclePriceStale` | `{ age_seconds }` | `retry` | The oracle price is `age_seconds` old |
@@ -881,8 +884,8 @@ Use the same terms across all external docs:
 ### RFQ lifecycle
 - **Terminal RFQ event**: `RfqClosed`. Close RFQ state only on this event.
 - **Fill-details event (maker)**: `QuoteFilled`. Contains fill details for the winning maker.
-- **Order-level confirmation (taker)**: `OrderConfirmed`. Confirms selected order with
-  on-chain identifiers (`tx_signature`, `position_pda`).
+- **Order-level confirmation (taker)**: `OrderConfirmed`. Confirms the selected order and carries
+  `position_pda`; the transaction signature came earlier on `OrderSubmitted`.
 
 ### Position lifecycle (post-fill)
 Position rows carry a required `state`: `open`, `funded`, `liquidated` or
@@ -1038,7 +1041,7 @@ rejected, never clamped. Compound replies share one page budget across their
 collections. Scalars repeat on each page. Token-market strike lists can span
 pages; merge fragments by market PDA and position type.
 
-Rust SDK `0.8.2` and TypeScript SDK `0.5.2` use one shared `fetch_all` or
+Rust SDK `0.10.0` and TypeScript SDK `0.7.0` use one shared `fetch_all` or
 `fetchAllPages` helper. Their normal list methods collect every page. Use an
 explicit page method for incremental UI loading, such as
 `getPositionsPageAsync` in TypeScript. Raw WS `request` methods return one page.

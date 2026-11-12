@@ -183,7 +183,7 @@ The server verifies the signature by `quote_signing` key.
     "side": "sell",
     "quantity": 1000000000,
     "expires_at": 1710000050,
-    "taker": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
+    "taker_owner": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
     "order_options": [
       { "type": "covered_call", "strike": 150000000000 },
       { "type": "covered_call", "strike": 160000000000 }
@@ -234,7 +234,7 @@ The server verifies the signature by `quote_signing` key.
   "data": {
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-    "taker": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
+    "taker_owner": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
     "price": 5000000000,
     "quantity": 1000000000,
     "terms": { "type": "covered_call", "strike": 160000000000 },
@@ -287,11 +287,11 @@ The server verifies the signature by `quote_signing` key.
     "expiry_ts": 1710600000,
     "terms": { "type": "covered_call", "strike": 160000000000 },
     "side": "sell",
-    "taker": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
+    "taker_owner": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
     "price": 5000000000,
     "quantity": 1000000000,
     "position_pda": "75NqraLLofiLUpNQg2wUPG6CJpxcaGEZUwuNrnAgvcTP",
-    "tx_signature": "<base58 transaction signature>",
+    "transaction_signature": "<base58 transaction signature>",
     "filled_at": 1710000042
   }
 }
@@ -369,7 +369,7 @@ A spread or cash-put RFQ carries its strikes in `terms`. The quote repeats them 
     "side": "sell",
     "quantity": 1000000000,
     "expires_at": 1799999800,
-    "taker": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
+    "taker_owner": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
     "order_options": [
       { "type": "call_spread", "lower_strike": 100000000000, "upper_strike": 120000000000 }
     ],
@@ -764,10 +764,10 @@ Response:
           "strike": 160000000000
         },
         "side": "sell",
-        "taker": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
+        "taker_owner": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
         "quantity": 1000000000,
         "price": 5000000000,
-        "tx_signature": "<base58 transaction signature>",
+        "transaction_signature": "<base58 transaction signature>",
         "position": {
           "type": "confirmed",
           "position_pda": "75NqraLLofiLUpNQg2wUPG6CJpxcaGEZUwuNrnAgvcTP"
