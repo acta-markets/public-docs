@@ -96,16 +96,24 @@ type TokenInfo = {
         strike_tick: number;       // strike ladder spacing, 1e9 scale
         quote_mints: string[];     // quote mints of its active markets
       };
-  session:                         // when the price feed trades
+  schedule:                        // the price feed schedule
+    | { type: "unknown" }
     | { type: "continuous" }
-    | { type: "pyth_schedule"; schedule: string };  // Pyth TZ;Mon,..,Sun;MMDD/spec,...
+    | { type: "pyth"; spec: string };  // Pyth TZ;Mon,..,Sun;MMDD/spec,...
+  session:                         // whether the feed trades now (Unix seconds)
+    | { type: "continuous" }
+    | { type: "open"; closes_at: number }
+    | { type: "closed"; opens_at: number }
+    | { type: "closed_indefinitely" }
+    | { type: "unknown" };
   protocol_fees:                   // fees of markets quoted in this token
-    | { type: "none" }
+    | { type: "not_quote_token" }
+    | { type: "unavailable" }      // a quote token whose fee config is not projected yet; not zero
     | { type: "quote"; premium_bps: number; volume_bps: number };
 };
 ```
 
-Outside a `pyth_schedule` session the oracle keeps its last price; see [`/api/v1/tokens`](http-api.md#get-apiv1tokens) for the schedule format.
+While a market is closed the oracle keeps its last price; see [`/api/v1/tokens`](http-api.md#get-apiv1tokens) for the schedule format.
 
 A valid `quantity` satisfies `min_size <= quantity <= max_size` and `(quantity - min_size) % step == 0`.
 Only tokens of active markets are listed.

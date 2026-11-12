@@ -167,6 +167,9 @@ Every token of the active markets, once, sorted by mint. Markets reference token
       "role": {
         "type": "quote"
       },
+      "schedule": {
+        "type": "continuous"
+      },
       "session": {
         "type": "continuous"
       },
@@ -195,6 +198,9 @@ Every token of the active markets, once, sorted by mint. Markets reference token
           "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
         ]
       },
+      "schedule": {
+        "type": "continuous"
+      },
       "session": {
         "type": "continuous"
       },
@@ -213,15 +219,19 @@ Every token of the active markets, once, sorted by mint. Markets reference token
 scaled like strikes (`500000000` is 0.5 quote units). `oracle_feed_ids` is `[]` when no feed is
 known.
 
-`session` says when the token's price feed trades. `{ "type": "continuous" }` trades around the
-clock. A token with trading hours, such as TSLA or XAU, has
-`{ "type": "pyth_schedule", "schedule": "America/New_York;0930-1600,0930-1600,0930-1600,0930-1600,0930-1600,C,C;1225/C" }`:
+`schedule` is the token's price feed schedule. `{ "type": "continuous" }` trades around the clock.
+A token with trading hours, such as TSLA or XAU, has
+`{ "type": "pyth", "spec": "America/New_York;0930-1600,0930-1600,0930-1600,0930-1600,0930-1600,C,C;1225/C" }`:
 the Pyth schedule of its feed, `TZ;Mon,..,Sun;MMDD/spec,...`. Each spec is `O` (open all day), `C`
 (closed) or `HHMM-HHMM` windows joined by `&`, in the listed timezone; a holiday entry replaces that
-date's weekday entry. `{ "type": "unknown" }` means no schedule is known for the feed yet. This is
-the static schedule; whether the market is open now, and until when, is
-[`TokenMarketsInfo.session`](taker-api.md) on WS. While the market is closed the oracle keeps its
-last price, and the server prices RFQs from it.
+date's weekday entry. `{ "type": "unknown" }` means no schedule is known for the feed yet.
+
+`session` is whether the feed trades now: `{ "type": "continuous" }`, `{ "type": "open", "closes_at" }`,
+`{ "type": "closed", "opens_at" }` (Unix seconds), `{ "type": "closed_indefinitely" }` (no session in the
+next two weeks) or `{ "type": "unknown" }`. The times are absolute, so a cached response stays
+readable: once `closes_at` has passed the market is closed. The server rebuilds the list at each
+session change, so the `ETag` changes then. While the market is closed the oracle keeps its last
+price, and the server prices RFQs from it.
 
 `protocol_fees` is `{ "type": "quote", "premium_bps", "volume_bps" }` for a token that quotes
 markets, from its on-chain config; `{ "type": "not_quote_token" }` for an underlying, and
