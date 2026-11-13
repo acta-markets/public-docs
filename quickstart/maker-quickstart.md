@@ -139,7 +139,7 @@ Use `ReplaceQuote` for repricing: the swap is atomic and single-RTT. `CancelQuot
 
 `is_taker_buy` in the order-id preimage is `0` for side `sell`, where the taker writes, and `1` for side `buy`, where the maker writes. Implementations whose preimage builders default this field to `true` must override it explicitly.
 
-`QuoteRejected` carries `reason` and a `message`. Fix the cause before retrying; the same payload will fail again. Two reasons are not about the payload: `rate_limited` (the connection's quote bucket is empty; back off and re-sign with a fresh nonce) and `trading_paused` (the venue is paused; wait for it to resume).
+`QuoteRejected` carries `reason` and a `message`. Fix the cause before retrying; the same payload will fail again. Two reasons are not about the payload: `rate_limited` (the connection's `liquidity_provider` bucket is empty; back off and re-sign with a fresh nonce) and `trading_paused` (the venue is paused; wait for it to resume).
 
 ## Lifecycle events
 

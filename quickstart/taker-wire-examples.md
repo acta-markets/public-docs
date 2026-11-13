@@ -6,7 +6,7 @@ Concrete JSON for a full taker session and the common branch scenarios. Message 
 
 Pubkeys and mints are base58. `order_id` is 64 hex characters, with an optional `0x`. Amounts are `u64`: prices and strikes are `1e9`-scaled, `quantity` is in underlying atoms, premiums and collateral are quote atoms. Timestamps are Unix seconds unless the field name ends in `_ms`. Placeholders such as `MarketPdaBase58` stand in for real base58 values.
 
-Every frame carries all its fields. Absent facts are `null`, and state-dependent shapes are tagged unions.
+Every frame carries all its fields. Absent facts are tagged unions (`null` only as `next_cursor` on the last page), and state-dependent shapes are tagged unions.
 
 ## Complete Session (happy path, covered call)
 
@@ -42,7 +42,6 @@ Any `protocol_version` other than `1.0.0` gets an `Error` with `unsupported_prot
       "connection": { "type": "bucket", "per_second": 30, "burst": 60 },
       "wallet": { "type": "bucket", "per_second": 50, "burst": 100 },
       "rfqs": { "type": "bucket", "per_second": 10, "burst": 20 },
-      "quotes": { "type": "unlimited" },
       "queries": { "type": "bucket", "per_second": 20, "burst": 40 },
       "liquidity_provider": { "type": "not_applicable" }
     }
@@ -101,7 +100,7 @@ For takers `expires_at` is a number and `role` is `{ "type": "taker" }`. Persist
 
 ### 4) Snapshot (server -> client)
 
-Sent automatically after `AuthSuccess`. `markets` lists the active markets in the `MarketInfo` shape. `products` lists the pair's products that fit the market's side. A put market lists a subset of `cash_secured_put`, `put_spread` and `cash_put`; a call market lists a subset of `covered_call` and `call_spread`. `settlement_price` is `null` until the market settles. Fetch full descriptors (step 5) before creating an RFQ.
+Sent automatically after `AuthSuccess`. `markets` lists the active markets in the `MarketInfo` shape. `products` lists the pair's products that fit the market's side. A put market lists a subset of `cash_secured_put`, `put_spread` and `cash_put`; a call market lists a subset of `covered_call` and `call_spread`. `settlement` is `{ "type": "pending" }` until the market settles, then `{ "type": "fixed", "price" }`. Fetch full descriptors (step 5) before creating an RFQ.
 
 ```json
 {

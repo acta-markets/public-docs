@@ -82,7 +82,7 @@ switch (outcome.type) {
   case "rejected":   // this attempt was not forwarded; act on outcome.action
     break;
   case "reconciled": // the reply was lost, so the SDK looked the order up
-    // outcome.state: pending | confirmed | unknown. unknown is not proof of non-execution.
+    // outcome.state.type: pending | confirmed | unknown. unknown is not proof of non-execution.
     break;
 }
 ```

@@ -309,7 +309,7 @@ until the market is settled, then `{ "type": "fixed", "price" }`.
 |---|---|
 | `active` | Tradable: not finalized, not disabled, before the trading cutoff |
 | `closed` | Disabled, past its trading cutoff, or expired and not yet finalized |
-| `finalized` | Settlement price published; `settlement_price` is set (1e9 scale) |
+| `finalized` | Settlement price published; `settlement` is `fixed` (`price` 1e9 scale) |
 
 `active=false` is not a full history: the server holds finalized markets only from the time it
 started, so a market finalized before the last restart is missing. Use your own records or the

@@ -419,9 +419,10 @@ keeps the connection. The per-connection and per-wallet message limits close it.
 | Limit | Scope | Default | On exceed |
 |---|---|---|---|
 | Message rate | Every connection | 30/s, burst 60 | `rate_limited` error, then close `4003` |
-| Wallet message rate | All connections of one taker wallet | 50/s, burst 100 | `rate_limited` error, then close `4003` |
+| Wallet message rate | All `/taker` and `/vault` connections of one authenticated wallet | 50/s, burst 100 | `rate_limited` error, then close `4003` |
 | RFQ messages (`RfqRequest`, `AcceptQuote`, `CancelRfq`, `SwapQuote`, `SwapSubmit`) | Taker and Vault connections | 10/s, burst 20 | `rate_limited` error for that message; the connection stays open |
 | Query messages (`Get*`, `CheckQuote`, subscription messages) | Every connection | 20/s, burst 40 | `rate_limited` error for that message; the connection stays open |
+| Quote messages (`Quote`, `ReplaceQuote`, `BatchQuotes`, `CancelQuote`, `CancelAllQuotes`) | `/maker` and `/vault` before maker or operator authentication; a taker on `/vault` | 50/s, burst 100 | `rate_limited` for that message; the connection stays open. Not in `Welcome.rate_limits`; these messages are rejected anyway until the session can quote |
 
 Once a maker or Vault operator authenticates, one shared bucket replaces all of the limits above:
 every message spends from it, and an exceeded budget rejects the message with `rate_limited`:
@@ -434,6 +435,17 @@ than a second, is closed with `4003`.
 `BatchQuotes` spends one token per quote in the batch, and `SwapQuote` spends five. Every other
 message spends one. A batch over `max_batch_quotes` is rejected before the shared bucket and is
 charged to the connection message rate instead.
+
+Authentication messages (`StartAuth`, `StartVaultAuth`, `AuthChallenge`, `ResumeAuth`, and `Hello` on
+`/maker` and `/maker/data`) also spend from a per-IP bucket, 20/s, burst 40 by default. It is not in
+`Welcome.rate_limits`. An exceeded budget rejects the message with `rate_limited` and keeps the
+connection.
+
+No rate-limit rejection says when to retry: `rate_limited` carries only `code` and `message`. A
+bucket gains one token every `1 / per_second` seconds, so wait at least that long, using the
+message's bucket from `Welcome.rate_limits`, then back off further on repeated rejections.
+After a `4003` close, reconnect with backoff. The typed `RateLimit` error is a different case: its
+action depends on the `RateLimitReason` (see the [ServerError catalog](#servererror-catalog)).
 
 Admission limits cap work in flight across the server:
 
@@ -716,7 +728,7 @@ This is the closed set of `type` values. A variant without `data` has no `data` 
 | `InviteErrorReason` | `invalid_code`, `code_exhausted`, `code_expired`, `code_disabled`, `code_owner_inactive`, `code_owner_blacklisted`, `already_registered`, `internal_error` |
 | `ClaimErrorReason` | `not_registered`, `invalid_format`, `code_taken`, `reserved`, `internal_error` |
 
-`RateLimitReason` is in the [Maker](maker-api.md#ratelimitreason-in-typed-rate_limit-error) and [Taker](taker-api.md#ratelimitreason-in-typed-ratelimit-error) references. `CapError` is in [CapError](maker-api.md#caperror).
+`RateLimitReason` is in the [Maker](maker-api.md#ratelimitreason-in-typed-ratelimit-error) and [Taker](taker-api.md#ratelimitreason-in-typed-ratelimit-error) references. `CapError` is in [CapError](maker-api.md#caperror).
 
 ```json
 { "type": "Error", "data": { "type": "QuoteLocked", "data": { "reason": "rfq_locked" } } }
@@ -750,7 +762,7 @@ receives a code outside this set fails to decode the frame.
 | `hello_required` | Generic | `fix_request` | The first message was not `Hello`; the connection closes |
 | `hello_timeout` | Generic | `retry` | No `Hello` in time; followed by close `4005` |
 | `hello_already_sent` | Generic | `fix_request` | A second `Hello` on one connection |
-| `rate_limited` | Generic | `retry` | Connection or wallet rate limits close with `4003`; a per-type limit rejects only the message |
+| `rate_limited` | Generic | `retry` | Connection or wallet rate limits close with `4003`; a per-type limit rejects only the message. Carries no retry time; see [Rate limits and admission](#rate-limits-and-admission) |
 | `server_overloaded` | Generic | `retry` | The admission limit for this message class is full; retry with backoff. A full connection command queue sends it uncorrelated and closes with `4003` |
 | `server_busy` | Generic, AuthError | `retry` | A bounded internal queue (auth, RFQ creation) is full; retry |
 | `internal_error` | Generic | `retry` | Unexpected server failure; the message is sanitized |

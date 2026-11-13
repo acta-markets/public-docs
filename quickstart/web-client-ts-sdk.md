@@ -131,7 +131,7 @@ ws.on("marketDescriptors", (descriptors) => { /* cache these */ });
 ws.getMarketDescriptors(); // tradable markets only
 ```
 
-Each market and descriptor carries `products`, the pair's products for that market's side. A put market (`is_put: true`) lists a subset of `cash_secured_put`, `put_spread` and `cash_put`. A call market lists a subset of `covered_call` and `call_spread`. `settlement_price` is `null` until the market settles. Offer the user only products that appear in `products`.
+Each market and descriptor carries `products`, the pair's products for that market's side. A put market (`is_put: true`) lists a subset of `cash_secured_put`, `put_spread` and `cash_put`. A call market lists a subset of `covered_call` and `call_spread`. `settlement` is `{ "type": "pending" }` until the market settles, then `{ "type": "fixed", "price" }`. Offer the user only products that appear in `products`.
 
 To list positions, pass the full filter message. `ALL_POSITIONS` selects everything:
 
@@ -395,7 +395,7 @@ ws.on("orderFailed", (orderIdHex, reason, orderVersion) => {});
 ws.on("rfqClosed", (data) => {
   // Terminal: clean up RFQ state.
   // data.reason: "expired" | "taker_cancelled" | "filled" | "market_expired" | "no_eligible_makers" | "server_shutdown"
-  // data.your_quote and data.winner are null when they do not apply.
+  // data.your_quote and data.winner are { type: "none" } when they do not apply.
 });
 ```
 

@@ -53,7 +53,6 @@ Example clock: the session starts at Unix time `1710000000`. The venue window fr
       "connection": { "type": "bucket", "per_second": 30, "burst": 60 },
       "wallet": { "type": "unlimited" },
       "rfqs": { "type": "unlimited" },
-      "quotes": { "type": "bucket", "per_second": 50, "burst": 100 },
       "queries": { "type": "bucket", "per_second": 20, "burst": 40 },
       "liquidity_provider": { "type": "shared", "per_second": 1000, "burst": 2000 }
     }

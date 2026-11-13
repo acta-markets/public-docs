@@ -136,7 +136,6 @@ A different `protocol_version` gets an `Error` frame and a WebSocket close with 
       "connection": { "type": "bucket", "per_second": 30, "burst": 60 },
       "wallet": { "type": "unlimited" },
       "rfqs": { "type": "unlimited" },
-      "quotes": { "type": "bucket", "per_second": 50, "burst": 100 },
       "queries": { "type": "bucket", "per_second": 20, "burst": 40 },
       "liquidity_provider": { "type": "shared", "per_second": 1000, "burst": 2000 }
     }
@@ -696,7 +695,7 @@ The value under `cap_exceeded` is a `CapError`: a bare string for
 | `rfq_not_found` | RFQ does not exist |
 | `rfq_not_active` | RFQ is no longer accepting quotes |
 | `duplicate_order_id` | `order_id` already submitted |
-| `rate_limited` | Quote rate limit exceeded; retry after backing off |
+| `rate_limited` | The `liquidity_provider` bucket is empty; back off and retry. See [Rate limits](ws-common.md#rate-limits-and-admission) |
 | `trading_paused` | Trading is paused venue-wide; retry after it resumes |
 | `internal_error` | Server-side failure; the quote was not accepted, retry is safe |
 
@@ -903,14 +902,14 @@ Always sent when a quote expires.
 }
 ```
 
-`reason` values: `expired`, `taker_cancelled`, `filled`, `market_expired`.
+`reason` values: `expired`, `taker_cancelled`, `filled`, `market_expired`, `server_shutdown` (see [RfqCloseReason](#rfqclosereason)).
 
 `your_quote` is `{ "type": "quoted", "order_id", "status", "price" }` with this session's quote on the RFQ, or `{ "type": "none" }` when it has none. `your_quote.status` values: `expired`, `outbid`, `cancelled`, `filled`. A session with several quotes gets one of them; a session that won gets the winning quote.
 
 `winner` is `{ "type": "winner", "maker_owner", "price", "transaction" }` on `filled` and `{ "type": "none" }` otherwise. `transaction` is `{ "type": "sent", "signature" }` once the transaction is sent, otherwise `{ "type": "pending" }`.
 
 - On `filled`, every recipient gets `winner`, including `winner.transaction`. The winning session gets `your_quote.status` `filled`, a session with another live quote gets `outbid`, and a session whose quotes are already gone gets `{ "type": "none" }`.
-- On any other reason, a session with a live quote gets it with status `expired` (reason `expired`) or `cancelled`. A session whose quotes are already gone gets `null`.
+- On any other reason, a session with a live quote gets it with status `expired` (reason `expired`) or `cancelled`. A session whose quotes are already gone gets `{ "type": "none" }`.
 
 ### RfqLocked (server -> maker)
 
@@ -2220,7 +2219,7 @@ Quote-specific validation failures are sent as `QuoteRejected` with a typed `rea
 | `missing_tick_for_underlying_mint` | The underlying mint has no strike tick |
 
 Operational handling recommendations:
-- for `rate_limited`: retry with exponential backoff + jitter. Quote/query-bucket rejects are soft (connection stays open); a message-rate-bucket breach closes the connection — see Operational defaults.
+- for `rate_limited`: the error carries no retry time. Wait at least `1 / per_second` of `Welcome.rate_limits.liquidity_provider`, then retry with exponential backoff and jitter. An authenticated maker connection stays open; before authentication the `connection` bucket closes it with `4003`. See [Rate limits and admission](ws-common.md#rate-limits-and-admission).
 - for `session_replaced`: another connection replaced this session — stop; do not auto-reconnect in a loop.
 - for `parse_error`: treat as payload bug and stop retries until fixed.
 - for `too_many_parse_errors`: reconnect only after fixing payload/codec mismatch.
@@ -2327,7 +2326,7 @@ Physical transitions: `created` -> `funded` -> `settled`. An unfunded position (
 
 See [Protocol Flow](protocol-flow.md) for the physical scenarios.
 
-### RateLimitReason (in typed `rate_limit` error)
+### RateLimitReason (in typed `RateLimit` error)
 
 | Value | Meaning |
 |-------|---------|

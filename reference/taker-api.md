@@ -68,7 +68,6 @@ Auth is one of:
       "connection": { "type": "bucket", "per_second": 30, "burst": 60 },
       "wallet": { "type": "bucket", "per_second": 50, "burst": 100 },
       "rfqs": { "type": "bucket", "per_second": 10, "burst": 20 },
-      "quotes": { "type": "unlimited" },
       "queries": { "type": "bucket", "per_second": 20, "burst": 40 },
       "liquidity_provider": { "type": "not_applicable" }
     }
@@ -790,7 +789,7 @@ A settled physical position carries what each side received, in atoms. A funded 
 
 Field semantics:
 - `state`: `open`, `funded`, `liquidated` or `settled`. Only `settled` carries `settlement`.
-- `settlement.type`: `physical` or `cash`. Cash amounts (`holder_payoff`, `writer_return`) are quote atoms. `settlement_price` is `1e9`-scaled.
+- `settlement.type`: `physical`, `not_exercised` or `cash`. Cash amounts (`holder_payoff`, `writer_return`) are quote atoms. `settlement_price` is `1e9`-scaled.
 - `price`: gross price per underlying unit, `1e9`-scaled.
 - `total_premium`: net premium in quote atoms after the protocol fee. It is the authoritative money figure.
 - `underlying_decimals`, `quote_decimals`: token decimals for converting `quantity` and `total_premium`.
