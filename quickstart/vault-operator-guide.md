@@ -130,7 +130,7 @@ A swap quote is exact-in: `amount` is the input in raw atoms of the source leg, 
 }
 ```
 
-Amounts and `valid_until` (Unix seconds) are decimal strings; `last_valid_block_height` is a number, the block height the transaction's blockhash is valid through. The transaction carries the vault's [price section](#prices). `execution_id` names this swap in every later message. A failed quote returns a `RequestError` with a `Generic` code from the [WS error code catalog](../reference/ws-common.md#ws-error-codes) (usually a `vault_*` or `vault_swap_*` row, also general codes such as `invalid_amount`; `vault_swap_oracle_stale` is retryable within seconds, `vault_swap_route_unavailable` and `vault_swap_service_unavailable` later).
+Amounts are decimal strings; `valid_until` (Unix seconds) and `last_valid_block_height` are numbers, the latter the block height the transaction's blockhash is valid through. The transaction carries the vault's [price section](#prices). `execution_id` names this swap in every later message. A failed quote returns a `RequestError` with a `Generic` code from the [WS error code catalog](../reference/ws-common.md#ws-error-codes) (usually a `vault_*` or `vault_swap_*` row, also general codes such as `invalid_amount`; `vault_swap_oracle_stale` is retryable within seconds, `vault_swap_route_unavailable` and `vault_swap_service_unavailable` later).
 
 Sign it and send `SwapSubmit`:
 

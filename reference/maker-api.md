@@ -307,9 +307,9 @@ Every RFQ, quote, position and trade carries two required fields: `terms` and `s
 | `cash_put` | `strike` | cash, in the quote mint |
 
 ```json
-{ "type": "covered_call", "strike": 160000000000 }
-{ "type": "call_spread", "lower_strike": 100000000000, "upper_strike": 120000000000 }
-{ "type": "cash_put", "strike": 150000000000 }
+{ "type": "covered_call", "strike": "160000000000" }
+{ "type": "call_spread", "lower_strike": "100000000000", "upper_strike": "120000000000" }
+{ "type": "cash_put", "strike": "150000000000" }
 ```
 
 - Strikes are integers scaled by 1e9 per underlying token, independent of mint decimals. `strike_tick` from `GetTokens` is on the same scale.
@@ -388,14 +388,14 @@ The Rust SDK computes these with `SpreadTerms::premium` (spreads and cash puts) 
       "collateral_mint": "So11111111111111111111111111111111111111112",
       "settlement_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
     },
-    "terms": { "type": "covered_call", "strike": 160000000000 },
+    "terms": { "type": "covered_call", "strike": "160000000000" },
     "side": "sell",
-    "quantity": 1000000000,
+    "quantity": "1000000000",
     "expires_at": 1710000050,
     "taker_owner": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
     "order_options": [
-      { "type": "covered_call", "strike": 150000000000 },
-      { "type": "covered_call", "strike": 160000000000 }
+      { "type": "covered_call", "strike": "150000000000" },
+      { "type": "covered_call", "strike": "160000000000" }
     ],
     "sent_at_ms": 1710000000123
   }
@@ -418,12 +418,12 @@ Sent instead of `RfqBroadcast` when cap limits pre-filter the maker. `cap_detail
   "data": {
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
-    "quantity": 1000000000,
+    "quantity": "1000000000",
     "cap_detail": {
       "token_oi_cap_exceeded": {
         "underlying_mint": "So11111111111111111111111111111111111111112",
-        "current": 1000000000000,
-        "limit": 1000000000000
+        "current": "1000000000000",
+        "limit": "1000000000000"
       }
     }
   }
@@ -439,11 +439,11 @@ The filter runs before broadcast and knows no premium, so `maker_insufficient_ba
   "type": "Quote",
   "data": {
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "terms": { "type": "covered_call", "strike": 160000000000 },
+    "terms": { "type": "covered_call", "strike": "160000000000" },
     "side": "sell",
-    "price": 5000000000,
+    "price": "5000000000",
     "valid_until": 1710000120,
-    "nonce": 42,
+    "nonce": "42",
     "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
     "signature": "<base58 ed25519 signature of order_id>"
   }
@@ -457,11 +457,11 @@ A spread or cash-put quote uses the same fields with the matching `terms`:
   "type": "Quote",
   "data": {
     "rfq_id": "00000000-0000-0000-0000-000000000001",
-    "terms": { "type": "call_spread", "lower_strike": 100000000000, "upper_strike": 120000000000 },
+    "terms": { "type": "call_spread", "lower_strike": "100000000000", "upper_strike": "120000000000" },
     "side": "sell",
-    "price": 5000000000,
+    "price": "5000000000",
     "valid_until": 1799999900,
-    "nonce": 999,
+    "nonce": "999",
     "order_id": "0x0101010101010101010101010101010101010101010101010101010101010101",
     "signature": "<base58 ed25519 signature of order_id>"
   }
@@ -554,11 +554,11 @@ Atomic cancel-and-resubmit for a specific quote. Cancels the quote identified by
   "data": {
     "replaced_order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "terms": { "type": "covered_call", "strike": 160000000000 },
+    "terms": { "type": "covered_call", "strike": "160000000000" },
     "side": "sell",
-    "price": 5500000000,
+    "price": "5500000000",
     "valid_until": 1710000120,
-    "nonce": 43,
+    "nonce": "43",
     "order_id": "0xb2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3",
     "signature": "<base58 ed25519 signature of order_id>"
   }
@@ -583,21 +583,21 @@ Submit multiple quotes in one message. A batch must contain at most `max_batch_q
     "quotes": [
       {
         "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-        "terms": { "type": "covered_call", "strike": 150000000000 },
+        "terms": { "type": "covered_call", "strike": "150000000000" },
         "side": "sell",
-        "price": 4500000000,
+        "price": "4500000000",
         "valid_until": 1710000120,
-        "nonce": 44,
+        "nonce": "44",
         "order_id": "0xaaaa2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
         "signature": "<base58 ed25519 signature of order_id>"
       },
       {
         "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-        "terms": { "type": "covered_call", "strike": 160000000000 },
+        "terms": { "type": "covered_call", "strike": "160000000000" },
         "side": "sell",
-        "price": 5000000000,
+        "price": "5000000000",
         "valid_until": 1710000120,
-        "nonce": 45,
+        "nonce": "45",
         "order_id": "0xbbbb2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
         "signature": "<base58 ed25519 signature of order_id>"
       }
@@ -706,7 +706,7 @@ The value under `cap_exceeded` is a `CapError`: a bare string for
   "type": "QuoteRefreshRequested",
   "data": {
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "terms": { "type": "covered_call", "strike": 160000000000 },
+    "terms": { "type": "covered_call", "strike": "160000000000" },
     "side": "sell",
     "min_valid_until": 1710000121,
     "reason": "expiring_soon"
@@ -729,9 +729,9 @@ Identified by `(rfq_id, terms)`, not `order_id`. If quoting several terms per RF
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
     "taker_owner": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
-    "price": 5000000000,
-    "quantity": 1000000000,
-    "terms": { "type": "covered_call", "strike": 160000000000 },
+    "price": "5000000000",
+    "quantity": "1000000000",
+    "terms": { "type": "covered_call", "strike": "160000000000" },
     "side": "sell",
     "signature_deadline_at": 1710000040
   }
@@ -748,11 +748,11 @@ Identified by `(rfq_id, terms)`, not `order_id`. If quoting several terms per RF
     "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
     "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
     "expiry_ts": 1710600000,
-    "terms": { "type": "covered_call", "strike": 160000000000 },
+    "terms": { "type": "covered_call", "strike": "160000000000" },
     "side": "sell",
     "taker_owner": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
-    "price": 5000000000,
-    "quantity": 1000000000,
+    "price": "5000000000",
+    "quantity": "1000000000",
     "position_pda": "75NqraLLofiLUpNQg2wUPG6CJpxcaGEZUwuNrnAgvcTP",
     "transaction_signature": "<base58 transaction signature>",
     "filled_at": 1710000042
@@ -811,7 +811,7 @@ Current runtime behavior for successful fills:
     "is_best": true,
     "current_best_price": {
       "type": "quoted",
-      "price": 5000000000
+      "price": "5000000000"
     }
   }
 }
@@ -828,10 +828,10 @@ Current runtime behavior for successful fills:
   "data": {
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-    "your_price": 5000000000,
+    "your_price": "5000000000",
     "current_best_price": {
       "type": "quoted",
-      "price": 5500000000
+      "price": "5500000000"
     }
   }
 }
@@ -886,12 +886,12 @@ Always sent when a quote expires.
       "type": "quoted",
       "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
       "status": "outbid",
-      "price": 5000000000
+      "price": "5000000000"
     },
     "winner": {
       "type": "winner",
       "maker_owner": "A87ysNWAmmqQHafLSQGbYSLhtcV3BjXctR88EWuSobGP",
-      "price": 5500000000,
+      "price": "5500000000",
       "transaction": {
         "type": "sent",
         "signature": "<base58 transaction signature>"
@@ -1333,11 +1333,11 @@ Uses [common paging](ws-common.md#paging).
         "role": {
           "type": "underlying",
           "size_rule": {
-            "min_size": 100000000,
-            "max_size": 1000000000000,
-            "step": 100000000
+            "min_size": "100000000",
+            "max_size": "1000000000000",
+            "step": "100000000"
           },
-          "strike_tick": 500000000,
+          "strike_tick": "500000000",
           "quote_mints": [
             "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
           ]
@@ -1429,16 +1429,16 @@ Uses [common paging](ws-common.md#paging).
         "quote_decimals": 6,
         "terms": {
           "type": "covered_call",
-          "strike": 160000000000
+          "strike": "160000000000"
         },
         "side": "sell",
         "state": "funded",
-        "quantity": 1000000000,
-        "price": 5000000000,
-        "total_premium": 4975000,
+        "quantity": "1000000000",
+        "price": "5000000000",
+        "total_premium": "4975000",
         "created_at": 1710000042,
         "expiry_ts": 1710600000,
-        "underlying_price": { "type": "available", "price": 151000000000, "published_at": 1710000040 }
+        "underlying_price": { "type": "available", "price": "151000000000", "published_at": 1710000040 }
       },
       {
         "revision": {
@@ -1456,20 +1456,20 @@ Uses [common paging](ws-common.md#paging).
         "quote_decimals": 6,
         "terms": {
           "type": "call_spread",
-          "lower_strike": 100000000000,
-          "upper_strike": 120000000000
+          "lower_strike": "100000000000",
+          "upper_strike": "120000000000"
         },
         "side": "sell",
         "state": "settled",
         "settlement": {
           "type": "cash",
-          "settlement_price": 110000000000,
-          "holder_payoff": 10000000,
-          "writer_return": 10000000
+          "settlement_price": "110000000000",
+          "holder_payoff": "10000000",
+          "writer_return": "10000000"
         },
-        "quantity": 1000000000,
-        "price": 5000000000,
-        "total_premium": 4980000,
+        "quantity": "1000000000",
+        "price": "5000000000",
+        "total_premium": "4980000",
         "created_at": 1709900000,
         "expiry_ts": 1710000000,
         "underlying_price": { "type": "unavailable" }
@@ -1493,7 +1493,7 @@ Field semantics:
 - `underlying_symbol` / `quote_symbol` / `underlying_decimals` / `quote_decimals` are pre-resolved token metadata so the maker does not need a separate `GetTokens` lookup.
 - `underlying_price`: `{ type: "available", price, published_at }` or `{ type: "unavailable" }`, the trusted oracle price of the underlying in the quote token (`1e9`) that the server prices RFQs with. Assets with trading sessions keep their last price and its timestamp while closed.
 - `unrenderable` lists stored positions whose market projection is incomplete (a position waiting for its seal is `terminal_pending`, not unrenderable): `{ pda, market, created_at, missing }`, where `missing` names the fields the projection could not supply. They count toward the page limit. Retrying does not repair them.
-- all amount fields are unsigned (`u64`); timestamps remain Unix seconds.
+- all amount fields are unsigned `u64` decimal strings; timestamps are Unix seconds, as numbers.
 
 #### Position revisions
 
@@ -1530,11 +1530,11 @@ Uses [common paging](ws-common.md#paging).
         "quote_decimals": 6,
         "terms": {
           "type": "covered_call",
-          "strike": 160000000000
+          "strike": "160000000000"
         },
         "side": "sell",
-        "price": 5000000000,
-        "quantity": 1000000000,
+        "price": "5000000000",
+        "quantity": "1000000000",
         "valid_until": 1710000120,
         "state": {
           "type": "active",
@@ -1644,8 +1644,8 @@ heavy read.
         {
           "underlying_mint": "So11111111111111111111111111111111111111112",
           "symbol": "SOL",
-          "current": 50000000000,
-          "limit": 200000000000
+          "current": "50000000000",
+          "limit": "200000000000"
         }
       ],
       "balances": [
@@ -1653,20 +1653,20 @@ heavy read.
           "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
           "symbol": "USDC",
           "decimals": 6,
-          "deposited": 1000000000,
-          "committed": 500000000,
-          "available": 500000000
+          "deposited": "1000000000",
+          "committed": "500000000",
+          "available": "500000000"
         }
       ],
       "quote_liabilities": [
         {
           "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
           "symbol": "USDC",
-          "current_liability": 20000000,
+          "current_liability": "20000000",
           "policy": {
             "type": "limited",
-            "max_liability": 100000000,
-            "headroom": 80000000
+            "max_liability": "100000000",
+            "headroom": "80000000"
           }
         }
       ]
@@ -1710,24 +1710,24 @@ Uses [common paging](ws-common.md#paging).
         "taker_owner": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
         "terms": {
           "type": "covered_call",
-          "strike": 160000000000
+          "strike": "160000000000"
         },
         "side": "sell",
-        "quantity": 1000000000,
+        "quantity": "1000000000",
         "expires_at": 1710000050,
         "quotes_count": 3,
         "best_price": {
           "type": "quoted",
-          "price": 5500000000
+          "price": "5500000000"
         },
         "order_options": [
           {
             "type": "covered_call",
-            "strike": 150000000000
+            "strike": "150000000000"
           },
           {
             "type": "covered_call",
-            "strike": 160000000000
+            "strike": "160000000000"
           }
         ]
       }
@@ -1788,12 +1788,12 @@ Uses [common paging](ws-common.md#paging).
         "quote_decimals": 6,
         "terms": {
           "type": "covered_call",
-          "strike": 160000000000
+          "strike": "160000000000"
         },
         "side": "sell",
         "taker_owner": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
-        "quantity": 1000000000,
-        "price": 5000000000,
+        "quantity": "1000000000",
+        "price": "5000000000",
         "transaction_signature": "<base58 transaction signature>",
         "position": {
           "type": "confirmed",
@@ -1836,10 +1836,10 @@ Dry run of the cap checks a `Quote` of `quantity` at `price` on `market_pda` (th
   "data": {
     "request_id": "a1b2c3d4-0000-4000-8000-000000000015",
     "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
-    "terms": { "type": "call_spread", "lower_strike": 100000000000, "upper_strike": 120000000000 },
+    "terms": { "type": "call_spread", "lower_strike": "100000000000", "upper_strike": "120000000000" },
     "side": "sell",
-    "quantity": 1000000000,
-    "price": 5000000000
+    "quantity": "1000000000",
+    "price": "5000000000"
   }
 }
 ```
@@ -1893,10 +1893,10 @@ Received when subscribed to the corresponding channel.
     "trade": {
       "id": "7c2e9a41-6b3d-4f58-9e1a-0d4b6f8a2c35",
       "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
-      "terms": { "type": "covered_call", "strike": 160000000000 },
+      "terms": { "type": "covered_call", "strike": "160000000000" },
       "side": "sell",
-      "quantity": 1000000000,
-      "price": 5000000000,
+      "quantity": "1000000000",
+      "price": "5000000000",
       "taker_owner": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
       "maker_pda": "HYe9CryCnQ3ZviCwoG8X7REFoSBK7HCjrhWWMpNtTah1",
       "transaction_signature": "<base58 transaction signature>",
@@ -1921,10 +1921,10 @@ Received when subscribed to the corresponding channel.
         "premium_24h": "49.00",
         "priced_trades_24h": 149
       },
-      "total_volume_24h": 1000000,
+      "total_volume_24h": "1000000",
       "total_trades_24h": 150,
       "spread_trades_24h": 12,
-      "total_price_24h": 500000,
+      "total_price_24h": "500000",
       "active_markets": 12,
       "active_makers": 5,
       "active_rfqs": 3
@@ -1962,18 +1962,18 @@ the last representable value after overflow; prefer the USD object.
       "quote_decimals": 6,
       "terms": {
         "type": "covered_call",
-        "strike": 160000000000
+        "strike": "160000000000"
       },
       "side": "sell",
       "state": "funded",
-      "quantity": 1000000000,
-      "price": 5000000000,
-      "total_premium": 4975000,
+      "quantity": "1000000000",
+      "price": "5000000000",
+      "total_premium": "4975000",
       "created_at": 1710000042,
       "expiry_ts": 1710600000,
       "underlying_price": {
         "type": "available",
-        "price": 151000000000,
+        "price": "151000000000",
         "published_at": 1710000040
       }
     },
@@ -1998,8 +1998,8 @@ Sent to the owner's sessions when the maker's capacity changes without a positio
         {
           "underlying_mint": "So11111111111111111111111111111111111111112",
           "symbol": "SOL",
-          "current": 51000000000,
-          "limit": 200000000000
+          "current": "51000000000",
+          "limit": "200000000000"
         }
       ],
       "balances": [
@@ -2007,9 +2007,9 @@ Sent to the owner's sessions when the maker's capacity changes without a positio
           "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
           "symbol": "USDC",
           "decimals": 6,
-          "deposited": 1000000000,
-          "committed": 550000000,
-          "available": 450000000
+          "deposited": "1000000000",
+          "committed": "550000000",
+          "available": "450000000"
         }
       ],
       "quote_liabilities": []
@@ -2051,7 +2051,7 @@ Sent to the owner's sessions when the maker's capacity changes without a positio
   "type": "MarketFinalized",
   "data": {
     "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
-    "settlement_price": 160000000000
+    "settlement_price": "160000000000"
   }
 }
 ```
@@ -2071,10 +2071,10 @@ Sent to the owner's sessions when the maker's capacity changes without a positio
     "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
     "maker_pda": "HYe9CryCnQ3ZviCwoG8X7REFoSBK7HCjrhWWMpNtTah1",
     "taker_owner": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
-    "terms": { "type": "covered_call", "strike": 160000000000 },
+    "terms": { "type": "covered_call", "strike": "160000000000" },
     "side": "sell",
-    "quantity": 1000000000,
-    "price": 5000000000,
+    "quantity": "1000000000",
+    "price": "5000000000",
     "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"
   }
 }
@@ -2153,7 +2153,7 @@ Indicative pricing covers covered calls and cash-secured puts only. Each request
     },
     "position_type": "covered_call",
     "side": "sell",
-    "strikes": [150000000000, 160000000000]
+    "strikes": ["150000000000", "160000000000"]
   }
 }
 ```
@@ -2168,7 +2168,7 @@ Indicative pricing covers covered calls and cash-secured puts only. Each request
     "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
     "position_type": "covered_call",
     "side": "sell",
-    "prices": [{ "strike": 150000000000, "price": 4200000000 }]
+    "prices": [{ "strike": "150000000000", "price": "4200000000" }]
   }
 }
 ```

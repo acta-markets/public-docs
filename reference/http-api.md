@@ -14,8 +14,11 @@ API routes are under `/api/v1` (`https://devnet-api.acta.markets/api/v1/venue`);
 ## Response and units
 
 - JSON: `application/json`
+- Numbers follow the [WS rule](ws-common.md#numbers): token amounts in atoms and 1e9-scaled
+  values are decimal strings; timestamps, slots, counts, generations and ratios are JSON numbers.
+  A field has the same encoding over HTTP and WS.
 - Timestamps: Unix seconds
-- `price` / `strike`: `u64` in 1e9 scale (premium and strike conventions match WS docs)
+- `price` / `strike`: 1e9 scale (premium and strike conventions match WS docs)
 - `quantity`: underlying atomic units
 - Pubkeys/addresses: base58 strings
 
@@ -189,11 +192,11 @@ Every token of the active markets, once, sorted by mint. Markets reference token
       "role": {
         "type": "underlying",
         "size_rule": {
-          "min_size": 100000000,
-          "max_size": 1000000000000,
-          "step": 10000000
+          "min_size": "100000000",
+          "max_size": "1000000000000",
+          "step": "10000000"
         },
-        "strike_tick": 500000000,
+        "strike_tick": "500000000",
         "quote_mints": [
           "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
         ]
@@ -272,7 +275,7 @@ Query (all optional):
       "status": "finalized",
       "settlement": {
         "type": "fixed",
-        "price": 150000000000
+        "price": "150000000000"
       },
       "products": [
         "cash_secured_put",
@@ -321,6 +324,52 @@ settlement mints).
 
 ---
 
+## Prices
+
+Display prices for every token a market uses. The server reads its own oracle cache and
+sampled history; a request never reaches Pyth. These prices are for display: quotes and
+settlement use their own oracle reads.
+
+### GET `/api/v1/prices`
+
+Paged like `/tokens` (`limit`, `cursor`), keyed by mint, `Cache-Control: public, max-age=5`.
+
+```json
+{
+  "prices": [
+    { "mint": "So11111111111111111111111111111111111111112", "symbol": "SOL",
+      "price": { "type": "priced", "price": "142500000000", "published_at": 1794690000 } },
+    { "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "symbol": "USDC",
+      "price": { "type": "unpriced" } }
+  ],
+  "next_cursor": null
+}
+```
+
+`price` is USD per whole token, 1e9 scale. `unpriced` means the oracle cache has no price the
+server's trust policy accepts right now (stale, missing or too uncertain).
+
+### GET `/api/v1/prices/{mint}/history?range=day|month`
+
+`day`: the last day every 15 minutes. `month`: the last month every two hours.
+`Cache-Control: public, max-age=60`.
+
+```json
+{
+  "mint": "So11111111111111111111111111111111111111112",
+  "range": "day",
+  "step_seconds": 900,
+  "points": [ { "at": 1794603600, "price": "139800000000" } ]
+}
+```
+
+Points are oldest first; a bucket with no Pyth price is absent, not zero. Errors:
+`400 invalid_mint`, `404 unknown_mint` (no market uses the token), `404 history_unavailable`
+(the token is priced through more than one feed), `503 history_disabled` /
+`503 history_unavailable` (history cache not configured or unreachable).
+
+---
+
 ## Makers
 
 ### GET `/api/v1/makers`
@@ -358,8 +407,8 @@ Get a single maker DTO.
 
 ## Vaults
 
-Read-only projections of on-chain vault state. Every numeric field that can exceed `2^53` is a
-decimal string.
+Read-only projections of on-chain vault state. Amounts, shares, share prices and equity are
+decimal strings; times, slots, counts and generations are numbers.
 
 `/vaults` and `/vaults/{pda}` are served from memory, work without a database and share the light
 per-IP rate limit (30 req/s, burst 60). All other vault and depositor routes query the database
@@ -396,7 +445,7 @@ Optional query: `delegate=<pubkey>` returns only vaults that key can operate as 
       "primary_delegate": "GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq",
       "main_mint": "LbUiWL3xVV8hTFYBVdbTNrpDo41NKS6o3LHHuDzjfcY",
       "second_mint": "QWmroo4YnnMqYW3cnxWkFdaTxGD3P7vMSzwMHGbUzwF",
-      "second_leg_generation": "0",
+      "second_leg_generation": 0,
       "share_mint": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
       "main_token_program": "legacy_spl",
       "second_token_program": "token_2022",
@@ -405,12 +454,12 @@ Optional query: `delegate=<pubkey>` returns only vaults that key can operate as 
       "phase": "active",
       "safety": "normal",
       "capabilities": 5,
-      "active_expiry_ts": "1703000000",
-      "open_positions": "2",
+      "active_expiry_ts": 1703000000,
+      "open_positions": 2,
       "total_shares": "100",
       "share_price": "1100000000",
       "equity": "120",
-      "capital_generation": "8",
+      "capital_generation": 8,
       "accepting_deposits": true,
       "equity_computed": false,
       "pending_deposit_count": 2,
@@ -421,18 +470,18 @@ Optional query: `delegate=<pubkey>` returns only vaults that key can operate as 
       "management_fee_bps": 200,
       "manager_stake_min_bps": 500,
       "share_price_hwm": "1200000000",
-      "last_hwm_update_at": "40",
-      "last_hwm_reset_at": "41",
-      "last_settlement_at": "42",
+      "last_hwm_update_at": 40,
+      "last_hwm_reset_at": 41,
+      "last_settlement_at": 42,
       "capacity": {
         "type": "limited",
         "cap_limit": "1000",
         "remaining": "860"
       },
-      "capital_fallback_delay_seconds": "43200",
+      "capital_fallback_delay_seconds": 43200,
       "deposit_window": {
         "type": "set",
-        "set_at": "1700000000"
+        "set_at": 1700000000
       },
       "balances": {
         "type": "observed",
@@ -440,26 +489,26 @@ Optional query: `delegate=<pubkey>` returns only vaults that key can operate as 
         "second": "80",
         "live_share_supply": "80",
         "manager_stake_shares": "20",
-        "observed_at": "43",
-        "slot": "1000"
+        "observed_at": 43,
+        "slot": 1000
       },
       "staging": {
         "type": "staged",
         "mint": "cGfHiC6Kgg3FpFZvgwGcswsCRtp4aBP2fzuXRQPizuN",
         "from_leg": "second",
         "amount": "70",
-        "staged_at": "1700000050",
-        "generation": "2"
+        "staged_at": 1700000050,
+        "generation": 2
       },
-      "staged_generation": "2",
+      "staged_generation": 2,
       "policy": {
         "max_open_positions": 12,
         "max_rebalance_drift_bps": 100,
         "min_main_liquidity_bps": 500
       },
       "projection": {
-        "version": "10",
-        "slot": "11",
+        "version": 10,
+        "slot": 11,
         "transaction_index": 3,
         "signature": "signature",
         "event_index": 12
@@ -467,17 +516,17 @@ Optional query: `delegate=<pubkey>` returns only vaults that key can operate as 
       "tvl_usd": {
         "type": "priced",
         "value_1e9": "18000",
-        "price_published_at": "1702600050"
+        "price_published_at": 1702600050
       },
       "stats": {
         "type": "current",
-        "created_at": "1700000000",
-        "computed_at": "1702600060",
+        "created_at": 1700000000,
+        "computed_at": 1702600060,
         "generation": {
           "type": "covered",
           "started": {
             "type": "at",
-            "at": "1700000100"
+            "at": 1700000100
           },
           "premium": [
             {
@@ -528,8 +577,8 @@ Optional query: `delegate=<pubkey>` returns only vaults that key can operate as 
               "30d": {
                 "type": "available",
                 "return_pct": 1.5,
-                "window_start_at": "1700000100",
-                "window_end_at": "1702600000"
+                "window_start_at": 1700000100,
+                "window_end_at": 1702600000
               },
               "90d": {
                 "type": "insufficient_history"
@@ -537,8 +586,8 @@ Optional query: `delegate=<pubkey>` returns only vaults that key can operate as 
               "all": {
                 "type": "available",
                 "return_pct": 2.0,
-                "window_start_at": "1700000100",
-                "window_end_at": "1702600000"
+                "window_start_at": 1700000100,
+                "window_end_at": 1702600000
               }
             },
             "apy_30d": {
@@ -591,7 +640,7 @@ Optional query: `delegate=<pubkey>` returns only vaults that key can operate as 
 | `staging` | `{ "type": "none" }` unless half of a [two-transaction swap](../quickstart/vault-operator-guide.md#two-transaction-swaps) is open: `{ "type": "staged", "mint", "from_leg": "main" \| "second", "amount", "staged_at", "generation" }`. `amount` (atoms of `mint`, decimal string) has left `from_leg` for the vault's account of `mint` and is not counted in `equity`. `staged_at` (Unix seconds) is the first stage. Capital processing waits until it is back. |
 | `deposit_window` | `{ "type": "set", "set_at" }`: chain time of the last `SetAcceptingDeposits`; `{ "type": "unset" }` if the window was never set. |
 | `projection` | Position of this row in the venue's on-chain event history. Compare `slot` / `transaction_index` / `event_index` to detect staleness. |
-| `second_leg_generation`, `staged_generation` | Generation counters, decimal strings. |
+| `second_leg_generation`, `staged_generation` | Generation counters. |
 | `capacity` | Tagged union. `{ "type": "unlimited" }` when the on-chain cap is `0`. Otherwise `{ "type": "limited", "cap_limit", "remaining" }` in main atoms, with `remaining = max(0, cap_limit − equity − pending_deposit_amount)`. |
 | `stats` | Indexed statistics, refreshed every 60 s. `{ "type": "not_indexed" }` until they load; `{ "type": "behind", "created_at" }` while they are for an older capital generation than `capital_generation`; `{ "type": "current", "created_at", "computed_at", "generation" }` otherwise. `created_at` is the chain time of the vault's creation. |
 | `tvl_usd` | `{ "type": "priced", "value_1e9", "price_published_at" }`: indicative `equity` at the main mint's USD oracle price, 1e9 scale; `{ "type": "unpriced" }` without a fresh price. |
@@ -641,8 +690,8 @@ Query:
       "close": {
         "type": "open"
       },
-      "created_at": "10",
-      "acquired_at": "11",
+      "created_at": 10,
+      "acquired_at": 11,
       "transaction": {
         "type": "known",
         "signature": "sig"
@@ -671,11 +720,11 @@ Query:
       "status": "settled",
       "close": {
         "type": "closed",
-        "closed_at": "12",
+        "closed_at": 12,
         "is_otm": true
       },
-      "created_at": "10",
-      "acquired_at": "11",
+      "created_at": 10,
+      "acquired_at": 11,
       "transaction": {
         "type": "known",
         "signature": "sig"
@@ -714,7 +763,7 @@ Open and funded positions with an indicative spot. Positions are reloaded after 
 ```json
 {
   "vault_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
-  "as_of": "1702600005",
+  "as_of": 1702600005,
   "positions": [
     {
       "position_pda": "7Z8ftDAzMvoyXnGEJye8DurzgQQXLAbYCaeeesM7UKHa",
@@ -724,7 +773,7 @@ Open and funded positions with an indicative spot. Positions are reloaded after 
       "status": "open",
       "strike": "140000000000",
       "quantity": "2000000000",
-      "expiry_ts": "1703000000",
+      "expiry_ts": 1703000000,
       "underlying_mint": "LbUiWL3xVV8hTFYBVdbTNrpDo41NKS6o3LHHuDzjfcY",
       "quote_mint": "6URwbPipuA4MJLG7LCRRZuWnms3JZ9cRG3z9indXWz8G",
       "decimals": {
@@ -735,7 +784,7 @@ Open and funded positions with an indicative spot. Positions are reloaded after 
       "spot": {
         "type": "priced",
         "price": "150000000000",
-        "published_at": "1702600000"
+        "published_at": 1702600000
       },
       "moneyness": {
         "type": "available",
@@ -755,7 +804,7 @@ Open and funded positions with an indicative spot. Positions are reloaded after 
       "status": "funded",
       "strike": "155000000000",
       "quantity": "2000000000",
-      "expiry_ts": "1703000000",
+      "expiry_ts": 1703000000,
       "underlying_mint": "LbUiWL3xVV8hTFYBVdbTNrpDo41NKS6o3LHHuDzjfcY",
       "quote_mint": "6URwbPipuA4MJLG7LCRRZuWnms3JZ9cRG3z9indXWz8G",
       "decimals": {
@@ -766,7 +815,7 @@ Open and funded positions with an indicative spot. Positions are reloaded after 
       "spot": {
         "type": "priced",
         "price": "150000000000",
-        "published_at": "1702600000"
+        "published_at": 1702600000
       },
       "moneyness": {
         "type": "available",
@@ -786,7 +835,7 @@ Open and funded positions with an indicative spot. Positions are reloaded after 
       "status": "open",
       "strike": "140000000000",
       "quantity": "2000000000",
-      "expiry_ts": "1703000000",
+      "expiry_ts": 1703000000,
       "underlying_mint": "LbUiWL3xVV8hTFYBVdbTNrpDo41NKS6o3LHHuDzjfcY",
       "quote_mint": "6YMEjhBqVTMaSRWcmVkLrnHZ22FWEDJEpTeonAg8GKSy",
       "decimals": {
@@ -848,13 +897,13 @@ Cycles are returned newest first.
 {
   "cycles": [
     {
-      "cycle_number": "13",
+      "cycle_number": 13,
       "capital_generation": {
         "type": "known",
-        "generation": "8"
+        "generation": 8
       },
-      "expiry_ts": "1703209600",
-      "started_at": "1702604800",
+      "expiry_ts": 1703209600,
+      "started_at": 1702604800,
       "share_price_start": "1012500000",
       "equity_start": "101250000000",
       "state": {
@@ -872,18 +921,18 @@ Cycles are returned newest first.
       "management_fee_assessed": "0"
     },
     {
-      "cycle_number": "12",
+      "cycle_number": 12,
       "capital_generation": {
         "type": "known",
-        "generation": "8"
+        "generation": 8
       },
-      "expiry_ts": "1702604600",
-      "started_at": "1701999800",
+      "expiry_ts": 1702604600,
+      "started_at": 1701999800,
       "share_price_start": "1000000000",
       "equity_start": "100000000000",
       "state": {
         "type": "finished",
-        "finished_at": "1702604800",
+        "finished_at": 1702604800,
         "share_price_end": "1012500000",
         "equity_end": "101250000000",
         "return_pct": {
@@ -897,18 +946,18 @@ Cycles are returned newest first.
       "management_fee_assessed": "40000000"
     },
     {
-      "cycle_number": "11",
+      "cycle_number": 11,
       "capital_generation": {
         "type": "known",
-        "generation": "7"
+        "generation": 7
       },
-      "expiry_ts": "1701999600",
-      "started_at": "1701394800",
+      "expiry_ts": 1701999600,
+      "started_at": 1701394800,
       "share_price_start": "1000000000",
       "equity_start": "100000000000",
       "state": {
         "type": "finished",
-        "finished_at": "1701999800",
+        "finished_at": 1701999800,
         "share_price_end": "1012500000",
         "equity_end": "101250000000",
         "return_pct": {
@@ -922,17 +971,17 @@ Cycles are returned newest first.
       "management_fee_assessed": "40000000"
     },
     {
-      "cycle_number": "10",
+      "cycle_number": 10,
       "capital_generation": {
         "type": "unknown"
       },
-      "expiry_ts": "1701394600",
-      "started_at": "1700789800",
+      "expiry_ts": 1701394600,
+      "started_at": 1700789800,
       "share_price_start": "1000000000",
       "equity_start": "100000000000",
       "state": {
         "type": "finished",
-        "finished_at": "1701394800",
+        "finished_at": 1701394800,
         "share_price_end": "1012500000",
         "equity_end": "101250000000",
         "return_pct": {
@@ -973,7 +1022,7 @@ Requests are ordered by wallet; `next_cursor` is `null` on the last page. Withdr
     {
       "wallet": "WalletBase58",
       "amount": "1000000",
-      "created_at": "1710000000",
+      "created_at": 1710000000,
       "transaction": { "type": "known", "signature": "TxSignatureBase58" }
     }
   ],
@@ -1004,7 +1053,7 @@ appear per event as `second_amount` in the history.
   "deposit_request": {
     "type": "pending",
     "amount": "1000000",
-    "created_at": "1710000000",
+    "created_at": 1710000000,
     "transaction": { "type": "known", "signature": "TxSignatureBase58" }
   },
   "withdraw_request": { "type": "none" },
@@ -1014,7 +1063,7 @@ appear per event as `second_amount` in the history.
     "shares_burned": "0",
     "total_deposited": "1000000",
     "total_withdrawn": "0",
-    "last_activity_at": "1710000000"
+    "last_activity_at": 1710000000
   }
 }
 ```
@@ -1035,7 +1084,7 @@ Query: optional `limit` (default 50, maximum 200) and `cursor`; see [common pagi
       "second_amount": "0",
       "shares": "1000000000",
       "boundary_price": { "type": "set", "share_price": "1000000000" },
-      "occurred_at": "1710000000",
+      "occurred_at": 1710000000,
       "transaction_signature": "TxSignatureBase58"
     }
   ],
@@ -1093,6 +1142,134 @@ Errors for the positions, cycle and depositor endpoints:
 | `429` | `rate_limited` | per-IP limit; retry with backoff |
 | `503` | `db_busy`, `server_busy` | transient; retry with backoff |
 | `503` | `db_disabled` | the server runs without a database; permanent, do not retry |
+
+---
+
+## Seasons
+
+Points championships. A season is a set of leagues; each league is a window of markets with
+its own rules. Rules award points per role (`taker`, `maker`, `vault`) in named point
+currencies; transforms then cap or scale points and pass a referrer a share of their
+referees' points. Every board ranks one role in one currency, per league and for the whole
+season (league points times league `weight`). All routes need the database
+(`503 db_disabled`) and send `Cache-Control: public, max-age=5`. A draft season or league
+answers `404 not_found`.
+
+Times are Unix seconds; points, `drop_usd` and `weight` are numbers.
+
+### GET `/api/v1/seasons/current` and `/api/v1/seasons/{slug}`
+
+```json
+{
+  "slug": "devnet-1",
+  "name": "Devnet championship",
+  "description": "Four weekly leagues.",
+  "leagues": [
+    {
+      "id": 7, "name": "Week 1", "description": "Spreads week.",
+      "listed_at": 1794211200, "midpoint": 1794384000, "expiry": 1794556800,
+      "drop_usd": 1000.0, "weight": 1.0,
+      "phase": { "kind": "live" },
+      "ruleset_revision": 3,
+      "computation": { "kind": "computed", "at": 1794470400 },
+      "currencies": [ { "id": "trading", "title": "Trading points" } ],
+      "rules": [
+        { "key": "first_blood", "title": "First blood", "description": "Your first trade",
+          "role": "taker", "currency": "trading", "enabled": true, "visibility": "public",
+          "match": { "kind": "each", "leg": { "var": "t", "stream": "trades", "when": "t.nth_ever == 1.0" } },
+          "points": "5.0", "limit": { "kind": "once_ever" }, "group": { "kind": "none" } }
+      ],
+      "hidden_rules": 2,
+      "transforms": [
+        { "kind": "referral_share", "key": "recruiter", "from": "trading", "to": "trading", "bps": 1000 }
+      ]
+    }
+  ]
+}
+```
+
+- `phase`: `upcoming`, `live`, `settling` (`pending`: positions not settled yet), `ready`
+  (all settled, results not frozen) or `finalized`.
+- `computation`: when points were last computed, or `not_yet`.
+- `rules` lists enabled public rules and secret rules someone has already earned;
+  `hidden_rules` counts the other secret ones. `when` and `points` are CEL expressions;
+  `match` is `each` (one event), `combo` (several legs with `constraints`) or `subject` (a
+  condition on the wallet). `limit` is `unlimited`, `per_league`, `per_day` or `once_ever`.
+- `transforms`: `cap` (`max` per group or currency), `scale` (`factor`) and `referral_share`
+  (`bps` of the referee's `from` points credited to the referrer in `to`).
+
+### GET `/api/v1/seasons/{slug}/board`
+
+Query (all required): `scope` = `season` or `league:<id>`, `role`, `currency`, `after_rank`
+(0 for the first page, then the previous `last_rank`), `limit` (1–500).
+
+```json
+{
+  "provisional": true,
+  "computation": { "kind": "computed", "at": 1794470400 },
+  "total": 2,
+  "last_rank": 2,
+  "rows": [
+    { "role": "taker", "currency": "trading", "rank": 1, "points": 125.5,
+      "entrant": { "kind": "participant", "id": 4, "display_name": "alice" },
+      "subjects": [ { "kind": "taker", "key": "AliceWallet111" } ] },
+    { "role": "taker", "currency": "trading", "rank": 2, "points": 40.0,
+      "entrant": { "kind": "subject", "subject": { "kind": "taker", "key": "BobWallet222" } },
+      "subjects": [ { "kind": "taker", "key": "BobWallet222" } ] }
+  ],
+  "clans": [
+    { "currency": "trading", "clan_id": 2, "name": "Volt", "members": 5, "entered": 3,
+      "qualified": true, "points": 165.5, "rank": 1 }
+  ]
+}
+```
+
+Ranks are 1..`total` with no ties. A registered participant ranks once for all their wallets;
+an unregistered wallet ranks as a `subject`. `provisional` is `false` only on a finalized
+league board. `clans` covers the currency for the same scope; a clan that is not `qualified`
+has too few members and no rank.
+
+### GET `/api/v1/seasons/{slug}/subjects/{kind}/{key}`
+
+One wallet in one role (`kind` = `taker`, `maker` or `vault`).
+
+```json
+{
+  "subject": { "kind": "taker", "key": "AliceWallet111" },
+  "name": { "kind": "named", "display_name": "alice" },
+  "standings": [
+    { "scope": { "kind": "season" }, "role": "taker", "currency": "trading",
+      "rank": 1, "entrants": 2, "points": 125.5,
+      "breakdown": { "activity": 120.0, "referral": 10.5, "adjustments": -5.0 } },
+    { "scope": { "kind": "league", "league_id": 7 }, "role": "taker", "currency": "trading",
+      "rank": 1, "entrants": 2, "points": 125.5,
+      "breakdown": { "activity": 120.0, "referral": 10.5, "adjustments": -5.0 } }
+  ]
+}
+```
+
+`standings` has a row for every board the wallet is ranked on. `breakdown` splits `points`:
+`activity` from rules, `referral` from referral shares, `adjustments` from caps and scales.
+`name` is `anonymous` for a wallet no participant has registered. Errors:
+`400 invalid_request` for an unknown `kind`.
+
+### GET `/api/v1/seasons/{slug}/subjects/{kind}/{key}/awards`
+
+The wallet's awards, newest first. Paged with `limit` (default 50, max 200) and `cursor`
+(the previous `next_cursor`; `400 invalid_cursor` otherwise).
+
+```json
+{
+  "awards": [
+    { "league_id": 7, "currency": "trading", "source": "rule", "key": "first_blood",
+      "reference": "trade:o1", "points": 10.0, "awarded_at": 1794297600 }
+  ],
+  "next_cursor": "7b22..."
+}
+```
+
+`source` is `rule` (the rule `key` matched the event in `reference`) or `transform` (a cap,
+scale or referral share with that `key`). `next_cursor` is `null` on the last page.
 
 ---
 

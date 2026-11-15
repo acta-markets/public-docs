@@ -16,7 +16,7 @@ The protocol version is `1.0.0`. The wire is closed:
 - Every field is present on every frame. A fact that may be absent is a tagged union, for example `settlement: { "type": "pending" }` on a market that is not settled. `null` remains only for `next_cursor` on the last page.
 - State-dependent shapes are tagged unions (`terms`, `state`, `settlement`, `role`, query filters, cursors).
 - A client sends all required fields. The server rejects unknown message types, unknown enum values and missing fields.
-- Prices and strikes are `u64` with a `1e9` scale. Quantities are underlying atoms. Premiums and collateral are quote atoms. Timestamps are Unix seconds unless the field name ends in `_ms`.
+- Amounts are [decimal strings](ws-common.md#numbers). Prices and strikes are `u64` with a `1e9` scale. Quantities are underlying atoms. Premiums and collateral are quote atoms. Timestamps are Unix seconds unless the field name ends in `_ms`.
 
 Envelope, units and error codes: [WS common conventions](ws-common.md).
 
@@ -277,10 +277,10 @@ The server answers with `SubscribeAck { request_id, subscribed }`, where `subscr
 | `cash_put` | `strike` | put market | cash, quote mint |
 
 ```json
-{ "type": "covered_call", "strike": 136000000000 }
-{ "type": "call_spread", "lower_strike": 150000000000, "upper_strike": 160000000000 }
-{ "type": "put_spread", "lower_strike": 130000000000, "upper_strike": 140000000000 }
-{ "type": "cash_put", "strike": 136000000000 }
+{ "type": "covered_call", "strike": "136000000000" }
+{ "type": "call_spread", "lower_strike": "150000000000", "upper_strike": "160000000000" }
+{ "type": "put_spread", "lower_strike": "130000000000", "upper_strike": "140000000000" }
+{ "type": "cash_put", "strike": "136000000000" }
 ```
 
 A cash put is economically a put spread with lower strike 0 and upper strike `strike`. It executes on chain with those legs and keeps the wire name `cash_put`. Its width is `strike`.
@@ -335,9 +335,9 @@ The fee bps in the example are illustrative. `QuoteReceived.net_price` shows the
   "data": {
     "request_id": "7a4c4b3e-2f1d-4c55-9a51-4f0d0e2b6a42",
     "market_pda": "MarketPdaBase58",
-    "terms": { "type": "put_spread", "lower_strike": 130000000000, "upper_strike": 140000000000 },
+    "terms": { "type": "put_spread", "lower_strike": "130000000000", "upper_strike": "140000000000" },
     "side": "sell",
-    "quantity": 5000000000,
+    "quantity": "5000000000",
     "timeout_seconds": 30
   }
 }
@@ -369,13 +369,13 @@ The server accepted `RfqRequest`, `AcceptQuote` or `SubmitSignedSponsoredTx`. It
   "data": {
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "rfq_version": 1,
-    "terms": { "type": "put_spread", "lower_strike": 130000000000, "upper_strike": 140000000000 },
+    "terms": { "type": "put_spread", "lower_strike": "130000000000", "upper_strike": "140000000000" },
     "side": "sell",
     "request_id": "7a4c4b3e-2f1d-4c55-9a51-4f0d0e2b6a42",
     "expires_at": 1710000030,
     "created_at": 1710000000,
     "order_options": [
-      { "type": "put_spread", "lower_strike": 130000000000, "upper_strike": 140000000000 }
+      { "type": "put_spread", "lower_strike": "130000000000", "upper_strike": "140000000000" }
     ]
   }
 }
@@ -390,14 +390,14 @@ The server accepted `RfqRequest`, `AcceptQuote` or `SubmitSignedSponsoredTx`. It
   "type": "QuoteReceived",
   "data": {
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "terms": { "type": "put_spread", "lower_strike": 130000000000, "upper_strike": 140000000000 },
+    "terms": { "type": "put_spread", "lower_strike": "130000000000", "upper_strike": "140000000000" },
     "side": "sell",
     "maker_owner": "MakerOwnerPubkeyBase58",
-    "price": 1200000000,
+    "price": "1200000000",
     "valid_until": 1710000350,
-    "nonce": 42,
+    "nonce": "42",
     "order_id": "0x1111111111111111111111111111111111111111111111111111111111111111",
-    "net_price": 1194000000
+    "net_price": "1194000000"
   }
 }
 ```
@@ -418,14 +418,14 @@ The server sends the current executable quote snapshot to the RFQ owner whenever
     "quotes": [
       {
         "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-        "terms": { "type": "covered_call", "strike": 160000000000 },
+        "terms": { "type": "covered_call", "strike": "160000000000" },
         "side": "sell",
         "maker_owner": "MakerOwnerPubkeyBase58",
-        "price": 50000000,
+        "price": "50000000",
         "valid_until": 1710000350,
-        "nonce": 42,
+        "nonce": "42",
         "order_id": "0x1111111111111111111111111111111111111111111111111111111111111111",
-        "net_price": 49750000
+        "net_price": "49750000"
       }
     ]
   }
@@ -606,7 +606,7 @@ The keeper retries retryable submission failures within a five-attempt budget. E
     "winner": {
       "type": "winner",
       "maker_owner": "MakerOwnerPubkeyBase58",
-      "price": 1200000000,
+      "price": "1200000000",
       "transaction": {
         "type": "sent",
         "signature": "5eyk...base58sig"
@@ -722,19 +722,19 @@ Open put spread:
         "quote_decimals": 6,
         "terms": {
           "type": "put_spread",
-          "lower_strike": 130000000000,
-          "upper_strike": 140000000000
+          "lower_strike": "130000000000",
+          "upper_strike": "140000000000"
         },
         "side": "sell",
         "state": "open",
-        "quantity": 5000000000,
-        "price": 1200000000,
-        "total_premium": 5970000,
+        "quantity": "5000000000",
+        "price": "1200000000",
+        "total_premium": "5970000",
         "created_at": 1710000012,
         "expiry_ts": 1710600000,
         "underlying_price": {
           "type": "available",
-          "price": 136000000000,
+          "price": "136000000000",
           "published_at": 1710300000
         }
       }
@@ -763,20 +763,20 @@ Settled cash position (settlement price `133`), the same row after settlement:
   "quote_decimals": 6,
   "terms": {
     "type": "put_spread",
-    "lower_strike": 130000000000,
-    "upper_strike": 140000000000
+    "lower_strike": "130000000000",
+    "upper_strike": "140000000000"
   },
   "side": "sell",
   "state": "settled",
   "settlement": {
     "type": "cash",
-    "settlement_price": 133000000000,
-    "holder_payoff": 35000000,
-    "writer_return": 15000000
+    "settlement_price": "133000000000",
+    "holder_payoff": "35000000",
+    "writer_return": "15000000"
   },
-  "quantity": 5000000000,
-  "price": 1200000000,
-  "total_premium": 5970000,
+  "quantity": "5000000000",
+  "price": "1200000000",
+  "total_premium": "5970000",
   "created_at": 1710000012,
   "expiry_ts": 1710600000,
   "underlying_price": {
@@ -785,7 +785,7 @@ Settled cash position (settlement price `133`), the same row after settlement:
 }
 ```
 
-A settled physical position carries what each side received, in atoms. A funded 1 SOL covered call struck at 160 USDC that expired out of the money: `"settlement": { "type": "physical", "settlement_price": 150000000000, "is_otm": true, "holder": { "collateral_atoms": 0, "settlement_atoms": 160000000 }, "writer": { "collateral_atoms": 1000000000, "settlement_atoms": 0 } }`. The rules are in the [maker reference](maker-api.md).
+A settled physical position carries what each side received, in atoms. A funded 1 SOL covered call struck at 160 USDC that expired out of the money: `"settlement": { "type": "physical", "settlement_price": "150000000000", "is_otm": true, "holder": { "collateral_atoms": "0", "settlement_atoms": "160000000" }, "writer": { "collateral_atoms": "1000000000", "settlement_atoms": "0" } }`. The rules are in the [maker reference](maker-api.md).
 
 Field semantics:
 - `state`: `open`, `funded`, `liquidated` or `settled`. Only `settled` carries `settlement`.
@@ -795,7 +795,7 @@ Field semantics:
 - `underlying_decimals`, `quote_decimals`: token decimals for converting `quantity` and `total_premium`.
 - `underlying_price`: `{ type: "available", price, published_at }` or `{ type: "unavailable" }`. `price` is the trusted oracle price of the underlying in the quote token, `1e9`-scaled, the one the server prices RFQs with; `published_at` is its publish time in unix seconds. Assets with trading sessions (TSLA, XAU) keep their last price and its old timestamp while the market is closed. `unavailable` means the server has no trusted price, for example after the market was finalized. With `terms` and `side` it gives the position's value if it settled now.
 - `revision`: the last applied lifecycle event in chain order. See below.
-- All amounts are unsigned `u64`.
+- All amounts are unsigned `u64` decimal strings.
 
 ### PositionUpdated (server -> taker)
 
@@ -821,25 +821,25 @@ The server pushes `PositionUpdated` to the session of the position's taker (and 
       "quote_decimals": 6,
       "terms": {
         "type": "put_spread",
-        "lower_strike": 130000000000,
-        "upper_strike": 140000000000
+        "lower_strike": "130000000000",
+        "upper_strike": "140000000000"
       },
       "side": "sell",
       "state": "settled",
       "settlement": {
         "type": "cash",
-        "settlement_price": 133000000000,
-        "holder_payoff": 35000000,
-        "writer_return": 15000000
+        "settlement_price": "133000000000",
+        "holder_payoff": "35000000",
+        "writer_return": "15000000"
       },
-      "quantity": 5000000000,
-      "price": 1200000000,
-      "total_premium": 5970000,
+      "quantity": "5000000000",
+      "price": "1200000000",
+      "total_premium": "5970000",
       "created_at": 1710000012,
       "expiry_ts": 1710600000,
       "underlying_price": {
         "type": "available",
-        "price": 151000000000,
+        "price": "151000000000",
         "published_at": 1710000010
       }
     },
@@ -867,10 +867,10 @@ Uses [common paging](ws-common.md#paging).
         "market_pda": "MarketPdaBase58",
         "terms": {
           "type": "cash_secured_put",
-          "strike": 136000000000
+          "strike": "136000000000"
         },
         "side": "sell",
-        "quantity": 20000000,
+        "quantity": "20000000",
         "expires_at": 1710000030,
         "state": "active",
         "lock": {
@@ -879,7 +879,7 @@ Uses [common paging](ws-common.md#paging).
         "quotes_count": 3,
         "best_price": {
           "type": "quoted",
-          "price": 50000000
+          "price": "50000000"
         }
       }
     ],
@@ -1315,16 +1315,16 @@ Uses [common paging](ws-common.md#paging).
       {
         "underlying_mint": "So11111111111111111111111111111111111111112",
         "symbol": "SOL",
-        "current_oi": 500000000000,
-        "max_oi": 1000000000000,
+        "current_oi": "500000000000",
+        "max_oi": "1000000000000",
         "utilization": 0.5
       }
     ],
     "markets": [
       {
         "market_pda": "MarketPdaBase58",
-        "current_oi": 100000000000,
-        "max_oi": 250000000000,
+        "current_oi": "100000000000",
+        "max_oi": "250000000000",
         "utilization": 0.4
       }
     ],
@@ -1332,8 +1332,8 @@ Uses [common paging](ws-common.md#paging).
       {
         "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "symbol": "USDC",
-        "current_notional": 2000000000,
-        "max_notional": 10000000000,
+        "current_notional": "2000000000",
+        "max_notional": "10000000000",
         "utilization": 0.2
       }
     ],
@@ -1341,11 +1341,11 @@ Uses [common paging](ws-common.md#paging).
       {
         "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "symbol": "USDC",
-        "current_liability": 120000000,
+        "current_liability": "120000000",
         "policy": {
           "type": "limited",
-          "max_liability": 1000000000,
-          "headroom": 880000000
+          "max_liability": "1000000000",
+          "headroom": "880000000"
         }
       }
     ],
@@ -1354,7 +1354,7 @@ Uses [common paging](ws-common.md#paging).
 }
 ```
 
-All four arrays are always present and may be empty. Amounts are `u64`: underlying atoms for OI, quote atoms for notional and liability. `quote_liabilities` reports the spread liability (collateral `C`) per quote mint. `policy` is a tagged union: `unconfigured` (counted, no enforced budget), `unlimited`, or `limited` with `max_liability` and `headroom`. See [Capacity limits](caps.md) for the semantics of each cap.
+All four arrays are always present and may be empty. Amounts are `u64` decimal strings: underlying atoms for OI, quote atoms for notional and liability. `quote_liabilities` reports the spread liability (collateral `C`) per quote mint. `policy` is a tagged union: `unconfigured` (counted, no enforced budget), `unlimited`, or `limited` with `max_liability` and `headroom`. See [Capacity limits](caps.md) for the semantics of each cap.
 
 ---
 
@@ -1372,11 +1372,11 @@ All four arrays are always present and may be empty. Amounts are `u64`: underlyi
     "quote_symbol": "USDC",
     "quote_decimals": 6,
     "size_rule": {
-      "min_size": 100000000,
-      "max_size": 10000000000,
-      "step": 100000000
+      "min_size": "100000000",
+      "max_size": "10000000000",
+      "step": "100000000"
     },
-    "reference_price": 150000000000,
+    "reference_price": "150000000000",
     "session": { "type": "continuous" },
     "markets": [
       {
@@ -1397,10 +1397,10 @@ All four arrays are always present and may be empty. Amounts are `u64`: underlyi
             },
             "strikes": [
               {
-                "strike": 160000000000,
+                "strike": "160000000000",
                 "price": {
                   "type": "quoted",
-                  "price": 50000000
+                  "price": "50000000"
                 }
               }
             ]
@@ -1463,14 +1463,14 @@ Uses [common paging](ws-common.md#paging).
     },
     "strikes": [
       {
-        "strike": 450000000000,
+        "strike": "450000000000",
         "price": {
           "type": "quoted",
-          "price": 5000000
+          "price": "5000000"
         }
       },
       {
-        "strike": 460000000000,
+        "strike": "460000000000",
         "price": {
           "type": "none"
         }
@@ -1526,8 +1526,8 @@ Uses [common paging](ws-common.md#paging).
           "max": 18.7
         },
         "cap_filled_pct": 0.45,
-        "cap_total": 100000000000,
-        "cap_used": 45000000000,
+        "cap_total": "100000000000",
+        "cap_used": "45000000000",
         "strikes_count": 3,
         "nearest_market_pda": "MarketPdaBase58",
         "markets_count": 2,
@@ -1555,7 +1555,7 @@ Field semantics:
 Delivered when subscribed to the channel.
 
 ```json
-{ "type": "TradeExecuted", "data": { "trade": { "id": "uuid", "market_pda": "MarketPdaBase58", "terms": { "type": "covered_call", "strike": 136000000000 }, "side": "sell", "quantity": 5000000000, "price": 50000000, "taker_owner": "TakerPubkeyBase58", "maker_pda": "MakerPdaBase58", "transaction_signature": "5eyk...base58sig", "executed_at": 1710000012 } } }
+{ "type": "TradeExecuted", "data": { "trade": { "id": "uuid", "market_pda": "MarketPdaBase58", "terms": { "type": "covered_call", "strike": "136000000000" }, "side": "sell", "quantity": "5000000000", "price": "50000000", "taker_owner": "TakerPubkeyBase58", "maker_pda": "MakerPdaBase58", "transaction_signature": "5eyk...base58sig", "executed_at": 1710000012 } } }
 ```
 
 `TradeExecuted` is a best-effort live hint. Merge it with authoritative history by `trade.id`; do not derive counts from frame counts.
@@ -1567,7 +1567,7 @@ Delivered when subscribed to the channel.
 `event_type` is `PositionOpened`, `MarketCreated`, `MarketFinalized`, `MakerRegistered`, `PositionSettled` or `PositionLiquidated`. A chain event is identified by `(signature, instruction_index)`.
 
 ```json
-{ "type": "MarketFinalized", "data": { "market_pda": "MarketPdaBase58", "settlement_price": 133000000000 } }
+{ "type": "MarketFinalized", "data": { "market_pda": "MarketPdaBase58", "settlement_price": "133000000000" } }
 ```
 
 `MarketCreated` carries a [`MarketInfo`](ws-common.md#marketinfo) as `data`. `StatsUpdate` carries `{ "stats": GlobalStats }` with `usd` (`{ "type": "unavailable" }` or `{ "type": "available", notional_24h, premium_24h, priced_trades_24h }`), `total_volume_24h`, `total_trades_24h`, `spread_trades_24h`, `total_price_24h`, `active_markets`, `active_makers` and `active_rfqs`.

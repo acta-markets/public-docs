@@ -163,9 +163,9 @@ ws.on("quoteReceived", (quote) => {
 
 await ws.createRfq({
   market_pda: marketPdaBase58,
-  terms: { type: "covered_call", strike: 136_000_000_000 },
+  terms: { type: "covered_call", strike: "136000000000" },
   side: "sell",
-  quantity: 1_000_000_000, // 1 SOL in lamports; must satisfy size_rule
+  quantity: "1000000000", // 1 SOL in lamports; must satisfy size_rule
   timeout_seconds: 30,
   request_id: crypto.randomUUID(), // required; also the idempotency key
 });
@@ -174,10 +174,10 @@ await ws.createRfq({
 Other products:
 
 ```typescript
-{ type: "cash_secured_put", strike: 136_000_000_000 }
-{ type: "call_spread", lower_strike: 150_000_000_000, upper_strike: 160_000_000_000 }
-{ type: "put_spread", lower_strike: 130_000_000_000, upper_strike: 140_000_000_000 }
-{ type: "cash_put", strike: 136_000_000_000 }
+{ type: "cash_secured_put", strike: "136000000000" }
+{ type: "call_spread", lower_strike: "150000000000", upper_strike: "160000000000" }
+{ type: "put_spread", lower_strike: "130000000000", upper_strike: "140000000000" }
+{ type: "cash_put", strike: "136000000000" }
 ```
 
 Spread and cash put strikes must be multiples of the underlying's `strike_tick` (`1e9`-scaled; read it from `TokenInfo.role`). A spread needs `lower_strike < upper_strike`, and a call spread needs `lower_strike > 0`. The market's `is_put` must match the product's side.
@@ -231,9 +231,9 @@ With `side: "buy"` you buy the product. The maker writes it from its Maker PDA c
 ```typescript
 await ws.createRfq({
   market_pda: marketPdaBase58,
-  terms: { type: "covered_call", strike: 150_000_000_000 },
+  terms: { type: "covered_call", strike: "150000000000" },
   side: "buy",
-  quantity: 1_000_000_000,
+  quantity: "1000000000",
   timeout_seconds: 30,
   request_id: crypto.randomUUID(),
 });

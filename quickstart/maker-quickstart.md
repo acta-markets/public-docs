@@ -100,11 +100,11 @@ Compute the premium, set `now + min_quote_validity_seconds <= valid_until <= mar
   "type": "Quote",
   "data": {
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "terms": { "type": "covered_call", "strike": 160000000000 },
+    "terms": { "type": "covered_call", "strike": "160000000000" },
     "side": "sell",
-    "price": 5000000000,
+    "price": "5000000000",
     "valid_until": 1710000120,
-    "nonce": 42,
+    "nonce": "42",
     "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
     "signature": "<base58 of ed25519(order_id)>"
   }
@@ -118,11 +118,11 @@ A spread quote repeats the RFQ's two strikes:
   "type": "Quote",
   "data": {
     "rfq_id": "00000000-0000-0000-0000-000000000001",
-    "terms": { "type": "call_spread", "lower_strike": 100000000000, "upper_strike": 120000000000 },
+    "terms": { "type": "call_spread", "lower_strike": "100000000000", "upper_strike": "120000000000" },
     "side": "sell",
-    "price": 5000000000,
+    "price": "5000000000",
     "valid_until": 1799999900,
-    "nonce": 999,
+    "nonce": "999",
     "order_id": "0x0101010101010101010101010101010101010101010101010101010101010101",
     "signature": "<base58 of ed25519(order_id)>"
   }
@@ -184,8 +184,8 @@ When indicative pricing is enabled on the server, a connected `/maker` session s
     "position_type": "covered_call",
     "side": "sell",
     "prices": [
-      { "strike": 150000000000, "price": 4500000000 },
-      { "strike": 160000000000, "price": 5000000000 }
+      { "strike": "150000000000", "price": "4500000000" },
+      { "strike": "160000000000", "price": "5000000000" }
     ]
   }
 }

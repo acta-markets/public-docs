@@ -18,8 +18,8 @@ Maximum open interest allowed for a given underlying mint across all markets.
 |-------|------|-------------|
 | `underlying_mint` | pubkey (base58) | Underlying token mint |
 | `symbol` | string | Human-readable symbol, e.g. `"SOL"` |
-| `current_oi` | u64 | Current aggregate OI (underlying atomic units) |
-| `max_oi` | u64 | Maximum allowed OI |
+| `current_oi` | string | Current aggregate OI (underlying atomic units) |
+| `max_oi` | string | Maximum allowed OI |
 | `utilization` | f64 | `current_oi / max_oi`; not clamped to 1.0 |
 
 ### Market OI cap
@@ -31,8 +31,8 @@ expiry share that one budget**; there is no per-strike capacity.
 | Field | Type | Description |
 |-------|------|-------------|
 | `market_pda` | pubkey (base58) | Market PDA |
-| `current_oi` | u64 | Current market OI |
-| `max_oi` | u64 | Maximum allowed OI |
+| `current_oi` | string | Current market OI |
+| `max_oi` | string | Maximum allowed OI |
 | `utilization` | f64 | `current_oi / max_oi` |
 
 ### Quote notional cap
@@ -43,8 +43,8 @@ Maximum notional exposure per quote mint (e.g. USDC).
 |-------|------|-------------|
 | `quote_mint` | pubkey (base58) | Quote token mint |
 | `symbol` | string | Human-readable symbol, e.g. `"USDC"` |
-| `current_notional` | u64 | Current notional (quote atomic units) |
-| `max_notional` | u64 | Maximum allowed notional |
+| `current_notional` | string | Current notional (quote atomic units) |
+| `max_notional` | string | Maximum allowed notional |
 | `utilization` | f64 | `current_notional / max_notional` |
 
 ### Quote liability cap
@@ -55,7 +55,7 @@ Maximum cash-settled liability per quote mint. The liability of a spread or cash
 |-------|------|-------------|
 | `quote_mint` | pubkey (base58) | Quote token mint |
 | `symbol` | string | Human-readable symbol |
-| `current_liability` | u64 | Current liability (quote atomic units) |
+| `current_liability` | string | Current liability (quote atomic units) |
 | `policy` | object | `QuoteLiabilityPolicy`, see below |
 
 `policy` is a tagged union on `type`:
@@ -95,16 +95,16 @@ Response `TokenCaps`:
       {
         "underlying_mint": "So11111111111111111111111111111111111111112",
         "symbol": "SOL",
-        "current_oi": 500000000000,
-        "max_oi": 1000000000000,
+        "current_oi": "500000000000",
+        "max_oi": "1000000000000",
         "utilization": 0.5
       }
     ],
     "markets": [
       {
         "market_pda": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
-        "current_oi": 100000000000,
-        "max_oi": 250000000000,
+        "current_oi": "100000000000",
+        "max_oi": "250000000000",
         "utilization": 0.4
       }
     ],
@@ -112,8 +112,8 @@ Response `TokenCaps`:
       {
         "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "symbol": "USDC",
-        "current_notional": 2000000000,
-        "max_notional": 10000000000,
+        "current_notional": "2000000000",
+        "max_notional": "10000000000",
         "utilization": 0.2
       }
     ],
@@ -121,11 +121,11 @@ Response `TokenCaps`:
       {
         "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "symbol": "USDC",
-        "current_liability": 50000000,
+        "current_liability": "50000000",
         "policy": {
           "type": "limited",
-          "max_liability": 100000000,
-          "headroom": 50000000
+          "max_liability": "100000000",
+          "headroom": "50000000"
         }
       }
     ],
@@ -155,8 +155,8 @@ Maximum notional exposure per underlying mint for your maker account.
 |-------|------|-------------|
 | `underlying_mint` | pubkey (base58) | Underlying token mint |
 | `symbol` | string | Human-readable symbol |
-| `current` | u64 | Current notional exposure |
-| `limit` | u64 | Maximum allowed notional |
+| `current` | string | Current notional exposure |
+| `limit` | string | Maximum allowed notional |
 
 ### Balance
 
@@ -167,9 +167,9 @@ Available balance for quoting. Only the `available` portion can back new quotes.
 | `mint` | pubkey (base58) | Token mint |
 | `symbol` | string | Human-readable symbol |
 | `decimals` | u8 | On-chain mint decimals (divide atomic balances by `10^decimals` to render UI amounts) |
-| `deposited` | u64 | Total deposited (atomic units) |
-| `committed` | u64 | Locked by open positions / active quotes |
-| `available` | u64 | `deposited - committed` |
+| `deposited` | string | Total deposited (atomic units) |
+| `committed` | string | Locked by open positions / active quotes |
+| `available` | string | `deposited - committed` |
 
 ### Maker quote liability
 
@@ -207,8 +207,8 @@ Response `MyCaps`:
       {
         "underlying_mint": "So11111111111111111111111111111111111111112",
         "symbol": "SOL",
-        "current": 800000000000,
-        "limit": 2000000000000
+        "current": "800000000000",
+        "limit": "2000000000000"
       }
     ],
     "balances": [
@@ -216,20 +216,20 @@ Response `MyCaps`:
         "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "symbol": "USDC",
         "decimals": 6,
-        "deposited": 5000000000,
-        "committed": 3200000000,
-        "available": 1800000000
+        "deposited": "5000000000",
+        "committed": "3200000000",
+        "available": "1800000000"
       }
     ],
     "quote_liabilities": [
       {
         "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "symbol": "USDC",
-        "current_liability": 20000000,
+        "current_liability": "20000000",
         "policy": {
           "type": "limited",
-          "max_liability": 100000000,
-          "headroom": 80000000
+          "max_liability": "100000000",
+          "headroom": "80000000"
         }
       }
     ],
@@ -247,11 +247,11 @@ Response `MyCaps`:
   "type": "CheckQuote",
   "data": {
     "request_id": "uuid",
-    "terms": { "type": "covered_call", "strike": 150000000000 },
+    "terms": { "type": "covered_call", "strike": "150000000000" },
     "side": "sell",
     "market_pda": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
-    "quantity": 1000000000,
-    "price": 5000000000
+    "quantity": "1000000000",
+    "price": "5000000000"
   }
 }
 ```
@@ -320,7 +320,7 @@ A `CapError` is externally tagged by the code from the table below. A variant wi
 is an object with the code as its only key and the failing dimension's amounts inside it:
 
 ```json
-{ "token_oi_cap_exceeded": { "underlying_mint": "So11111111111111111111111111111111111111112", "current": 900000000, "limit": 1000000000 } }
+{ "token_oi_cap_exceeded": { "underlying_mint": "So11111111111111111111111111111111111111112", "current": "900000000", "limit": "1000000000" } }
 ```
 
 `caps_unavailable` has no fields and is the bare string `"caps_unavailable"`.
@@ -334,12 +334,12 @@ broadcast, so `maker_insufficient_balance.required` is always `0` there:
   "data": {
     "rfq_id": "6f9619ff-8b86-d011-b42d-00c04fc964ff",
     "market_pda": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
-    "quantity": 1000000000,
+    "quantity": "1000000000",
     "cap_detail": {
       "token_oi_cap_exceeded": {
         "underlying_mint": "So11111111111111111111111111111111111111112",
-        "current": 900000000000,
-        "limit": 1000000000000
+        "current": "900000000000",
+        "limit": "1000000000000"
       }
     }
   }

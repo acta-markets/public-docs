@@ -153,11 +153,11 @@ RfqRequest -> RfqCreated -> QuoteReceived (0..N) -> AcceptQuote
 
 | Product | `terms` |
 |---|---|
-| Covered call | `{ "type": "covered_call", "strike": 136000000000 }` |
-| Cash-secured put | `{ "type": "cash_secured_put", "strike": 136000000000 }` |
-| Call spread | `{ "type": "call_spread", "lower_strike": 150000000000, "upper_strike": 160000000000 }` |
-| Put spread | `{ "type": "put_spread", "lower_strike": 130000000000, "upper_strike": 140000000000 }` |
-| Cash put | `{ "type": "cash_put", "strike": 136000000000 }` |
+| Covered call | `{ "type": "covered_call", "strike": "136000000000" }` |
+| Cash-secured put | `{ "type": "cash_secured_put", "strike": "136000000000" }` |
+| Call spread | `{ "type": "call_spread", "lower_strike": "150000000000", "upper_strike": "160000000000" }` |
+| Put spread | `{ "type": "put_spread", "lower_strike": "130000000000", "upper_strike": "140000000000" }` |
+| Cash put | `{ "type": "cash_put", "strike": "136000000000" }` |
 
 `quantity` is always in underlying atoms, for every product, and must satisfy `size_rule`. For a UI that collects a quote amount (for example USDC), convert it and snap it to the size rule: see [Quantity and collateral by product](../reference/ws-common.md#quantity-and-collateral-by-product). The wallet must hold the [full collateral](../reference/taker-api.md#rfqrequest-taker---server) when it sends the RFQ.
 
@@ -167,9 +167,9 @@ RfqRequest -> RfqCreated -> QuoteReceived (0..N) -> AcceptQuote
   "data": {
     "request_id": "<uuid>",
     "market_pda": "<market PDA, base58>",
-    "terms": { "type": "covered_call", "strike": 136000000000 },
+    "terms": { "type": "covered_call", "strike": "136000000000" },
     "side": "sell",
-    "quantity": 1000000000,
+    "quantity": "1000000000",
     "timeout_seconds": 30
   }
 }
@@ -186,14 +186,14 @@ Makers stream `QuoteReceived`. Each quote is firm and hash-bound through `order_
   "type": "QuoteReceived",
   "data": {
     "rfq_id": "<uuid>",
-    "terms": { "type": "covered_call", "strike": 136000000000 },
+    "terms": { "type": "covered_call", "strike": "136000000000" },
     "side": "sell",
     "maker_owner": "<maker owner pubkey, base58>",
-    "price": 50000000,
+    "price": "50000000",
     "valid_until": 1710000350,
-    "nonce": 42,
+    "nonce": "42",
     "order_id": "0x<64 hex>",
-    "net_price": 49750000
+    "net_price": "49750000"
   }
 }
 ```

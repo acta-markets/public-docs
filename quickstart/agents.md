@@ -43,12 +43,12 @@ the fill locally:
 ```typescript
 import { grossFromIndicative1e9, previewFill } from "@acta-markets/ts-sdk/ws";
 
-const terms = { type: "cash_secured_put", strike: 136_000_000_000 } as const;
+const terms = { type: "cash_secured_put", strike: "136000000000" } as const;
 const fees = quoteToken.protocol_fees; // /tokens or GetTokens, per quote token
 const preview = previewFill({
   terms,
   side: "sell",
-  quantity: 1_000_000_000,
+  quantity: "1000000000",
   // A sell indicative is already net of the fee; previewFill takes the gross price.
   price1e9: grossFromIndicative1e9(strikePrice, "sell", terms, fees), // a strike's `price` of type "quoted"
   fees,
@@ -138,8 +138,9 @@ Most agent bugs here are unit bugs.
   `price`.
 - A cash-secured put is sized in underlying atoms, not in quote. Convert a quote budget with
   `quoteAmountToQuantity`, then snap it to the size rule.
-- Wire integers can exceed `Number.MAX_SAFE_INTEGER`. Use the SDK's bigint helpers
-  (`totalPremiumQuoteAtoms`, `previewFill`) for money.
+- Amounts are decimal strings on the wire and in the SDK types. Do money math in `bigint`
+  (`BigInt(price)`) or with the SDK helpers (`totalPremiumQuoteAtoms`, `previewFill`), never
+  in `Number`.
 
 ## Pace
 

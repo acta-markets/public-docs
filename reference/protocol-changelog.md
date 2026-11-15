@@ -2,6 +2,18 @@
 
 ## Next (not deployed)
 
+`acta-maker-sdk` 0.11.0 and `@acta-markets/ts-sdk` 0.8.0. Breaking: one [number
+encoding](ws-common.md#numbers) on WS and HTTP. The protocol string stays `1.0.0`, so an older
+client passes `Hello` and then fails on the first amount.
+
+- WS token amounts that were JSON numbers are decimal strings: `price`, `net_price`,
+  `your_price`, strikes in `terms` and `order_options`, `quantity`, `settlement_price`, payoffs
+  and received atoms, `total_premium`, `size_rule`, `strike_tick`, `reference_price`, caps and
+  cap errors, balances, stats volumes, and `nonce`. Client messages send them as strings too.
+- HTTP fields that were decimal strings but are not amounts are numbers: vault times, slots,
+  counts, generations and `capital_fallback_delay_seconds`; position, exposure, cycle and
+  depositor times; `cycle_number`.
+
 `acta-maker-sdk` 0.10.0 and `@acta-markets/ts-sdk` 0.7.0. Breaking: address and time fields are renamed after what they hold. The protocol string stays
 `1.0.0`, so an older client passes `Hello` and then fails on the renamed fields. The program and
 the order ID preimage are unchanged; signatures stay valid.

@@ -16,19 +16,38 @@ Unit variants have no `data` field, for example:
 
 ## Encodings and units
 
+### Numbers
+
+One rule covers the WebSocket protocol and the [HTTP API](http-api.md):
+
+- **Token amounts are JSON decimal strings.** Every amount in token atoms or 1e9-scaled
+  integers: prices, premiums, strikes (`lower_strike`, `upper_strike`), quantities,
+  collateral, balances, payoffs and returns, fees in atoms, shares, share prices, equity and
+  TVL values (`value_1e9`), deposit and withdrawal amounts, notionals, intrinsic values, caps
+  and size rules. The quote `nonce` is a full-range `u64` and is a decimal string too. A
+  decimal string is canonical: ASCII digits, no sign, no leading zero (`"0"`, `"150000000000"`).
+- **Everything else is a JSON number**: Unix timestamps (`*_ts`, `*_at`, `*_at_ms`,
+  `valid_until`, `expires_at`), slots, counts, versions and generations, decimals, basis
+  points, durations in seconds, rate limits, page limits, and ratios such as `utilization` or
+  `apr`. Every integer number is below 2^53, so `JSON.parse` reads it exactly.
+
+The server rejects an amount sent as a number and a number sent as a string. A field has the
+same encoding in every message and on both transports.
+
 | Field | Format |
 |-------|--------|
 | Pubkeys | base58 |
 | Signatures | base58 (64 bytes) |
 | `order_id` | 64-char hex (optional `0x` prefix) |
-| `price` | `u64`, gross premium per 1 underlying unit, 1e9 scale |
-| `total_premium` | `u64`, net premium amount in quote token atomic units |
-| `strike`, `lower_strike`, `upper_strike` | `u64`, quote per 1 underlying unit, 1e9 scale |
-| `quantity` | `u64`, underlying atomic units |
-| `size_rule` | min_size, max_size, step in underlying atomic units; always tied to underlying_mint |
-| `strike_tick` | `u64`, strike ladder spacing for an underlying, 1e9 scale |
-| Timestamps | Unix seconds |
-| `server_now_at_ms` | Unix milliseconds |
+| `price` | decimal string, gross premium per 1 underlying unit, 1e9 scale |
+| `total_premium` | decimal string, net premium amount in quote token atomic units |
+| `strike`, `lower_strike`, `upper_strike` | decimal string, quote per 1 underlying unit, 1e9 scale |
+| `quantity` | decimal string, underlying atomic units |
+| `size_rule` | `min_size`, `max_size`, `step`: decimal strings in underlying atomic units; always tied to underlying_mint |
+| `strike_tick` | decimal string, strike ladder spacing for an underlying, 1e9 scale |
+| `nonce` | decimal string, full-range `u64` |
+| Timestamps | number, Unix seconds |
+| `server_now_at_ms` | number, Unix milliseconds |
 
 `price` and `strike` are always 1e9 fixed-point per 1 underlying unit, independent of mint decimals.
 
@@ -745,8 +764,6 @@ This is the closed set of `type` values. A variant without `data` has no `data` 
 ```json
 { "type": "Error", "data": { "type": "DbDisabled", "data": { "feature": "mm_summary" } } }
 ```
-
-JavaScript integrators must preserve integer precision: a wire `u64` can exceed `Number.MAX_SAFE_INTEGER`. TS SDK represents most WS amounts as `number`; for an oversized amount literal it reports `unsafe_integer` and drops the whole frame, so the matching event never fires; recover state with a read (`GetMyActiveRfqs`, `GetOrderStatus`). Inbound nonces have separate lossless handling. For full-range raw JSON amounts, use lossless parsing and bigint arithmetic; `BigInt(JSON.parse(...).amount)` cannot repair precision already lost. This does not change the wire encoding or the `1e9` scale.
 
 ## WS error codes
 
