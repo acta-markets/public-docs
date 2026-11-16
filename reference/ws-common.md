@@ -929,7 +929,7 @@ Position rows carry a required `state`: `open`, `funded`, `liquidated` or
 `settled { settlement: physical | cash }`.
 
 - `open`: position created, collateral locked, premium paid to taker.
-- `funded`: maker deposited the settlement asset via `DepositFundsToPosition`. Physical products only.
+- `funded`: the holder deposited the settlement asset via `DepositFundsToPosition`. Physical products only. `WithdrawFundsFromPosition` before expiry returns the position to `open`.
 - `settled`: market finalized, assets distributed based on the ITM/OTM outcome. `settlement` is
   `physical` for covered calls and cash-secured puts, `cash` for spreads and cash puts.
 - `liquidated`: an unfunded ITM position was closed by a liquidation transaction. Physical products only.

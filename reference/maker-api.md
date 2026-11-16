@@ -2298,7 +2298,7 @@ Uses [common paging](ws-common.md#paging).
 | Value | Meaning |
 |-------|---------|
 | `open` | Position created on-chain but maker has not yet escrowed settlement asset. |
-| `funded` | Maker called `DepositFundsToPosition`. Settlement asset is escrowed. |
+| `funded` | The holder called `DepositFundsToPosition`. Settlement asset is escrowed; `WithdrawFundsFromPosition` before expiry returns it and the state to `open`. |
 | `liquidated` | Unfunded ITM position seized by a third-party liquidator. |
 | `settled` | Position settled at expiry; assets distributed per ITM/OTM outcome, or paid in cash. |
 
@@ -2318,7 +2318,7 @@ Position status is a lowercase snake_case string on the wire. `funded` and `liqu
 | Value | Row state |
 |-------|---------|
 | `created` | `open`. Position opened on-chain. |
-| `funded` | `funded`. Maker called `DepositFundsToPosition`. |
+| `funded` | `funded`. The holder called `DepositFundsToPosition`. |
 | `liquidated` | `liquidated`. Unfunded ITM position liquidated by a third party. |
 | `settled` | `settled`. Position settled at expiry. |
 

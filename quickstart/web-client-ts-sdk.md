@@ -256,6 +256,10 @@ const { ixs } = await flows.buildDepositFundsIxs({
 });
 ```
 
+Until `expiry_ts` you can take the deposit back with `flows.buildWithdrawFundsIxs` (same arguments); the position is open again and can be funded again. Native SOL comes back wrapped.
+
+To fund several bought positions of one wallet, `flows.buildDepositFundsBatchIxs({ programId, payer, owner, items: [{ position, market }] })` returns `transactions`, each a set of instructions for one transaction (up to nine deposits, fewer across markets), and `deposits` with each `positionPda` and `amount`. Sign the transactions together with `signAllTransactions`; each lands on its own.
+
 Without a deposit all collateral returns to the writer at expiry, also in the money; the position settles as `not_exercised`. A bought spread or cash put needs no deposit and settles in cash: `holder_payoff` is yours. While the chain has settled a position and the server has not sealed that slot, its state is `terminal_pending { slot, outcome }`; show it, but do not count it.
 
 ### 7. Cancel RFQ

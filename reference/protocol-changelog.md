@@ -2,6 +2,15 @@
 
 ## Next (not deployed)
 
+Program instruction `WithdrawFundsFromPosition` (discriminant 81) and `@acta-markets/ts-sdk`
+0.8.1–0.8.2. Additive: no wire change.
+
+- The holder of a `funded` covered call or cash-secured put (maker of a sold position, buyer of
+  a bought one) takes the deposit back strictly before `expiry_ts`; the position is `open` again.
+  New event `PositionUnfunded` (kind 83). [Layout](sandbox.md#withdrawfundsfromposition).
+- `flows.buildWithdrawFundsIxs` and `flows.buildDepositFundsBatchIxs` (several deposits of one
+  holder per transaction) in `@acta-markets/ts-sdk/chain`.
+
 `acta-maker-sdk` 0.11.0 and `@acta-markets/ts-sdk` 0.8.0. Breaking: one [number
 encoding](ws-common.md#numbers) on WS and HTTP. The protocol string stays `1.0.0`, so an older
 client passes `Hello` and then fails on the first amount.

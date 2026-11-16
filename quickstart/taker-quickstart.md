@@ -367,7 +367,7 @@ Once open, the position's collateral is locked in its own escrow. There is no ma
 | `state` | Meaning |
 |---|---|
 | `open` | Collateral locked, net premium paid to the taker. |
-| `funded` | Physical products only. The maker deposited the settlement asset (`DepositFundsToPosition`). |
+| `funded` | Physical products only. The holder deposited the settlement asset (`DepositFundsToPosition`): the maker of a sold position, you on a bought one. A withdrawal before expiry (`WithdrawFundsFromPosition`) makes it `open` again. |
 | `settled` | Market finalized after expiry and assets distributed. Carries `settlement`. |
 | `liquidated` | Physical products only. An unfunded in-the-money position was closed by a permissionless liquidator, who fronts the settlement to the taker. |
 

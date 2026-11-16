@@ -45,7 +45,8 @@ The on-chain position account has two live states, `open` and `funded`. `settled
 | From | Instruction | Signer | Conditions | To |
 | --- | --- | --- | --- | --- |
 | (none) | `OpenPosition` | taker, maker Ed25519 quote, keeper | Protocol not paused; market not expired | `open` |
-| `open` | `DepositFundsToPosition` | maker owner | None on the market's expiry or finalization | `funded` |
+| `open` | `DepositFundsToPosition` | holder (maker owner of a sold position, buyer of a bought one) | Sold: none on the market's expiry or finalization. Bought: strictly before `expiry_ts` | `funded` |
+| `funded` | `WithdrawFundsFromPosition` | holder | Strictly before `expiry_ts` | `open` |
 | `open` | `SettlePosition` | any signer | Market finalized; position OTM | `settled` |
 | `funded` | `SettlePosition` | any signer | Market finalized | `settled` |
 | `open` | `LiquidatePosition` | any signer | Market finalized; position ITM | `liquidated` |
@@ -254,7 +255,9 @@ At-the-money counts as OTM.
 
 ## Funding deadline (physical positions)
 
-The contract sets no deadline for `DepositFundsToPosition`. It accepts a deposit while the position is `open`, before or after expiry and before or after market finalization. The only thing that ends the window is a terminal instruction.
+For a sold position the contract sets no deadline for `DepositFundsToPosition`. It accepts a deposit while the position is `open`, before or after expiry and before or after market finalization. The only thing that ends the window is a terminal instruction. A bought position is funded by its buyer strictly before `expiry_ts`.
+
+Before `expiry_ts` the holder can take the deposit back with `WithdrawFundsFromPosition`; the position is `open` again and settles as unfunded unless it is funded again.
 
 - **Before finalization.** Funding is always safe.
 - **After finalization, position OTM.** Funding has no effect on the outcome. `SettlePosition` returns both sides' assets.
@@ -336,7 +339,7 @@ Events worth tracking end to end:
 | `ChainEvent(position_settled)` | Assets distributed. |
 | `ChainEvent(position_liquidated)` | Unfunded ITM physical position liquidated. |
 
-`RegisterMaker`, `MakerDeposit`, `MakerWithdraw`, and `DepositFundsToPosition` are Solana on-chain instructions, not WebSocket messages; build and submit them as transactions signed by the relevant owner wallet. The layouts of the maker's deposit instructions are in [Sandbox](sandbox.md#on-chain-maker-instructions). The full IDL ships in `@acta-markets/ts-sdk` as `ACTA_IDL`.
+`RegisterMaker`, `MakerDeposit`, `MakerWithdraw`, `DepositFundsToPosition` and `WithdrawFundsFromPosition` are Solana on-chain instructions, not WebSocket messages; build and submit them as transactions signed by the relevant owner wallet. The layouts of the maker's deposit instructions are in [Sandbox](sandbox.md#on-chain-maker-instructions). The full IDL ships in `@acta-markets/ts-sdk` as `ACTA_IDL`.
 
 ## Related docs
 

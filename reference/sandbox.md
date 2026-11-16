@@ -137,7 +137,7 @@ import { ACTA_IDL } from "@acta-markets/ts-sdk";
 
 The package also contains the JSON file at `node_modules/@acta-markets/ts-sdk/dist/idl/acta_contract.json`. Raw clients can read that file without using the TypeScript builders.
 
-Builders: `buildMakerDepositIx` and `buildDepositFundsToPositionIx` from `@acta-markets/ts-sdk/chain`, or `ChainClient::maker_deposit` and `ChainClient::fund_position` in the Rust SDK (`chain-rpc` feature).
+Builders: `buildMakerDepositIx` and `buildDepositFundsToPositionIx` from `@acta-markets/ts-sdk/chain`, or `ChainClient::maker_deposit` and `ChainClient::fund_position` in the Rust SDK (`chain-rpc` feature). For a position holder, `flows.buildDepositFundsIxs`, `flows.buildDepositFundsBatchIxs` and `flows.buildWithdrawFundsIxs` from `@acta-markets/ts-sdk/chain` also create the token accounts and wrap native SOL.
 
 ### `MakerDeposit`
 
@@ -155,19 +155,29 @@ Data, 9 bytes: discriminant `4`, then `amount` as `u64`. `amount` must not be `0
 
 ### `DepositFundsToPosition`
 
-Funds the settlement leg of an `open` covered call or cash-secured put. Spreads and cash puts are rejected.
+Funds the settlement leg of an `open` covered call or cash-secured put; the position becomes `funded`. Spreads, cash puts and vault-held positions are rejected. The signer is the position `holder`: the maker owner of a sold position, or the buyer of a bought one. A buyer deposits strictly before `expiry_ts`; a maker has no deadline while the position is `open`.
 
 Data, 1 byte: discriminant `9`. There are no arguments: the program computes the amount. A covered call takes `scaled_quote_amount(strike, quantity)` of the quote mint, and a cash-secured put takes `quantity` of the underlying mint.
 
 | # | Account | Writable | Signer | Rule |
 |---|---|---|---|---|
-| 0 | `maker_owner` | no | yes | The position's maker owner |
-| 1 | `maker_pda` | no | no | `["maker", maker_owner]` |
+| 0 | `holder` | no | yes | The position's holder |
+| 1 | `holder_maker_pda` | no | no | `["maker", holder]` for a sold position; not read for a bought one (the SDK passes the System Program) |
 | 2 | `position_pda` | yes | no | `["position", order_id]` |
 | 3 | `market_pda` | no | no | The position's market |
-| 4 | `maker_funding_ata` | yes | no | Source token account owned by `maker_owner`, for the settlement mint |
+| 4 | `holder_funding_ata` | yes | no | Source token account owned by `holder`, for the settlement mint |
 | 5 | `pos_settlement_ata` | yes | no | The position PDA's ATA for the settlement mint. It must already exist |
 | 6 | `settlement_token_program` | no | no | The settlement mint's token program |
+
+The program emits `TakerBuyFunded` for a bought position and `DepositFundsToPosition` for a sold one.
+
+### `WithdrawFundsFromPosition`
+
+Returns the deposit of a `funded` covered call or cash-secured put to its holder strictly before `expiry_ts`; the position is `open` again and can be funded again. Vault-held positions are rejected.
+
+Data, 1 byte: discriminant `81`. The accounts are those of `DepositFundsToPosition`; `holder_funding_ata` receives the deposit. The program emits `PositionUnfunded` with `holder`, `market_pda`, `position_pda`, `amount` and `is_taker_buy`.
+
+Program events are written to the transaction log, which the runtime cuts at 10 KB. Keep a funding transaction to these instructions and their token-account setup; `flows.buildDepositFundsBatchIxs` fills each transaction up to its size limit (nine deposits on one market, fewer across markets).
 
 ## Support
 
