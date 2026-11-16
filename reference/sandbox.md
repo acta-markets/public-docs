@@ -137,7 +137,7 @@ import { ACTA_IDL } from "@acta-markets/ts-sdk";
 
 The package also contains the JSON file at `node_modules/@acta-markets/ts-sdk/dist/idl/acta_contract.json`. Raw clients can read that file without using the TypeScript builders.
 
-Builders: `buildMakerDepositIx` and `buildDepositFundsToPositionIx` from `@acta-markets/ts-sdk/chain`, or `ChainClient::maker_deposit` and `ChainClient::fund_position` in the Rust SDK (`chain-rpc` feature). For a position holder, `flows.buildDepositFundsIxs`, `flows.buildDepositFundsBatchIxs` and `flows.buildWithdrawFundsIxs` from `@acta-markets/ts-sdk/chain` also create the token accounts and wrap native SOL.
+Builders: `buildMakerDepositIx` and `buildDepositFundsToPositionIx` from `@acta-markets/ts-sdk/chain`, or `ChainClient::maker_deposit`, `ChainClient::fund_position` and `ChainClient::withdraw_position_funds` (`chain::build_withdraw_position_funds_ixs`, `acta-maker-sdk` 0.11.1) in the Rust SDK (`chain-rpc` feature). For a position holder, `flows.buildDepositFundsIxs`, `flows.buildDepositFundsBatchIxs` and `flows.buildWithdrawFundsIxs` from `@acta-markets/ts-sdk/chain` also create the token accounts and wrap native SOL.
 
 ### `MakerDeposit`
 

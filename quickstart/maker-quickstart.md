@@ -168,6 +168,7 @@ Quoting and the lifecycle above are entirely off-chain (WebSocket). Your only on
 
 - `MakerDeposit` — deposit program quote balance; **required before quoting** (the fill's premium debit draws from it). [Layout](../reference/sandbox.md#on-chain-maker-instructions). `MakerWithdraw` retrieves idle balance.
 - `DepositFundsToPosition` — optional, after a covered-call or cash-secured-put fill: fund the settlement leg (`open` → `funded`) to avoid the ITM-unfunded liquidation loss. Spreads and cash puts have no funded step. [Layout](../reference/sandbox.md#on-chain-maker-instructions).
+- `WithdrawFundsFromPosition` — optional, strictly before expiry: take that deposit back (`funded` → `open`), for example once the position is safely out of the money. The position then settles, or is liquidated in the money, as unfunded. [Layout](../reference/sandbox.md#withdrawfundsfromposition).
 
 You do **not** settle or liquidate. Publishing the settlement price and finalizing markets is operator-side; settlement is keeper-driven; liquidating ITM-unfunded physical positions is permissionless. Your downside is bounded — fund the settlement leg of a physical position, or a third party liquidates and fronts the taker payout. See [`../reference/protocol-flow.md`](../reference/protocol-flow.md) for the risk model.
 
