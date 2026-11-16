@@ -12,12 +12,12 @@ For JSON-layer integrations, see [`maker-quickstart.md`](maker-quickstart.md). M
 
 ```toml
 [dependencies]
-acta-maker-sdk = { version = "0.10.0", features = ["ws-client"] }
+acta-maker-sdk = { version = "0.12.0", features = ["ws-client"] }
 ```
 
-Version 0.10.0 speaks WS protocol `1.0.0` (`WS_PROTOCOL_VERSION`). The wire is closed: every field is present, absent facts are tagged unions (`null` only as `next_cursor` on the last page), and decoding rejects unknown message types, error codes, enum values and missing fields. This guide covers ordinary makers; vault operators use the `vault` feature, see the [vault operator guide](vault-operator-guide.md).
+The SDK speaks WS protocol `1.0.0` (`WS_PROTOCOL_VERSION`). The wire is closed: every field is present, absent facts are tagged unions (`null` only as `next_cursor` on the last page), and decoding rejects unknown message types, error codes, enum values and missing fields. This guide covers ordinary makers; vault operators use the `vault` feature, see the [vault operator guide](vault-operator-guide.md).
 
-Quote-only integrations need `ws-client`. `chain` adds Solana instruction builders (including `chain::vault`); `chain-rpc` adds on-chain reads; `http` adds the read-only HTTP client; `vault` adds the vault operator client and implies `ws-client` and `chain`.
+Quote-only integrations need `ws-client`. `chain` adds Solana instruction builders; `chain-rpc` adds on-chain reads; `http` adds the read-only HTTP client; `vault` adds `chain::vault` and the vault operator client and implies `ws-client` and `chain`.
 
 One key signs both the auth challenge and every quote: the `quote_signing` key stored in your on-chain Maker account. Acta registers it with the admin-gated, timelocked `RegisterMaker`; it may equal `maker_owner`.
 
@@ -172,7 +172,7 @@ For covered calls and cash-secured puts, `physical_premium(price, strike, quanti
 
 `RfqBroadcast.quantity` and `QuoteFilled.quantity` are underlying atoms; `Price` and `Strike` are 1e9-scaled per underlying token, independent of decimals. Mint decimals come only from `GetMarketDescriptors` on `/maker/data` (`underlying_decimals`, `quote_decimals` per `market_pda`); `MarketDecimals::observe(&message)` caches them and `get(market_pda)` returns them. `total_premium_quote_atoms(price, quantity, underlying_decimals, quote_decimals)` is the fill's gross premium (before protocol fees) in quote atoms with the contract's rounding; `Price::as_decimal()`, `Strike::as_decimal()` and `Quantity::to_units(decimals)` are for display.
 
-`QuoteExpiry` stores whole Unix seconds; use `QuoteExpiry::from_unix_seconds(...)` or `QuoteExpiry::after(...)` rather than putting a fractional `SystemTime` into a signed order. See the crate's `managed_quote` example (`cargo run --example managed_quote --features ws-client,http` from the 0.7.1 crate sources; API reference on [docs.rs](https://docs.rs/acta-maker-sdk)) for receiving recovery responses, checking epochs and handling stream gaps.
+`QuoteExpiry` stores whole Unix seconds; use `QuoteExpiry::from_unix_seconds(...)` or `QuoteExpiry::after(...)` rather than putting a fractional `SystemTime` into a signed order. See the crate's `managed_quote` example (`cargo run --example managed_quote --features ws-client,http`; API reference on [docs.rs](https://docs.rs/acta-maker-sdk)) for receiving recovery responses, checking epochs and handling stream gaps.
 
 `quote_in_epoch`, `replace_in_epoch` and `batch_quotes_in_epoch` (and their `try_` forms) return `NotReady` if the connection has changed. Do not replace the applied recovery epoch with the latest transport epoch just before sending.
 
@@ -205,7 +205,7 @@ is separate from `Rfqs`, so a maker that only sells never receives buys.
 - **Settlement.** The holder deposits strictly before expiry to exercise a physical
   buy. An unfunded in-the-money buy returns all collateral to you and settles as
   `not_exercised`; spreads and cash puts settle in cash with no deposit. `PositionInfo`
-  names the roles `writer` (you) and `holder` (the buyer). `chain::vault::build_settle_position_ix`
+  names the roles `writer` (you) and `holder` (the buyer). `chain::build_settle_position_ix`
   and `settle_position_sequence` settle a buy you wrote.
 - **Competition.** Vaults whose delegate holds `SIGN_WRITER_QUOTES` quote the same buys
   and write from their collateral leg.

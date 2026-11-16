@@ -73,7 +73,7 @@ Receiving premium into second needs no bit. Because funding is checked at open, 
 
 Each capital step needs governance or `PROCESS_CAPITAL` until `active_expiry + capital_fallback_delay_seconds`; after that anyone may send it. The delay defaults to 43,200 s (12 h), may range 0–259,200 s, and only Acta cold changes it, through the protocol timelock. In Idle the same delay runs from each request's `created_at`. In Idle, a non-operator can price equity only with a withdrawal request older than the delay; a depositor can cancel instead. The fallback lets others run these steps. It does not swap: rebalance needs `REBALANCE`, recovery needs governance.
 
-The SDKs include a reference crank: Rust `chain::vault::next_step` with the crate's `vault_capital` example (`cargo run --example vault_capital --features chain-rpc`), TS `flows.nextCapitalStep` / `flows.planWithdrawals`.
+The SDKs include a reference crank: Rust `chain::vault::next_step` with the crate's `vault_capital` example (`cargo run --example vault_capital --features chain-rpc,vault`), TS `flows.nextCapitalStep` / `flows.planWithdrawals`.
 
 ### Closing
 
@@ -252,7 +252,7 @@ For a call spread, put spread or cash put, build `VaultSaleTerms::Spread(VaultSp
 
 `client.sell_rfq(&chain, &sale, connection_epoch, &gate, &mut desk)` runs the whole sale: it sends `RfqRequest`, offers each `QuoteReceived` with matching `terms` to your `SaleDesk::take`, sends `AcceptQuote` for the first taken quote, rebuilds the signed terms from that quote, verifies and signs the served transaction against the counterparty, and submits it. `VaultSale { market_pda, market, terms: OptionTerms, quantity, rfq_timeout, window, bounds }` accepts any `OptionTerms`; it rejects a market whose side does not match the product and checks spread strikes before the request. `SaleOutcome::Submitted` means the participant-signed transaction reached the keeper; `SaleError::in_flight()` returns the signed sale when a failed submit may still execute.
 
-For swaps, `client.swap_quote(request)` returns the quote. Pass it with `VaultSwapIntent { vault, request, quote, price_routes: PairPriceRoutes { main, second, staging, shards }, min_output_floor, account }` to `verify_and_sign_swap`, then send it with `swap_submit_in_epoch(payload, epoch, gate)`. `epoch` is the connection epoch `wait_until_ready()` returned; the swap is sent only on that connection, and only if `gate` admits it (`Ungated` admits every send). `account` is the `VaultAccount` read before the request; the second leg and the staging slot are checked against it. `main` and `second` are the vault's decoded `PriceRoute`s. `staging` lists the routes of the mints you accept as a staging mint; pass `&[]` to refuse two-transaction swaps. `shards` lists the Pyth push-oracle shards you accept. The crate's `vault_operator` example (`cargo run --example vault_operator --features vault`) shows verified fill and swap signing.
+For swaps, `client.swap_quote(request)` returns the quote. Pass it with `VaultSwapIntent { vault, request, quote, price_routes: PairPriceRoutes { main, second, staging, shards }, min_output_floor, account }` to `verify_and_sign_swap`, then send it with `swap_submit_in_epoch(payload, epoch, gate)`. `epoch` is the connection epoch `wait_until_ready()` returned; the swap is sent only on that connection, and only if `gate` admits it (`Ungated` admits every send). `account` is the `VaultAccount` read before the request; the second leg and the staging slot are checked against it. `main` and `second` are the vault's decoded `PriceRoute`s. `staging` lists the routes of the mints you accept as a staging mint; pass `&[]` to refuse two-transaction swaps. `shards` lists the Pyth push-oracle shards you accept. The crate's `vault_operator` example (`cargo run --example vault_operator --features vault,http`) shows verified fill and swap signing.
 
 TypeScript:
 
@@ -305,11 +305,11 @@ When the vault holds a physical option, the option is not funded at open. To exe
 
 `ChainClient::unfunded_positions(vault)` returns every `open` position whose maker is the vault. That list includes spreads and cash puts, which stay `open` until settlement and cannot be funded. Skip entries whose `terms` is a spread or cash put before building a fund instruction.
 
-Builders: TS `planner.trading.fundHolderPosition(position)`; Rust `VaultManager::fund_holder_position` in `acta-maker-sdk` (feature `chain`). The builder picks the funding mint from the market side and the vault ATA by that mint. The actor signs (`FUND_HOLDER` or governance) and pays; `FundPositionForVaultHolder` takes no arguments and moves the amount the position needs.
+Builders: TS `planner.trading.fundHolderPosition(position)`; Rust `VaultManager::fund_holder_position` in `acta-maker-sdk` (feature `vault`). The builder picks the funding mint from the market side and the vault ATA by that mint. The actor signs (`FUND_HOLDER` or governance) and pays; `FundPositionForVaultHolder` takes no arguments and moves the amount the position needs.
 
 ```rust
 use acta_maker_sdk::chain::vault::{VaultAccount, VaultManager, VaultPositionRef};
-use solana_sdk::transaction::Transaction;
+use solana_transaction::Transaction;
 
 let vault = VaultManager::from_vault(program_id, operator.pubkey(), &VaultAccount::parse(&vault_data)?)?;
 let fund = vault.fund_holder_position(&VaultPositionRef {
