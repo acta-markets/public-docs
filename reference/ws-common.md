@@ -107,12 +107,12 @@ type TokenInfo = {
     | { type: "quote" }
     | {
         type: "underlying";
-        size_rule: {               // underlying atomic units
-          min_size: number;
-          max_size: number;
-          step: number;
+        size_rule: {               // decimal strings, underlying atomic units
+          min_size: string;
+          max_size: string;
+          step: string;
         };
-        strike_tick: number;       // strike ladder spacing, 1e9 scale
+        strike_tick: string;       // decimal string, strike ladder spacing, 1e9 scale
         quote_mints: string[];     // quote mints of its active markets
       };
   schedule:                        // the price feed schedule
@@ -144,13 +144,13 @@ Used by `Snapshot.markets`, `Markets` and HTTP `/api/v1/markets`. Markets name t
 ```typescript
 type MarketInfo = {
   pda: string;
-  underlying: string;                // underlying mint
-  quote: string;                     // quote mint
+  underlying_mint: string;
+  quote_mint: string;
   expiry_ts: number;
   is_put: boolean;
   products: Product[];               // non-empty; see below
   status: "active" | "closed" | "finalized";
-  settlement: { type: "pending" } | { type: "fixed"; price: number }; // price 1e9 scale
+  settlement: { type: "pending" } | { type: "fixed"; price: string }; // price: decimal string, 1e9 scale
 };
 
 type Product =

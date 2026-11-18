@@ -1391,10 +1391,10 @@ type MarketDescriptorInfo = {
   quote_oracle_pda: string;
   underlying_decimals: number;
   quote_decimals: number;
-  size_rule: {
-    min_size: number;
-    max_size: number;
-    step: number;
+  size_rule: {                       // decimal strings, underlying atoms
+    min_size: string;
+    max_size: string;
+    step: string;
   };
   underlying_symbol: string;
   quote_symbol: string;
