@@ -57,9 +57,9 @@ Before signing, validate the complete challenge with the [canonical auth rules](
 {
   "type": "AuthChallenge",
   "data": {
-    "challenge": "<from AuthRequest>",
-    "signature": "<base58 ed25519 signature>",
-    "pubkey": "<taker wallet pubkey, base58>"
+    "challenge": "Acta RFQ Authentication\n\nSign this message to authenticate your wallet.\n\nWallet: 5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84\nNonce: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nIssued At: 2024-03-09T12:00:00Z\n",
+    "signature": "5V994XKESUifbX9zQ5ydLfse5Mkghbnb9E1yPgwmmbq3UNj4rfunARGjRD2Qyxbhjt8CfKD3UesBhJ7PWuMqVovG",
+    "pubkey": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84"
   }
 }
 ```
@@ -71,7 +71,7 @@ The signature is verified directly against `pubkey`. Auth must finish within 15 
 `AuthSuccess.expires_at` is a Unix timestamp in seconds. Persist `session_id` and `expires_at`. On reconnect, if `now < expires_at`, skip the wallet signature:
 
 ```json
-{ "type": "ResumeAuth", "data": { "session_id": "<saved session_id>" } }
+{ "type": "ResumeAuth", "data": { "session_id": "60459575-ed18-48e7-a297-83f8491a67d3" } }
 ```
 
 A valid session returns `AuthSuccess`. An invalid, expired or revoked one returns `AuthError { reason: "session_expired", message }`, and you fall back to the fresh-sign flow. Sessions have a 24h default TTL (sliding, capped at 7 days) and survive disconnects. A failed `ResumeAuth` counts toward the three-attempt limit.
@@ -84,27 +84,33 @@ Fetch market metadata before opening an RFQ. `GetMarketDescriptors` returns the 
 {
   "type": "GetMarketDescriptors",
   "data": {
-    "request_id": "<uuid>",
+    "request_id": "d876b87a-cf5c-4a4b-a778-057ca6427e99",
     "limit": 200,
     "cursor": {
       "type": "start"
     }
   }
 }
+```
+
+```json
 {
   "type": "GetTokens",
   "data": {
-    "request_id": "<uuid>",
+    "request_id": "bdcca0b2-0709-4667-a8ca-c8df7bd52563",
     "limit": 200,
     "cursor": {
       "type": "start"
     }
   }
 }
+```
+
+```json
 {
   "type": "GetExpiries",
   "data": {
-    "request_id": "<uuid>",
+    "request_id": "12182418-8ef3-4e89-ad0e-b8f0dc3ff74c",
     "underlying_mint": {
       "type": "all"
     },
@@ -144,7 +150,7 @@ A market with no product on its side is not listed. An RFQ for a product that is
 ```
 RfqRequest -> RfqCreated -> QuoteReceived (0..N) -> AcceptQuote
   -> SponsoredTxToSign -> [sign] -> SubmitSignedSponsoredTx
-  -> OrderAccepted -> OrderSubmitted -> OrderConfirmed -> RfqClosed
+  -> OrderUpdate (accepted -> submitted -> confirmed) -> RfqUpdate closed
 ```
 
 ### 1. Open the RFQ
@@ -165,8 +171,8 @@ RfqRequest -> RfqCreated -> QuoteReceived (0..N) -> AcceptQuote
 {
   "type": "RfqRequest",
   "data": {
-    "request_id": "<uuid>",
-    "market_pda": "<market PDA, base58>",
+    "request_id": "c4c27c29-77a6-440f-ab30-f340e5d6f7be",
+    "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
     "terms": { "type": "covered_call", "strike": "136000000000" },
     "side": "sell",
     "quantity": "1000000000",
@@ -175,7 +181,9 @@ RfqRequest -> RfqCreated -> QuoteReceived (0..N) -> AcceptQuote
 }
 ```
 
-`request_id` is required and is also the idempotency key: a repeat with the same `request_id` while the RFQ is open fails with `duplicate_rfq_id`, which proves the first attempt created it; after the RFQ closes the same id opens a new one. The server answers with `CommandAccepted { request_id }` or `RequestError { request_id, error, delivery }`. On success it also sends `RfqCreated { rfq_id, rfq_version, terms, side, request_id, expires_at, created_at, order_options }`, before or after the receipt, and broadcasts the RFQ to eligible makers. `order_options` is the list of `terms` makers may quote. For a spread or cash put it holds exactly your `terms`. For a covered call or cash-secured put it is a strike ladder of the same product.
+`request_id` is required and is also the idempotency key; it is not the RFQ id. The server answers with `Reply { request_id, result }`: `accepted`, or `error { error, delivery }`. After `accepted` it sends `RfqCreated { rfq_id, rfq_version, terms, side, request_id, expires_at, created_at, order_options }`, where `rfq_id` is the server's id for the RFQ, and broadcasts the RFQ to eligible makers. `order_options` is the list of `terms` makers may quote. For a spread or cash put it holds exactly your `terms`. For a covered call or cash-secured put it is a strike ladder of the same product.
+
+Resending the same `request_id` creates nothing new: the server returns the same `RfqCreated`, followed by `RfqUpdate` `closed` if the RFQ already ended. It remembers the id while it retains the RFQ (`closed_rfq_ttl` after the close). An Active RFQ closes when your connection drops.
 
 ### 2. Collect quotes
 
@@ -185,14 +193,14 @@ Makers stream `QuoteReceived`. Each quote is firm and hash-bound through `order_
 {
   "type": "QuoteReceived",
   "data": {
-    "rfq_id": "<uuid>",
+    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "terms": { "type": "covered_call", "strike": "136000000000" },
     "side": "sell",
-    "maker_owner": "<maker owner pubkey, base58>",
+    "maker_owner": "A87ysNWAmmqQHafLSQGbYSLhtcV3BjXctR88EWuSobGP",
     "price": "50000000",
     "valid_until": 1710000350,
     "nonce": "42",
-    "order_id": "0x<64 hex>",
+    "order_id": "1111111111111111111111111111111111111111111111111111111111111111",
     "net_price": "49750000"
   }
 }
@@ -224,10 +232,10 @@ Name the winning quote by `order_id`:
 {
   "type": "AcceptQuote",
   "data": {
-    "request_id": "<uuid>",
-    "rfq_id": "<uuid>",
-    "maker_owner": "<maker owner pubkey, base58>",
-    "order_id": "0x<64 hex>"
+    "request_id": "9d1d8cdb-ca7d-40f9-aa7f-65198a1bdc46",
+    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
+    "maker_owner": "A87ysNWAmmqQHafLSQGbYSLhtcV3BjXctR88EWuSobGP",
+    "order_id": "1111111111111111111111111111111111111111111111111111111111111111"
   }
 }
 ```
@@ -238,7 +246,7 @@ The server locks the quote and builds a transaction to sign:
 {
   "type": "SponsoredTxToSign",
   "data": {
-    "order_id": "0x<64 hex>",
+    "order_id": "1111111111111111111111111111111111111111111111111111111111111111",
     "tx_base64": "<base64 v0 VersionedTransaction>",
     "last_valid_block_height": 312456789,
     "signature_deadline_at": 1710000040
@@ -257,11 +265,11 @@ The server locks the quote and builds a transaction to sign:
 ```json
 {
   "type": "SubmitSignedSponsoredTx",
-  "data": { "request_id": "<uuid>", "order_id": "0x<64 hex>", "tx_base64": "<signed, base64>" }
+  "data": { "request_id": "ee6d4571-8ba1-485e-a75c-6fd266371e2f", "order_id": "1111111111111111111111111111111111111111111111111111111111111111", "tx_base64": "<signed, base64>" }
 }
 ```
 
-`AcceptQuote` and `SubmitSignedSponsoredTx` are answered with `CommandAccepted` or `RequestError` carrying the same `request_id`. A failed submission also says `delivery`: `not_forwarded` (this request was not sent) or `unknown` (it may have been). Treat the order as not executed only if every submission you made returned `not_forwarded`; otherwise check `GetOrderStatus` first.
+`AcceptQuote` and `SubmitSignedSponsoredTx` are answered with a `Reply` (`accepted` or `error`) carrying the same `request_id`. A failed submission also says `delivery`: `not_forwarded` (this request was not sent) or `unknown` (it may have been). Treat the order as not executed only if every submission you made returned `not_forwarded`; otherwise check `GetOrderStatus` first.
 
 > The wallet must support versioned (v0) transaction signing. Browser wallets that only sign legacy transactions will not work. For headless and bot takers, sign the raw message bytes with the keypair directly (see below). If a wallet cannot sign arbitrary bytes at all, WebSocket auth also fails; use a server-side signer.
 
@@ -332,31 +340,31 @@ The data of `OpenPosition` is the discriminant, `position_type` (`u8`), then `st
 
 ### 4. Track the order
 
-The server relays keeper progress:
+The server relays keeper progress as `OrderUpdate { order_id, order_version, state }`:
 
 | Event | Meaning |
 |---|---|
-| `OrderAccepted` | Signed transaction accepted and queued for execution. An exact `AcceptQuote` retry may also receive it as a liveness ACK. It does not confirm chain execution. |
-| `OrderSubmitted` | Transaction sent to Solana. Carries `transaction_signature`, `order_version`. |
-| `OrderConfirmed` | Position opened on chain. Carries `position_pda`, `order_version`. |
-| `OrderFailed` | Execution failed. Carries `reason`, `order_version`. |
-| `RfqClosed` | Terminal RFQ event. On a fill it follows `OrderConfirmed`. Drop per-RFQ state only here. |
+| `OrderUpdate` `accepted` | Signed transaction accepted and queued for execution. An exact `AcceptQuote` retry may also receive it as a liveness ACK. It does not confirm chain execution. |
+| `OrderUpdate` `submitted` | Transaction sent to Solana. Carries `transaction_signature`. |
+| `OrderUpdate` `confirmed` | Position opened on chain. Carries `position_pda`. Final. |
+| `OrderUpdate` `failed` | The order did not execute and its transaction cannot land. Carries `reason`. Final. |
+| `RfqUpdate` | `available`: the selected order did not trade and the RFQ takes quotes again. `closed`: terminal RFQ event; on a fill it follows `OrderUpdate` `confirmed`. Drop per-RFQ state only on `closed`. |
 
-Apply updates only when `order_version` or `rfq_version` increases, and ignore stale replays.
+Drop an update only if its `order_version` or `rfq_version` is lower than the one you hold; equal versions apply.
 
 ### 5. Failure and retry
 
-`OrderFailed.reason` is a free-form diagnostic string, not an enum. Log it and show it, but do not branch on an exact match. No reason authorizes another trade. The keeper retries its own submission failures within five attempts, and a failure never proves rollback. Reconcile with `GetOrderStatus` and wait for `RfqAvailableAgain` or `RfqClosed`. Never replay the old order.
+A `failed` `reason` is a free-form diagnostic string, not an enum. Log it and show it, but do not branch on an exact match. No reason authorizes replaying the old order; take another quote or open a new RFQ. The keeper retries its own submission failures within five attempts and sends `failed` only when the transaction cannot land; an uncertain outcome sends nothing, so reconcile a silent order with `GetOrderStatus`.
 
-On a signature timeout or tx-build failure, only the winning quote is discarded. Still-valid losing quotes are restored, and the RFQ reverts to active if it has not expired.
+On a signature timeout or tx-build failure, the order gets `OrderUpdate` `failed` and the RFQ gets `RfqUpdate` `available`. Only the winning quote is discarded; still-valid losing quotes are restored.
 
 ## Cancelling
 
 ```json
-{ "type": "CancelRfq", "data": { "rfq_id": "<uuid>", "request_id": "<uuid>" } }
+{ "type": "CancelRfq", "data": { "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e", "request_id": "da768e65-a1f4-44e1-a0b6-53d2a5ae1815" } }
 ```
 
-Success has no `CommandAccepted`: the RFQ, active or awaiting your signature, closes with `RfqClosed { reason: "taker_cancelled" }`. Cancelling an RFQ of yours that is already closed gets no reply. A failure is a `RequestError` with the same `request_id`: `RfqNotFound`, or `Generic` `order_already_submitted` once your signed transaction is queued (resolve it with `GetOrderStatus`).
+The answer is one `Reply` with the same `request_id`. On success it is `accepted`, and the RFQ, active or awaiting your signature, closes with `RfqUpdate` `closed` and `reason: "taker_cancelled"`. An RFQ of yours that is already closed also gets `accepted`. A failure is a `Reply` `error`: `RfqNotFound`, or `Generic` `order_already_submitted` once your signed transaction is queued (resolve it with `GetOrderStatus`).
 
 ## Position lifecycle
 
@@ -384,7 +392,7 @@ Every position row carries `revision { slot, transaction_index, instruction_inde
 {
   "type": "GetPositions",
   "data": {
-    "request_id": "<uuid>",
+    "request_id": "bed38de1-c72c-4d2f-aa15-a91f54760313",
     "market_pda": {
       "type": "all"
     },
@@ -413,24 +421,30 @@ Subscriptions do not persist across disconnects, and the server does not replay 
 {
   "type": "GetMyActiveRfqs",
   "data": {
-    "request_id": "<uuid>",
+    "request_id": "be6a5250-d206-47c0-af23-67fae5769ff9",
     "limit": 200,
     "cursor": {
       "type": "start"
     }
   }
 }
+```
+
+```json
 {
   "type": "GetOrderStatus",
   "data": {
-    "request_id": "<uuid>",
-    "order_id": "0x<64 hex>"
+    "request_id": "8bf9b65c-ff7f-4e67-aa70-e9685d430762",
+    "order_id": "1111111111111111111111111111111111111111111111111111111111111111"
   }
 }
+```
+
+```json
 {
   "type": "GetPositions",
   "data": {
-    "request_id": "<uuid>",
+    "request_id": "ceb45eb9-8195-4778-af5d-3e91a001258d",
     "market_pda": {
       "type": "all"
     },
@@ -453,14 +467,14 @@ Lifecycle events can be redelivered after recovery. Process them idempotently by
 
 After `AuthSuccess`, reconcile `GetMyActiveRfqs`, `GetPositions` and `GetOrderStatus`. Only a successful resume of the same credential transfers ownership of an unfinished signature. For the same pending order whose signature was not sent, repeat the exact `AcceptQuote` to retrieve the signing payload. For a submitted or enqueued order, query status without replaying trading commands.
 
-`OrderStatus` carries `{ request_id, order_id, state }`, with `state` equal to `{ "type": "pending" }`, `{ "type": "confirmed", "position_pda": "..." }` or `{ "type": "unknown" }`. It has no `order_version`; versions apply to lifecycle pushes. `unknown`, missing positions and timeouts leave the outcome unresolved. See [Delivery and recovery](../reference/taker-api.md#delivery-and-recovery).
+`OrderStatus` carries `{ request_id, order_id, state }`, with `state` equal to `{ "type": "pending" }`, `{ "type": "confirmed", "position_pda": "..." }`, `{ "type": "expired" }` (never executed and never can) or `{ "type": "unknown" }`. It has no `order_version`; versions apply to lifecycle pushes. `unknown`, missing positions and timeouts leave the outcome unresolved. See [Delivery and recovery](../reference/taker-api.md#delivery-and-recovery).
 
 ## Invite gating (closed mainnet)
 
 On closed mainnet the server sends `RequireInvite` after auth if the wallet is not registered, and `RfqRequest` returns `InviteRequired` until an invite is redeemed:
 
 ```json
-{ "type": "RedeemInvite", "data": { "request_id": "<uuid>", "code": "abc123" } }
+{ "type": "RedeemInvite", "data": { "request_id": "7c84e1bc-7342-44d1-a3de-b22bf7eb3d8f", "code": "abc123" } }
 ```
 
 The authenticated session proves wallet ownership; no separate signature is needed. After redemption the taker receives a shareable `referral_code`. Devnet is open and needs no invite. Error codes (`invalid_code`, `code_exhausted`, `code_expired`, `code_disabled` and others) are in [`../reference/taker-api.md`](../reference/taker-api.md#invite-error-types).

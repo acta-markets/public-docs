@@ -1,6 +1,68 @@
 # Protocol changelog
 
-## Next (not deployed)
+## 2026-11-25
+
+Program instructions 82-85, `acta-maker-sdk` 0.13.1 and `@acta-markets/ts-sdk` 0.9.0, live on devnet.
+Breaking on the wire; the protocol string stays `1.0.0`, so an older client passes `Hello` and then
+fails on the first quote, RFQ or reply message.
+
+| Was | Now |
+|---|---|
+| `QuoteAcknowledged`, `QuoteBestStatus`, `QuoteOutbid` | `QuoteUpdate` `live { rfq_version, is_best, best_price }` |
+| `QuoteRefreshRequested` | `QuoteUpdate` `refresh_requested`; it ends the order |
+| `QuoteSelected`, `QuoteFilled`, `QuoteRejected`, `QuoteExpired` | `QuoteUpdate` `selected`, `filled` (no `expiry_ts`; read it from the market), `rejected`, `expired` |
+| A replace named the old order in the new `live` | The old order ends with `cancelled { reason: "replaced" }` at the same `rfq_version`, before the new `live` |
+| `QuoteRejected` ended the quote | `rejected` refuses one submission: it ends the order only if you have not seen it `live` or `selected` |
+| (none) | `QuoteUpdate` `released` (selected, did not trade) and `lost` (the RFQ closed without it) |
+| `RfqLocked`, `RfqAvailableAgain`, `RfqClosed` | `RfqUpdate { rfq_id, rfq_version, state }`, `state` `locked`, `available`, `closed`; `your_quote` is gone |
+| `CommandAccepted`, `CancelQuoteAck`, `CancelAllQuotesAck`, `RequestError`, `SubscribeAck`, `UnsubscribeAck`, `SwapQuoteResult`, `SwapSubmitResult` | `Reply { request_id, result }`, `result` `accepted`, `subscribed { channels }`, `unsubscribed { channels }`, `swap_quote`, `swap_submitted { execution_id }`, `error { error, delivery }` |
+| `QuoteCancelled`, and the cancel reply's `order_ids` | `QuoteUpdate` `cancelled { rfq_version, reason }` per order; a cancel's `Reply` is `accepted` |
+| `OrderAccepted`, `OrderSubmitted`, `OrderConfirmed`, `OrderFailed` | `OrderUpdate { order_id, order_version, state }`, `state` `accepted`, `submitted`, `confirmed`, `failed`; `confirmed` and `failed` end the order |
+| A bare `Error` when a selected order fell back (signature timeout, build failure) | `OrderUpdate` `failed { reason }`, then `RfqUpdate` `available` |
+| `CancelRfq` success sent no reply | `Reply` `accepted` |
+| `BatchQuotesAck` | none: each batched quote gets its own `QuoteUpdate` (`live` or `rejected`); an oversized batch gets one `Error` `batch_quotes_too_large` |
+| `Generic` `rate_limited` | `RateLimited { retry_after_ms }` |
+
+- Every order ends exactly once, with a terminal `QuoteUpdate`: any state but `live` and `selected`.
+  A `rejected` for an order you already saw `live` or `selected` is ignored.
+  `CancelAllQuotes` has no size cap.
+- `rfq_version` grows on every change to an RFQ's book. Book states of `QuoteUpdate`, `RfqUpdate`
+  and `GetMyQuotes` rows carry it; per RFQ keep the highest seen. One change can send several
+  messages at the same version: drop only lower versions. Same for `order_version`.
+- `QuoteCancelReason` is `requested`, `risk_check`, `maker_disconnected` or `replaced`.
+- `RfqRequest`: `request_id` only correlates; the server assigns `rfq_id`. A repeat returns the same
+  `RfqCreated` and, if the RFQ ended, its `RfqUpdate` `closed`, even while prices are unavailable.
+  The same `request_id` with different market, terms, side, quantity or timeout is rejected with
+  `duplicate_rfq_id`.
+- Quote reject reasons `rfq_locked`, `quote_locked`, `replaced_order_not_found`,
+  `invalid_valid_until`, `overloaded`. A vault buy `RfqRequest` is accepted. A full inbound queue rejects
+  the message it cannot queue and keeps the socket. Cancels have their own rate budget.
+- Vaults buy as taker. Delegate permission `BUY_FROM_MAKERS` (`1 << 7`); a sell needs
+  `OPEN_AS_WRITER`, a buy `BUY_FROM_MAKERS`, otherwise `vault_authorization_failed`.
+  `OpenPositionForVaultTakerBuy` (82) and `OpenSpreadForVaultTakerBuy` (83) buy from a Maker,
+  `OpenPositionBetweenVaultsTakerBuy` (84) and `OpenSpreadBetweenVaultsTakerBuy` (85) from another
+  vault. Account 1 of the between-vaults opens is `actor`.
+- HTTP: `/vaults/{pda}` carries `next_capital_step`; `GET /vaults/{pda}/positions/{position}`
+  returns the vault's side of one position.
+- HTTP: `GET /tokens/{mint}/markets` and `GET /earn-summary` serve `TokenMarketsInfo` and `EarnSummary`
+  without `request_id`. A 503 on `/tokens/{mint}/markets` concerns only that token.
+- TS SDK: `tradeRfq` runs one taker trade to `filled`, `not_traded` or `unknown`; `reconcileTrade`
+  resolves `unknown`.
+- A Vault grant change ends the session: `Error vault_session_invalidated`, then close 4007
+  `vault_session_invalidated`; the session's quotes are cancelled. Authenticate again.
+- `GetOrderStatus` adds `expired`: the order never executed and never can. Without that proof the
+  answer stays `unknown`.
+- After submit, `OrderUpdate` `failed` means the transaction cannot land; an uncertain outcome sends
+  nothing.
+
+### SDK compatibility
+
+| Server | `acta-maker-sdk` | `@acta-markets/ts-sdk` |
+|---|---|---|
+| Before 2026-11-25 | 0.12.0 | 0.8.2 |
+| From 2026-11-25 | 0.13.1 | 0.9.0 |
+
+## 2026-11-16
 
 Program instruction `WithdrawFundsFromPosition` (discriminant 81) and `@acta-markets/ts-sdk`
 0.8.1–0.8.2. Additive: no wire change.

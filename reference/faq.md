@@ -10,7 +10,7 @@ Integration questions and protocol-level errors.
 
 Resume restores server-side subscriptions; fresh authentication requires establishing them again. The managed SDK reconciles its desired target on either path. After reconnect, apply `GetMyQuotes` with `scope: { "type": "live" }` and use `GetOrderStatus` for unresolved orders. An empty quote or position list is not proof of nonexecution. See [cancellation semantics](maker-api.md#cancelallquotes-maker---server).
 
-Events in flight during disconnect can be delivered again after recovery, for example a `QuoteAcknowledged` or `QuoteFilled` already processed before the disconnect. Treat lifecycle events as idempotent by `order_id`.
+Events in flight during disconnect can be delivered again after recovery, for example a `QuoteUpdate` `live` or `filled` already processed before the disconnect. A `GetMyQuotes` snapshot and a push can arrive in either order: per RFQ keep the highest `rfq_version` seen and drop anything older. Each order ends exactly once, with a terminal `QuoteUpdate`; treat a second terminal for the same `order_id` as a duplicate.
 
 ### Can multiple maker bots share a single key?
 
@@ -18,14 +18,13 @@ No. Each maker pubkey gets one quote WebSocket on `/maker`. A second replaces th
 
 ### Why was a quote rejected?
 
-`QuoteRejected.reason` identifies the cause. Common values:
+`QuoteUpdate` with state `rejected` carries `reason`, which identifies the cause. Common values:
 
 | Reason | Meaning |
 |---|---|
 | `invalid_strike` | The strike is not in the RFQ's `order_options` set. |
 | `order_id_mismatch` | The submitted `order_id` does not equal the SHA-256 of the order preimage (182 bytes for covered calls and cash-secured puts, 190 bytes for spreads and cash puts). See [Troubleshooting](#troubleshooting). |
 | `product_not_allowed` | The pair policy is absent or does not allow the product. |
-| `taker_buy_unsupported` | `RfqRequest` with `side: "buy"` from a vault session. A vault writes buys only by quoting them. |
 | `spread_invalid_strikes`, `spread_tick_violation`, `spread_premium_invalid` | The spread strikes, strike tick or gross price are invalid. See the [error codes](ws-common.md#ws-error-codes). |
 | `quote_identity_mismatch` | The quote `terms` or `side` differ from the RFQ. |
 | `quote_expiry_too_short` | `valid_until < now + min_quote_validity_seconds` (`GET /api/v1/venue`). |

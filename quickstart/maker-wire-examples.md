@@ -79,7 +79,7 @@ Validate the complete [canonical challenge](../reference/ws-common.md#what-to-si
   "type": "AuthChallenge",
   "data": {
     "challenge": "Acta RFQ Authentication\n\nSign this message to authenticate your wallet.\n\nNonce: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nIssued At: 2024-03-09T12:00:00Z\n",
-    "signature": "<base58 ed25519 signature>",
+    "signature": "5V994XKESUifbX9zQ5ydLfse5Mkghbnb9E1yPgwmmbq3UNj4rfunARGjRD2Qyxbhjt8CfKD3UesBhJ7PWuMqVovG",
     "pubkey": "A87ysNWAmmqQHafLSQGbYSLhtcV3BjXctR88EWuSobGP"
   }
 }
@@ -148,14 +148,14 @@ The server verifies the signature by `quote_signing` key.
 }
 ```
 
-`products` must be nonempty. `[]` in a mint list means every mint. The ack lists the channels added by this request:
+`products` must be nonempty. `[]` in a mint list means every mint. The `Reply` lists the channels added by this request:
 
 ```json
 {
-  "type": "SubscribeAck",
+  "type": "Reply",
   "data": {
     "request_id": "a1b2c3d4-e5f6-4890-abcd-ef1234567890",
-    "subscribed": ["rfqs"]
+    "result": { "type": "subscribed", "channels": ["rfqs"] }
   }
 }
 ```
@@ -192,7 +192,7 @@ The server verifies the signature by `quote_signing` key.
 }
 ```
 
-### 7) Quote -> QuoteAcknowledged -> QuoteSelected
+### 7) Quote -> QuoteUpdate live -> selected
 
 `valid_until` is at least `expires_at + min_quote_validity_seconds`, here `1710000050 + 60 = 1710000110`. The quote uses `1710000120`. Its trading cutoff is `valid_until - settlement_buffer_seconds = 1710000070`. Selection at `1710000010` gives the 30-second signature deadline shown below.
 
@@ -206,8 +206,8 @@ The server verifies the signature by `quote_signing` key.
     "price": "5000000000",
     "valid_until": 1710000120,
     "nonce": "42",
-    "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-    "signature": "<base58 ed25519 signature of order_id>"
+    "order_id": "9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "signature": "5ACJRnXT6rB2MKNMHAmf4q2u7hDfZgGw5jTtcznzJpQtgGb6S7FutRovj21ysRN1UXQsPA7eBXxNq7EoLvsXDcLj"
   }
 }
 ```
@@ -216,91 +216,107 @@ The server verifies the signature by `quote_signing` key.
 
 ```json
 {
-  "type": "QuoteAcknowledged",
+  "type": "QuoteUpdate",
   "data": {
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-    "replaced": {
-      "type": "none"
+    "order_id": "9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "state": {
+      "type": "live",
+      "rfq_version": 2,
+      "is_best": true,
+      "best_price": {
+        "type": "quoted",
+        "price": "5000000000"
+      }
     }
   }
 }
 ```
 
-```json
-{
-  "type": "QuoteSelected",
-  "data": {
-    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-    "taker_owner": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
-    "price": "5000000000",
-    "quantity": "1000000000",
-    "terms": { "type": "covered_call", "strike": "160000000000" },
-    "side": "sell",
-    "signature_deadline_at": 1710000040
-  }
-}
-```
-
-### 8) RfqClosed
+`live` repeats on every rank change. Selection:
 
 ```json
 {
-  "type": "RfqClosed",
+  "type": "QuoteUpdate",
   "data": {
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "rfq_version": 3,
-    "reason": "filled",
-    "your_quote": {
-      "type": "quoted",
-      "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-      "status": "filled",
-      "price": "5000000000"
-    },
-    "winner": {
-      "type": "winner",
-      "maker_owner": "A87ysNWAmmqQHafLSQGbYSLhtcV3BjXctR88EWuSobGP",
+    "order_id": "9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "state": {
+      "type": "selected",
+      "rfq_version": 3,
+      "taker_owner": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
       "price": "5000000000",
-      "transaction": {
-        "type": "sent",
-        "signature": "<base58 transaction signature>"
-      }
-    },
-    "closed_at": 1710000042
+      "quantity": "1000000000",
+      "terms": {
+        "type": "covered_call",
+        "strike": "160000000000"
+      },
+      "side": "sell",
+      "signature_deadline_at": 1710000040
+    }
   }
 }
 ```
 
-`your_quote` and `winner` are always present. On a fill every recipient gets `winner`, and the session that won gets `your_quote.status` `filled`. See [RfqClosed](../reference/maker-api.md#rfqclosed-server---maker) for the other cases.
-
-### 9) QuoteFilled
+### 8) RfqUpdate closed
 
 ```json
 {
-  "type": "QuoteFilled",
+  "type": "RfqUpdate",
   "data": {
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-    "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
-    "expiry_ts": 1710600000,
-    "terms": { "type": "covered_call", "strike": "160000000000" },
-    "side": "sell",
-    "taker_owner": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
-    "price": "5000000000",
-    "quantity": "1000000000",
-    "position_pda": "75NqraLLofiLUpNQg2wUPG6CJpxcaGEZUwuNrnAgvcTP",
-    "transaction_signature": "<base58 transaction signature>",
-    "filled_at": 1710000042
+    "rfq_version": 5,
+    "state": {
+      "type": "closed",
+      "reason": "filled",
+      "winner": {
+        "type": "winner",
+        "maker_owner": "A87ysNWAmmqQHafLSQGbYSLhtcV3BjXctR88EWuSobGP",
+        "price": "5000000000",
+        "transaction": {
+          "type": "sent",
+          "signature": "ZzRPR6pWiL3B77tGitQFve4G2s431KhVgF1Z14vdHUMSqVFPuyCT2Bx4iK7ofDAj41hGHJhf9qAaYiR5qD5b25S"
+        }
+      },
+      "at": 1710000042
+    }
   }
 }
 ```
 
-`RfqClosed` is the terminal RFQ event for maker-side state.
-For successful fills, the winning maker receives `RfqClosed`, then `QuoteFilled`.
-`QuoteFilled` is the fill-details event; RFQ closure should still be keyed by `RfqClosed`.
+Every participant gets the same close. It ends the RFQ, not your orders: each order ends with its own `QuoteUpdate`. See [RfqUpdate](../reference/maker-api.md#rfqupdate-server---maker).
 
-`QuoteFilled` is the fill fact: it carries `price` and `quantity`, with no fee or net-premium field. The authoritative net premium is `total_premium` on the `PositionUpdated` row:
+### 9) QuoteUpdate filled
+
+```json
+{
+  "type": "QuoteUpdate",
+  "data": {
+    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
+    "order_id": "9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "state": {
+      "type": "filled",
+      "rfq_version": 5,
+      "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+      "terms": {
+        "type": "covered_call",
+        "strike": "160000000000"
+      },
+      "side": "sell",
+      "taker_owner": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
+      "price": "5000000000",
+      "quantity": "1000000000",
+      "position_pda": "75NqraLLofiLUpNQg2wUPG6CJpxcaGEZUwuNrnAgvcTP",
+      "transaction_signature": "ZzRPR6pWiL3B77tGitQFve4G2s431KhVgF1Z14vdHUMSqVFPuyCT2Bx4iK7ofDAj41hGHJhf9qAaYiR5qD5b25S",
+      "filled_at": 1710000042
+    }
+  }
+}
+```
+
+The winning maker receives `RfqUpdate` `closed`, then `QuoteUpdate` `filled`, which ends the order.
+
+`filled` is the fill fact: it carries `price` and `quantity`, with no fee or net-premium field. The authoritative net premium is `total_premium` on the `PositionUpdated` row:
 
 ```json
 {
@@ -342,7 +358,7 @@ For successful fills, the winning maker receives `RfqClosed`, then `QuoteFilled`
 }
 ```
 
-With a premium fee of 50 bps and a volume fee of 10 bps, the gross premium is 5000000 quote atoms. The premium fee is 25000 and the volume fee is 160000. The protocol fee is the smaller one, so `total_premium` is `5000000 - 25000 = 4975000`, which is what the taker received. The maker's cost is the gross `5000000`, and the fee is `5000000 - 4975000 = 25000`. Apply the row only if its `revision` is newer than the stored one for the same `pda`. To have the amounts before the row arrives, compute them locally as described under [QuoteFilled](../reference/maker-api.md#quotefilled-server---maker).
+With a premium fee of 50 bps and a volume fee of 10 bps, the gross premium is 5000000 quote atoms. The premium fee is 25000 and the volume fee is 160000. The protocol fee is the smaller one, so `total_premium` is `5000000 - 25000 = 4975000`, which is what the taker received. The maker's cost is the gross `5000000`, and the fee is `5000000 - 4975000 = 25000`. Apply the row only if its `revision` is newer than the stored one for the same `pda`. To have the amounts before the row arrives, compute them locally as described under [Cash settlement and fees](../reference/maker-api.md#cash-settlement-and-fees).
 
 ## Spread session
 
@@ -387,8 +403,8 @@ A spread or cash-put RFQ carries its strikes in `terms`. The quote repeats them 
     "price": "5000000000",
     "valid_until": 1799999900,
     "nonce": "999",
-    "order_id": "0x0101010101010101010101010101010101010101010101010101010101010101",
-    "signature": "<base58 ed25519 signature of order_id>"
+    "order_id": "0101010101010101010101010101010101010101010101010101010101010101",
+    "signature": "5ACJRnXT6rB2MKNMHAmf4q2u7hDfZgGw5jTtcznzJpQtgGb6S7FutRovj21ysRN1UXQsPA7eBXxNq7EoLvsXDcLj"
   }
 }
 ```
@@ -452,12 +468,15 @@ A spread quote the venue refuses carries a specific reason:
 
 ```json
 {
-  "type": "QuoteRejected",
+  "type": "QuoteUpdate",
   "data": {
     "rfq_id": "00000000-0000-0000-0000-000000000001",
-    "order_id": "0x0101010101010101010101010101010101010101010101010101010101010101",
-    "reason": "spread_premium_invalid",
-    "message": "gross premium must be positive and below width liability"
+    "order_id": "0101010101010101010101010101010101010101010101010101010101010101",
+    "state": {
+      "type": "rejected",
+      "reason": "spread_premium_invalid",
+      "message": "gross premium must be positive and below width liability"
+    }
   }
 }
 ```
@@ -466,22 +485,32 @@ A `buy` side arrives only on the `taker_buy_rfqs` channel, and the maker writes 
 
 ## Additional scenarios
 
-### QuoteRefreshRequested
+### QuoteUpdate refresh_requested
 
 If the quote remains active instead of being selected, the refresh timer fires at `valid_until - settlement_buffer_seconds - quote_refresh_lead_seconds`. With a 10-second lead that is `1710000120 - 50 - 10 = 1710000060`. The minimum new validity is that time plus the 50-second buffer, the 10-second lead and one second.
 
 ```json
 {
-  "type": "QuoteRefreshRequested",
+  "type": "QuoteUpdate",
   "data": {
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "terms": { "type": "covered_call", "strike": "160000000000" },
-    "side": "sell",
-    "min_valid_until": 1710000121,
-    "reason": "expiring_soon"
+    "order_id": "9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "state": {
+      "type": "refresh_requested",
+      "rfq_version": 4,
+      "terms": {
+        "type": "covered_call",
+        "strike": "160000000000"
+      },
+      "side": "sell",
+      "min_valid_until": 1710000121,
+      "reason": "expiring_soon"
+    }
   }
 }
 ```
+
+This ends the order. To stay in the RFQ, sign a new quote with a fresh `nonce` and `order_id` and `valid_until >= min_valid_until`.
 
 ### Reconcile after reconnect
 
@@ -548,6 +577,9 @@ Then read the open RFQs and the live quotes:
     }
   }
 }
+```
+
+```json
 {
   "type": "GetMyQuotes",
   "data": {
@@ -687,7 +719,7 @@ Send `GetOrderStatus` for one unfinished order and wait for its response before 
   "type": "GetOrderStatus",
   "data": {
     "request_id": "a1b2c3d4-0000-4000-8000-000000000021",
-    "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"
+    "order_id": "9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"
   }
 }
 ```
@@ -697,29 +729,31 @@ Send `GetOrderStatus` for one unfinished order and wait for its response before 
   "type": "OrderStatus",
   "data": {
     "request_id": "a1b2c3d4-0000-4000-8000-000000000021",
-    "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "order_id": "9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
     "state": { "type": "confirmed", "position_pda": "75NqraLLofiLUpNQg2wUPG6CJpxcaGEZUwuNrnAgvcTP" }
   }
 }
 ```
 
-`state` is `pending`, `confirmed` with `position_pda`, or `unknown`. `unknown` does not prove that the order did not execute. Keep it as an open obligation.
+`state` is `pending`, `confirmed` with `position_pda`, `expired`, or `unknown`. `expired` proves the order never executed and never can. `unknown` does not prove that the order did not execute. Keep it as an open obligation.
 
-A rejected request comes back as a `RequestError`. Stop the loop at the first one:
+A rejected request comes back as a `Reply` `error`. Stop the loop at the first one and send again after `retry_after_ms`:
 
 ```json
 {
-  "type": "RequestError",
+  "type": "Reply",
   "data": {
     "request_id": "a1b2c3d4-0000-4000-8000-000000000022",
-    "error": {
-      "type": "Generic",
-      "data": {
-        "code": "rate_limited",
-        "message": "query rate limit exceeded"
-      }
-    },
-    "delivery": "not_applicable"
+    "result": {
+      "type": "error",
+      "error": {
+        "type": "RateLimited",
+        "data": {
+          "retry_after_ms": 50
+        }
+      },
+      "delivery": "not_applicable"
+    }
   }
 }
 ```
@@ -766,7 +800,7 @@ Response:
         "taker_owner": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
         "quantity": "1000000000",
         "price": "5000000000",
-        "transaction_signature": "<base58 transaction signature>",
+        "transaction_signature": "ZzRPR6pWiL3B77tGitQFve4G2s431KhVgF1Z14vdHUMSqVFPuyCT2Bx4iK7ofDAj41hGHJhf9qAaYiR5qD5b25S",
         "position": {
           "type": "confirmed",
           "position_pda": "75NqraLLofiLUpNQg2wUPG6CJpxcaGEZUwuNrnAgvcTP"
@@ -823,17 +857,20 @@ Normal SDK list calls collect all pages through one helper. Live quotes and cata
 
 ```json
 {
-  "type": "RequestError",
+  "type": "Reply",
   "data": {
     "request_id": "a1b2c3d4-0000-4000-8000-000000000042",
-    "error": {
-      "type": "Generic",
-      "data": {
-        "code": "invalid_limit",
-        "message": "limit must be within 1..=200"
-      }
-    },
-    "delivery": "not_applicable"
+    "result": {
+      "type": "error",
+      "error": {
+        "type": "Generic",
+        "data": {
+          "code": "invalid_limit",
+          "message": "limit must be within 1..=200"
+        }
+      },
+      "delivery": "not_applicable"
+    }
   }
 }
 ```
@@ -844,20 +881,64 @@ Normal SDK list calls collect all pages through one helper. Live quotes and cata
 {
   "type": "ReplaceQuote",
   "data": {
-    "replaced_order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "replaced_order_id": "9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "terms": { "type": "covered_call", "strike": "160000000000" },
     "side": "sell",
     "price": "5500000000",
     "valid_until": 1710000120,
     "nonce": "43",
-    "order_id": "0xb2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3",
-    "signature": "<base58 ed25519 signature of order_id>"
+    "order_id": "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3",
+    "signature": "5ACJRnXT6rB2MKNMHAmf4q2u7hDfZgGw5jTtcznzJpQtgGb6S7FutRovj21ysRN1UXQsPA7eBXxNq7EoLvsXDcLj"
   }
 }
 ```
 
-On success the server answers with `QuoteAcknowledged` carrying `replaced`.
+On success the old order ends first, then the new order gets `live`, both at the same `rfq_version`:
+
+```json
+{
+  "type": "QuoteUpdate",
+  "data": {
+    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
+    "order_id": "9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "state": { "type": "cancelled", "rfq_version": 4, "reason": "replaced" }
+  }
+}
+```
+
+```json
+{
+  "type": "QuoteUpdate",
+  "data": {
+    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
+    "order_id": "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3",
+    "state": {
+      "type": "live",
+      "rfq_version": 4,
+      "is_best": true,
+      "best_price": { "type": "quoted", "price": "5500000000" }
+    }
+  }
+}
+```
+
+An `order_id` the server already knows is rejected for this submission; if you already hold that order live or selected, it keeps its state:
+
+```json
+{
+  "type": "QuoteUpdate",
+  "data": {
+    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
+    "order_id": "9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "state": {
+      "type": "rejected",
+      "reason": "duplicate_order_id",
+      "message": "order_id already belongs to a known order"
+    }
+  }
+}
+```
 
 ### BatchQuotes
 
@@ -873,8 +954,8 @@ On success the server answers with `QuoteAcknowledged` carrying `replaced`.
         "price": "4500000000",
         "valid_until": 1710000120,
         "nonce": "44",
-        "order_id": "0xaaaa2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-        "signature": "<base58 ed25519 signature of order_id>"
+        "order_id": "aaaa2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+        "signature": "5ACJRnXT6rB2MKNMHAmf4q2u7hDfZgGw5jTtcznzJpQtgGb6S7FutRovj21ysRN1UXQsPA7eBXxNq7EoLvsXDcLj"
       },
       {
         "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
@@ -883,66 +964,41 @@ On success the server answers with `QuoteAcknowledged` carrying `replaced`.
         "price": "5000000000",
         "valid_until": 1710000120,
         "nonce": "45",
-        "order_id": "0xbbbb2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-        "signature": "<base58 ed25519 signature of order_id>"
+        "order_id": "bbbb2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+        "signature": "5ACJRnXT6rB2MKNMHAmf4q2u7hDfZgGw5jTtcznzJpQtgGb6S7FutRovj21ysRN1UXQsPA7eBXxNq7EoLvsXDcLj"
       }
     ]
   }
 }
 ```
 
-The ack has one tagged result per quote. Correlate by `order_id`:
+There is no batch-level answer: each quote gets its own `QuoteUpdate`, `live` or `rejected`, exactly as if sent alone. Correlate by `order_id`.
+
+### QuoteUpdate rejected
 
 ```json
 {
-  "type": "BatchQuotesAck",
+  "type": "QuoteUpdate",
   "data": {
-    "results": [
-      {
-        "status": "acknowledged",
-        "data": {
-          "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-          "order_id": "0xaaaa2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-          "replaced": {
-            "type": "none"
+    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
+    "order_id": "9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "state": {
+      "type": "rejected",
+      "reason": {
+        "cap_exceeded": {
+          "maker_position_cap_exceeded": {
+            "current": 3,
+            "limit": 3
           }
         }
       },
-      {
-        "status": "rejected",
-        "data": {
-          "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-          "order_id": "0xbbbb2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-          "reason": "rate_limited",
-          "message": "quote rate limit exceeded"
-        }
-      }
-    ]
+      "message": "Maker position cap exceeded (3/3)"
+    }
   }
 }
 ```
 
-### QuoteRejected
-
-```json
-{
-  "type": "QuoteRejected",
-  "data": {
-    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-    "reason": {
-      "cap_exceeded": {
-        "token_oi_cap_exceeded": {
-          "underlying_mint": "So11111111111111111111111111111111111111112",
-          "current": "1000000000000",
-          "limit": "1000000000000"
-        }
-      }
-    },
-    "message": "Token OI cap exceeded for So11111111111111111111111111111111111111112 (1000000000000/1000000000000)"
-  }
-}
-```
+The server reserves capacity for every live quote, so a quote beyond your balance or limits is refused here, not at fill. `rejected` refuses this submission and carries no `rfq_version`.
 
 ### RfqSkipped
 
@@ -990,66 +1046,58 @@ The caps filter runs before broadcast and knows no premium, so `required` is `0`
 
 A refusal is `{ "type": "rejected", "cap_detail": <CapError> }`.
 
-### CancelAllQuotesAck
+### Reply to CancelAllQuotes
 
 ```json
 {
-  "type": "CancelAllQuotesAck",
+  "type": "Reply",
   "data": {
     "request_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    "cancelled_count": 0,
-    "cancelled_order_ids": []
+    "result": { "type": "accepted" }
   }
 }
 ```
 
-`CancelAllQuotesAck` is sent after the server applied the cancel. This example means no orders were removed, not merely that the command was queued. Selected/executing obligations may remain. The receipt is correlated by `request_id`; lifecycle `QuoteCancelled` messages do not replace it.
+Sent after the server applied the cancel. Every order it removed ends with its own `QuoteUpdate` `cancelled`, `reason` `requested`; none means no orders were removed, not merely that the command was queued. Selected/executing obligations may remain.
 
-### QuoteBestStatus
+### QuoteUpdate live (rank change)
 
 ```json
 {
-  "type": "QuoteBestStatus",
+  "type": "QuoteUpdate",
   "data": {
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-    "is_best": true,
-    "current_best_price": {
-      "type": "quoted",
-      "price": "5000000000"
+    "order_id": "9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "state": {
+      "type": "live",
+      "rfq_version": 3,
+      "is_best": false,
+      "best_price": {
+        "type": "quoted",
+        "price": "5500000000"
+      }
     }
   }
 }
 ```
 
-### QuoteOutbid
+Another maker now has the best price. A repeat `live` is a new rank, not a new quote.
+
+
+
+### QuoteUpdate expired
 
 ```json
 {
-  "type": "QuoteOutbid",
+  "type": "QuoteUpdate",
   "data": {
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-    "your_price": "5000000000",
-    "current_best_price": {
-      "type": "quoted",
-      "price": "5500000000"
+    "order_id": "9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "state": {
+      "type": "expired",
+      "rfq_version": 4,
+      "reason": "expired"
     }
-  }
-}
-```
-
-### QuoteExpired
-
-Always sent when a quote expires.
-
-```json
-{
-  "type": "QuoteExpired",
-  "data": {
-    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-    "reason": "expired"
   }
 }
 ```
@@ -1062,6 +1110,27 @@ Always sent when a quote expires.
   "data": {
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "request_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+  }
+}
+```
+
+```json
+{
+  "type": "Reply",
+  "data": {
+    "request_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "result": { "type": "accepted" }
+  }
+}
+```
+
+```json
+{
+  "type": "QuoteUpdate",
+  "data": {
+    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
+    "order_id": "9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "state": { "type": "cancelled", "rfq_version": 5, "reason": "requested" }
   }
 }
 ```
@@ -1080,95 +1149,145 @@ Always sent when a quote expires.
 
 For every market, send `"market_pda": { "type": "all" }`.
 
-### QuoteCancelled
+### QuoteUpdate cancelled (server-initiated)
 
 ```json
 {
-  "type": "QuoteCancelled",
+  "type": "QuoteUpdate",
   "data": {
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "order_ids": ["0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"],
-    "reason": "requested",
-    "cancelled_at": 1710000025
+    "order_id": "9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "state": { "type": "cancelled", "rfq_version": 5, "reason": "risk_check" }
   }
 }
 ```
 
-### RfqLocked
+The same state your own cancel produces, with the server's reason (`risk_check`, `maker_disconnected`).
+
+### RfqUpdate locked
 
 ```json
 {
-  "type": "RfqLocked",
-  "data": {
-    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "rfq_version": 2,
-    "locked_at": 1710000030
-  }
-}
-```
-
-### RfqAvailableAgain
-
-```json
-{
-  "type": "RfqAvailableAgain",
-  "data": {
-    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "rfq_version": 2,
-    "reason": "signature_timeout",
-    "available_again_at": 1710000045
-  }
-}
-```
-
-### RfqClosed (expired, no fill)
-
-```json
-{
-  "type": "RfqClosed",
-  "data": {
-    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "rfq_version": 2,
-    "reason": "expired",
-    "your_quote": {
-      "type": "quoted",
-      "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-      "status": "expired",
-      "price": "5000000000"
-    },
-    "winner": {
-      "type": "none"
-    },
-    "closed_at": 1710000050
-  }
-}
-```
-
-### RfqClosed (filled, maker lost)
-
-```json
-{
-  "type": "RfqClosed",
+  "type": "RfqUpdate",
   "data": {
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "rfq_version": 3,
-    "reason": "filled",
-    "your_quote": {
-      "type": "quoted",
-      "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-      "status": "outbid",
-      "price": "5000000000"
-    },
-    "winner": {
-      "type": "winner",
-      "maker_owner": "A87ysNWAmmqQHafLSQGbYSLhtcV3BjXctR88EWuSobGP",
-      "price": "5500000000",
-      "transaction": {
-        "type": "sent",
-        "signature": "<base58 transaction signature>"
-      }
-    },
-    "closed_at": 1710000042
+    "state": {
+      "type": "locked",
+      "at": 1710000030
+    }
+  }
+}
+```
+
+### RfqUpdate available
+
+```json
+{
+  "type": "RfqUpdate",
+  "data": {
+    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
+    "rfq_version": 4,
+    "state": {
+      "type": "available",
+      "reason": "signature_timeout",
+      "at": 1710000045
+    }
+  }
+}
+```
+
+The selected order itself ends with:
+
+```json
+{
+  "type": "QuoteUpdate",
+  "data": {
+    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
+    "order_id": "9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "state": {
+      "type": "released",
+      "rfq_version": 4,
+      "reason": "signature_timeout"
+    }
+  }
+}
+```
+
+### RfqUpdate closed (expired, no fill)
+
+```json
+{
+  "type": "RfqUpdate",
+  "data": {
+    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
+    "rfq_version": 5,
+    "state": {
+      "type": "closed",
+      "reason": "expired",
+      "winner": {
+        "type": "none"
+      },
+      "at": 1710000050
+    }
+  }
+}
+```
+
+Each of your orders still in the book ends with:
+
+```json
+{
+  "type": "QuoteUpdate",
+  "data": {
+    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
+    "order_id": "9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "state": {
+      "type": "lost",
+      "rfq_version": 5,
+      "reason": "expired"
+    }
+  }
+}
+```
+
+### RfqUpdate closed (filled, maker lost)
+
+```json
+{
+  "type": "RfqUpdate",
+  "data": {
+    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
+    "rfq_version": 6,
+    "state": {
+      "type": "closed",
+      "reason": "filled",
+      "winner": {
+        "type": "winner",
+        "maker_owner": "A87ysNWAmmqQHafLSQGbYSLhtcV3BjXctR88EWuSobGP",
+        "price": "5500000000",
+        "transaction": {
+          "type": "sent",
+          "signature": "ZzRPR6pWiL3B77tGitQFve4G2s431KhVgF1Z14vdHUMSqVFPuyCT2Bx4iK7ofDAj41hGHJhf9qAaYiR5qD5b25S"
+        }
+      },
+      "at": 1710000042
+    }
+  }
+}
+```
+
+```json
+{
+  "type": "QuoteUpdate",
+  "data": {
+    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
+    "order_id": "9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "state": {
+      "type": "lost",
+      "rfq_version": 6,
+      "reason": "filled"
+    }
   }
 }
 ```

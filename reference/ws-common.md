@@ -59,11 +59,11 @@ Address fields are named by what they hold:
 |-------|-------|-------|
 | Market PDA | `market_pda` | Every message and query filter that references a market by address |
 | Market descriptor (object) | `market_descriptor` | `RfqBroadcast`, `IndicativePricesRequest`, `MarketDescriptorInfo`; the address is `market_descriptor.market_pda` |
-| Maker owner wallet | `maker_owner` | Quote messages (`QuoteReceived`, `QuotesUpdate`, `AcceptQuote`, `RfqClosed.winner`) and `MakerRegistered` |
+| Maker owner wallet | `maker_owner` | Quote messages (`QuoteReceived`, `QuotesUpdate`, `AcceptQuote`, `RfqUpdate` `closed.winner`) and `MakerRegistered` |
 | Maker PDA | `maker_pda` | Trades and chain events: `TradeInfo`, `PositionOpened`, `MakerRegistered`, `MmSummary`, `AuthSuccess.role` |
 | Vault PDA | `vault_pda` | Vault messages and every HTTP vault route |
 | Counterparty wallet | `counterparty_owner` | HTTP vault positions |
-| Position PDA | `position_pda` | `QuoteFilled`, `OrderConfirmed`, `PositionSettled`, `PositionLiquidated` |
+| Position PDA | `position_pda` | `QuoteUpdate` `filled`, `OrderUpdate` `confirmed`, `PositionSettled`, `PositionLiquidated` |
 | Mint | `underlying_mint`, `quote_mint` | `MarketInfo`, positions, caps, filters |
 | Own address of a record | `pda` | `MarketInfo`, `PositionInfo` |
 
@@ -173,7 +173,7 @@ for changes every second.
 ```json
 {
   "type": "ReferenceChanged",
-  "data": { "tokens_etag": "\"3f2a...\"", "markets_etag": "\"9b1c...\"" }
+  "data": { "tokens_etag": "\"3f2a9c1e\"", "markets_etag": "\"9b1c4d7a\"" }
 }
 ```
 
@@ -194,7 +194,7 @@ dropped and the server closes the connection, and nothing sent while you were di
 redelivered. Re-list vaults after every connect and reconnect as well as on this message.
 
 ```json
-{ "type": "VaultCatalogChanged", "data": { "vault_pda": "VaultPdaBase58" } }
+{ "type": "VaultCatalogChanged", "data": { "vault_pda": "BrzbURisaiBieZvzBQYGyjwVSFZdsMU7TscaqcAjqKue" } }
 ```
 
 ### VaultProjectionAdvanced
@@ -210,11 +210,11 @@ follows the same drop-and-disconnect rule as `VaultCatalogChanged`.
 {
   "type": "VaultProjectionAdvanced",
   "data": {
-    "vault_pda": "VaultPdaBase58",
+    "vault_pda": "BrzbURisaiBieZvzBQYGyjwVSFZdsMU7TscaqcAjqKue",
     "version": 42,
     "slot": 312345678,
     "transaction_index": 3,
-    "signature": "TxSignatureBase58",
+    "signature": "ZzRPR6pWiL3B77tGitQFve4G2s431KhVgF1Z14vdHUMSqVFPuyCT2Bx4iK7ofDAj41hGHJhf9qAaYiR5qD5b25S",
     "event_index": 1
   }
 }
@@ -361,9 +361,9 @@ Rust SDK (`acta-maker-sdk` 0.10.0) and TS SDK (`@acta-markets/ts-sdk` 0.7.0) val
 {
   "type": "AuthChallenge",
   "data": {
-    "challenge": "Acta RFQ Authentication\n\nSign this message...",
-    "signature": "3q7uQqYc3...base58sig",
-    "pubkey": "PubkeyBase58"
+    "challenge": "Acta RFQ Authentication\n\nSign this message to authenticate your wallet.\n\nNonce: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nIssued At: 2024-03-09T12:00:00Z\n",
+    "signature": "5V994XKESUifbX9zQ5ydLfse5Mkghbnb9E1yPgwmmbq3UNj4rfunARGjRD2Qyxbhjt8CfKD3UesBhJ7PWuMqVovG",
+    "pubkey": "A87ysNWAmmqQHafLSQGbYSLhtcV3BjXctR88EWuSobGP"
   }
 }
 ```
@@ -412,6 +412,7 @@ frame without a code; the preceding error frame says why.
 | `4004` | `session_replaced` | A newer connection authenticated as the same maker or taker session |
 | `4005` | `hello_timeout` | `Hello` not received in time |
 | `4006` | `unsupported_protocol_version` | `Hello.protocol_version` is not `1.0.0` |
+| `4007` | `vault_session_invalidated` | The Vault grant changed or was revoked; authenticate the Vault session again |
 
 A rejected WebSocket upgrade returns an HTTP status with the same JSON body as the HTTP API,
 `{"error": "...", "code": "..."}`: `403 origin_not_allowed`, `429 rate_limited` (too many
@@ -425,7 +426,7 @@ the values in force on that connection, so a client can pace itself instead of h
 limit is a token bucket: `per_second` tokens refill each second up to `burst`, or `unlimited`. The
 rows below apply until the connection authenticates as a maker or Vault operator; then the shared
 `liquidity_provider` bucket replaces all of them. Quote messages need that authentication, so they
-always spend from the shared bucket. A per-type limit rejects the message with `rate_limited` and
+always spend from the shared bucket. A per-type limit rejects the message with `RateLimited` and
 keeps the connection. The per-connection and per-wallet message limits close it.
 
 | `rate_limits` field | Row below |
@@ -437,17 +438,18 @@ keeps the connection. The per-connection and per-wallet message limits close it.
 
 | Limit | Scope | Default | On exceed |
 |---|---|---|---|
-| Message rate | Every connection | 30/s, burst 60 | `rate_limited` error, then close `4003` |
-| Wallet message rate | All `/taker` and `/vault` connections of one authenticated wallet | 50/s, burst 100 | `rate_limited` error, then close `4003` |
-| RFQ messages (`RfqRequest`, `AcceptQuote`, `CancelRfq`, `SwapQuote`, `SwapSubmit`) | Taker and Vault connections | 10/s, burst 20 | `rate_limited` error for that message; the connection stays open |
-| Query messages (`Get*`, `CheckQuote`, subscription messages) | Every connection | 20/s, burst 40 | `rate_limited` error for that message; the connection stays open |
-| Quote messages (`Quote`, `ReplaceQuote`, `BatchQuotes`, `CancelQuote`, `CancelAllQuotes`) | `/maker` and `/vault` before maker or operator authentication; a taker on `/vault` | 50/s, burst 100 | `rate_limited` for that message; the connection stays open. Not in `Welcome.rate_limits`; these messages are rejected anyway until the session can quote |
+| Message rate | Every connection | 30/s, burst 60 | `RateLimited` error, then close `4003` |
+| Wallet message rate | All `/taker` and `/vault` connections of one authenticated wallet | 50/s, burst 100 | `RateLimited` error, then close `4003` |
+| RFQ messages (`RfqRequest`, `AcceptQuote`, `SwapQuote`, `SwapSubmit`) | Taker and Vault connections | 10/s, burst 20 | `RateLimited` error for that message; the connection stays open |
+| Query messages (`Get*`, `CheckQuote`, subscription messages) | Every connection | 20/s, burst 40 | `RateLimited` error for that message; the connection stays open |
+| Quote messages (`Quote`, `ReplaceQuote`, `BatchQuotes`) | `/maker` and `/vault` before maker or operator authentication; a taker on `/vault` | 50/s, burst 100 | `QuoteUpdate` `rejected` with reason `rate_limited` for that message; the connection stays open. Not in `Welcome.rate_limits`; these messages are rejected anyway until the session can quote |
+| Cancels (`CancelQuote`, `CancelAllQuotes`, `CancelRfq`) | Every connection | 10/s, burst 20 | `RateLimited` error for that message. Cancels pay only this budget, never the ones above or the shared bucket below, so other traffic cannot block a kill switch |
 
 Once a maker or Vault operator authenticates, one shared bucket replaces all of the limits above:
-every message spends from it, and an exceeded budget rejects the message with `rate_limited`:
-`Quote` and `ReplaceQuote` get `QuoteRejected` with reason `rate_limited`, `BatchQuotes` gets
-`BatchQuotesAck` with every result rejected the same way, and other messages get a `rate_limited`
-error. The default is 1000/s, burst 2000 for makers and 100/s, burst 200 for Vault operators. A maker connection
+every message except a cancel spends from it, and an exceeded budget rejects the message:
+`Quote`, `ReplaceQuote` and each quote of a `BatchQuotes` get `QuoteUpdate` `rejected` with reason
+`rate_limited`, and other messages get a
+`RateLimited` error. The default is 1000/s, burst 2000 for makers and 100/s, burst 200 for Vault operators. A maker connection
 stays open; a Vault connection whose messages keep being rejected for 10 seconds, with no break longer
 than a second, is closed with `4003`.
 
@@ -455,14 +457,17 @@ than a second, is closed with `4003`.
 message spends one. A batch over `max_batch_quotes` is rejected before the shared bucket and is
 charged to the connection message rate instead.
 
+A rate-limit rejection is `{"type": "RateLimited", "data": {"retry_after_ms": 120}}` (in `Error.data`
+or in a `Reply` `error`): send the message again after `retry_after_ms`.
+
 Authentication messages (`StartAuth`, `StartVaultAuth`, `AuthChallenge`, `ResumeAuth`, and `Hello` on
 `/maker` and `/maker/data`) also spend from a per-IP bucket, 20/s, burst 40 by default. It is not in
-`Welcome.rate_limits`. An exceeded budget rejects the message with `rate_limited` and keeps the
+`Welcome.rate_limits`. An exceeded budget rejects the message with `RateLimited` and keeps the
 connection.
 
-No rate-limit rejection says when to retry: `rate_limited` carries only `code` and `message`. A
-bucket gains one token every `1 / per_second` seconds, so wait at least that long, using the
-message's bucket from `Welcome.rate_limits`, then back off further on repeated rejections.
+A quote rejected with `rate_limited` carries the wait only in its `message` text. A bucket gains one
+token every `1 / per_second` seconds, so wait at least that long, using the message's bucket from
+`Welcome.rate_limits`, then back off further on repeated rejections.
 After a `4003` close, reconnect with backoff. The typed `RateLimit` error is a different case: its
 action depends on the `RateLimitReason` (see the [ServerError catalog](#servererror-catalog)).
 
@@ -515,7 +520,7 @@ publishes its own as `protocol_fees` in `GET /api/v1/tokens` and WS `Tokens`.
 - `net_price` in `QuoteReceived` is a `Price` for display only. The authoritative
   amount is the net premium after the fee and token-decimal scaling.
 - `total_premium` in position rows is the net premium in quote atoms after the protocol fee. It is
-  the authoritative money figure. `QuoteFilled` carries no fee or net fields.
+  the authoritative money figure. `QuoteUpdate` `filled` carries no fee or net fields.
 - The fee does not change what the maker signs. The contract applies it when the position opens.
 
 ## Auth messages
@@ -526,11 +531,11 @@ publishes its own as `protocol_fees` in `GET /api/v1/tokens` and WS `Tokens`.
 {
   "type": "AuthSuccess",
   "data": {
-    "session_id": "uuid",
+    "session_id": "60459575-ed18-48e7-a297-83f8491a67d3",
     "expires_at": 1710086400,
     "role": {
       "type": "maker",
-      "maker_pda": "MakerPdaBase58"
+      "maker_pda": "HYe9CryCnQ3ZviCwoG8X7REFoSBK7HCjrhWWMpNtTah1"
     }
   }
 }
@@ -591,40 +596,43 @@ Endpoint-policy violations use a typed error rather than closing the socket:
 
 Endpoint values are `maker`, `maker_data`, `taker`, and `vault`.
 
-### RequestError: request-correlated errors
+### Reply: the answer to a command
 
-Sent when the server can correlate the failure to a specific client request. The `request_id`
-echoes the client's `request_id` from the originating message:
+Every message that carries a `request_id` and has no response message of its own gets exactly one
+`Reply` with the same `request_id`. Queries answer with their own message and fail with a `Reply`
+`error`.
+
+```json
+{ "type": "Reply", "data": { "request_id": "1e3a5c7e-9b0d-4f26-8a4c-6e8a0c2e4f93", "result": { "type": "accepted" } } }
+```
+
+`result` is one of:
+
+- `accepted`: the server took the command. It never means anything landed on chain; lifecycle
+  pushes stay keyed by `rfq_id` / `order_id` and may arrive before or after the reply.
+- `subscribed` `{ channels }` / `unsubscribed` `{ channels }`: the answer to `Subscribe` /
+  `Unsubscribe`, listing only the channels this call changed.
+- `swap_quote`: the answer to `SwapQuote`.
+- `swap_submitted` `{ execution_id }`: the answer to `SwapSubmit`.
+- `error` `{ error, delivery }`: the command failed. `error` has the same `ServerError` shape as
+  `Error.data`.
 
 ```json
 {
-  "type": "RequestError",
+  "type": "Reply",
   "data": {
     "request_id": "1e3a5c7e-9b0d-4f26-8a4c-6e8a0c2e4f93",
-    "error": {
-      "type": "RfqNotFound"
-    },
-    "delivery": "not_applicable"
+    "result": {
+      "type": "error",
+      "error": { "type": "Generic", "data": { "code": "vault_swap_quote_expired", "message": "Vault swap quote expired" } },
+      "delivery": "not_forwarded"
+    }
   }
 }
 ```
 
-The inner `error` has the same `ServerError` shape as `Error.data`.
-
-`delivery` is always present. It is `not_applicable` except on failures of `SubmitSignedSponsoredTx` and `SwapSubmit`:
-
-```json
-{
-  "type": "RequestError",
-  "data": {
-    "request_id": "1e3a5c7e-9b0d-4f26-8a4c-6e8a0c2e4f93",
-    "error": { "type": "Generic", "data": { "code": "vault_swap_quote_expired", "message": "Vault swap quote expired" } },
-    "delivery": "not_forwarded"
-  }
-}
-```
-
-`delivery` describes this one request only:
+`delivery` is `not_applicable` except on failures of `SubmitSignedSponsoredTx` and `SwapSubmit`,
+and describes this one request only:
 
 - `not_forwarded`: this request was rejected before it was handed to the keeper (routing gates,
   validation, a pre-enqueue rejection).
@@ -636,10 +644,10 @@ It says nothing about earlier attempts with the same signed transaction. Treat a
 not executed only if every attempt you made returned `not_forwarded`; if any attempt timed out,
 was lost with the connection, or returned `unknown`, resolve it by status before re-signing.
 
-Prefer `RequestError` handlers over `Error` handlers wherever you pass `request_id` in requests.
+Prefer `Reply` handlers over `Error` handlers wherever you pass `request_id` in requests.
 Both events fire `error` in the TypeScript SDK (see [Web client SDK](../quickstart/web-client-ts-sdk.md)).
 
-### Parsing rule (applies to both `Error.data` and `RequestError.data.error`)
+### Parsing rule (applies to both `Error.data` and a `Reply` `error`)
 
 1. Branch on `type`.
 2. If `type != "Generic"`, treat it as a typed variant.
@@ -733,6 +741,7 @@ This is the closed set of `type` values. A variant without `data` has no `data` 
 | `Invite` | an `InviteErrorReason` string | `internal_error`: `retry`; `invalid_code`: `fix_request`; other reasons: `stop` | The invite was refused |
 | `Claim` | a `ClaimErrorReason` string | `internal_error`: `retry`; `not_registered`: `stop`; other reasons: `fix_request` | The referral code claim was refused |
 | `WrongEndpoint` | `{ endpoint, allowed_endpoints }` | `fix_request` | The message is not accepted on this endpoint |
+| `RateLimited` | `{ retry_after_ms }` | `retry` | A rate limit rejected the message; send it again after `retry_after_ms`. See [Rate limits and admission](#rate-limits-and-admission) |
 | `Generic` | `{ code, message }` | by `code` | `code` is in the [WS error code catalog](#ws-error-codes) |
 
 | Field or string | Values |
@@ -767,7 +776,7 @@ This is the closed set of `type` values. A variant without `data` has no `data` 
 
 ## WS error codes
 
-The closed set of `Generic.code` values (in `Error.data` and `RequestError.data.error`) and
+The closed set of `Generic.code` values (in `Error.data` and a `Reply` `error`) and
 `AuthError.reason` values. The server sends nothing outside this table; typed `ServerError`
 variants (`RfqNotFound`, `Unauthenticated`, `WrongEndpoint`, …) are not codes. A client that
 receives a code outside this set fails to decode the frame.
@@ -779,7 +788,7 @@ receives a code outside this set fails to decode the frame.
 | `hello_required` | Generic | `fix_request` | The first message was not `Hello`; the connection closes |
 | `hello_timeout` | Generic | `retry` | No `Hello` in time; followed by close `4005` |
 | `hello_already_sent` | Generic | `fix_request` | A second `Hello` on one connection |
-| `rate_limited` | Generic | `retry` | Connection or wallet rate limits close with `4003`; a per-type limit rejects only the message. Carries no retry time; see [Rate limits and admission](#rate-limits-and-admission) |
+| `rate_limited` | Generic | `retry` | Not sent on WebSocket: rate limits answer with `RateLimited { retry_after_ms }`. See [Rate limits and admission](#rate-limits-and-admission) |
 | `server_overloaded` | Generic | `retry` | The admission limit for this message class is full; retry with backoff. A full connection command queue sends it uncorrelated and closes with `4003` |
 | `server_busy` | Generic, AuthError | `retry` | A bounded internal queue (auth, RFQ creation) is full; retry |
 | `internal_error` | Generic | `retry` | Unexpected server failure; the message is sanitized |
@@ -808,7 +817,7 @@ receives a code outside this set fails to decode the frame.
 | `vault_resume_not_supported` | AuthError | `fix_request` | `ResumeAuth` on `/vault` |
 | `vault_operator_unauthorized` | AuthError | `stop` | The operator holds no current grant for the Vault |
 | `vault_authorization_unavailable` | AuthError | `retry` | Vault authority could not be read; retry |
-| `vault_session_invalidated` | Generic | `reauthenticate` | The Vault grant changed or was revoked; the session closes |
+| `vault_session_invalidated` | Generic | `reauthenticate` | The Vault grant changed or was revoked; followed by close `4007`, and the session's quotes are cancelled |
 | `invalid_vault_subscription` | Generic | `fix_request` | The subscription is not allowed for a Vault session |
 | `invalid_products` | Generic | `fix_request` | `Subscribe.products` is empty |
 | `subscription_scope_too_large` | Generic | `fix_request` | The two mint lists exceed 1024 entries after each is deduplicated; the existing scope stays unchanged. See [Subscribe](maker-api.md#subscribe) |
@@ -828,18 +837,17 @@ receives a code outside this set fails to decode the frame.
 | `missing_tick_for_underlying_mint` | Generic | `stop` | No strike tick is configured for the underlying |
 | `ladder_strike_source_unavailable` | Generic | `retry` | The strike ladder source failed |
 | `invalid_strikes` | Generic | `fix_request` | The requested strike set is invalid |
-| `taker_buy_unsupported` | Generic | `fix_request` | `RfqRequest` with `side: "buy"` from a vault session; a vault writes buys only by quoting |
 | `spread_invalid_strikes` | Generic | `fix_request` | Zero, reversed or otherwise invalid spread strikes |
 | `spread_tick_violation` | Generic | `fix_request` | A spread strike is off the underlying mint's strike tick |
 | `spread_premium_invalid` | Generic | `fix_request` | Price is at or above the width, the gross transfer is zero, or the cash arithmetic is unrepresentable |
-| `duplicate_rfq_id` | Generic | `reconcile` | The RFQ id already exists |
+| `duplicate_rfq_id` | Generic | `reconcile` | The RFQ id already exists, or the `request_id` was used for an RFQ with different parameters |
 | `rfq_closed` | Generic | `refresh` | The RFQ is closed |
 | `market_finalized` | Generic | `stop` | The market is finalized |
 | `market_disabled` | Generic | `stop` | The market is disabled |
 | `market_expired` | Generic | `stop` | The market expired |
 | `market_pre_expiry` | Generic | `stop` | The market is in its pre-expiry window |
 | `quote_identity_mismatch` | Generic | `fix_request` | The quote `terms` or `side` differ from the RFQ |
-| `quote_refresh_required` | Generic | `refresh` | The quote must be refreshed; the maker got `QuoteRefreshRequested` |
+| `quote_refresh_required` | Generic | `refresh` | The quote must be refreshed; the maker got `QuoteUpdate` `refresh_requested` |
 | `duplicate_quote` | Generic | `reconcile` | Duplicate quote `order_id` |
 | `resource_limit` | Generic | `retry` | A per-identity resource limit was reached |
 | `kernel_timeout` | Generic | `reconcile` | The matching engine did not answer in time; a submission's outcome is unknown |
@@ -851,7 +859,7 @@ receives a code outside this set fails to decode the frame.
 | `sponsored_tx_not_ready` | Generic | `retry` | The sponsored transaction is not ready yet |
 | `invalid_signed_tx` | Generic | `fix_request` | The signed transaction does not decode or match |
 | `invalid_amount` | Generic | `fix_request` | The swap amount is not a positive u64 string |
-| `vault_authorization_failed` | Generic | `reauthenticate` | Vault authorization is no longer valid |
+| `vault_authorization_failed` | Generic | `reauthenticate` | Vault authorization is no longer valid, or the operator lacks the bit for this side (`OPEN_AS_WRITER` to sell, `BUY_FROM_MAKERS` to buy); permissions are read at authentication |
 | `vault_projection_unavailable` | Generic | `retry` | Vault state is temporarily unavailable |
 | `vault_safety_mode` | Generic | `stop` | Vault safety mode forbids the action |
 | `vault_pending_capital` | Generic | `stop` | The idle capital window must be closed and unpriced |
@@ -871,47 +879,41 @@ receives a code outside this set fails to decode the frame.
 
 There's no single global correlation id. Correlation is per-request, via the `request_id` field on messages that have a defined response.
 
-- `Subscribe` / `Unsubscribe` carry a mandatory `request_id`. The server echoes it in `SubscribeAck` / `UnsubscribeAck`, and the `subscribed` / `unsubscribed` arrays contain only the diff for this call — not the full subscription list.
+- `Subscribe` / `Unsubscribe` carry a mandatory `request_id`. The server answers with a `Reply` `subscribed` / `unsubscribed` whose `channels` contain only the diff for this call — not the full subscription list.
 - `GetSubscriptions` carries `request_id`; `Subscriptions` echoes it.
 - Query-style `Get*` operations require `request_id` and echo it in their responses.
-- Correlated failures use `RequestError { request_id, error }`; `Error` has no request ID.
-- `RfqRequest`, `AcceptQuote` and `SubmitSignedSponsoredTx` require `request_id` and get exactly one
-  reply: `CommandAccepted { request_id }` or `RequestError { request_id, error }`, including for
-  routing gates (rate limit, pause, invite gate, wrong endpoint, overload). `CommandAccepted` means
-  the server accepted the command, never that anything landed on chain. Lifecycle pushes
-  (`RfqCreated`, `OrderAccepted`, `OrderFailed`, …) stay keyed by `rfq_id` / `order_id` and may
-  arrive before or after the receipt. `RfqRequest.request_id` is also the idempotency key: a
-  repeat while the RFQ is open fails with `duplicate_rfq_id`, which proves the first one created it.
-- Exception: when the server's inbound queue for a connection is full it sends an uncorrelated
-  `Error { code: "server_overloaded" }` and closes the socket with `4003 rate_limited`. Every request
-  still outstanding on that connection has an unknown outcome; resolve submissions by status after
-  reconnecting.
+- Correlated answers use `Reply { request_id, result }`; `Error` has no request ID.
+- `RfqRequest`, `AcceptQuote`, `SubmitSignedSponsoredTx`, `CancelRfq`, `CancelQuote`,
+  `CancelAllQuotes`, `Subscribe`, `Unsubscribe`, `SwapQuote` and `SwapSubmit` require `request_id`
+  and get exactly one `Reply`, including for routing gates (rate limit, pause, invite gate, wrong
+  endpoint, overload). `result` is `accepted`, `subscribed { channels }`,
+  `unsubscribed { channels }`, `swap_quote`, `swap_submitted { execution_id }` or
+  `error { error, delivery }`. A cancel's reply is `accepted`; the orders it removed end with
+  their own `QuoteUpdate` `cancelled`.
+- `RfqRequest` gets `Reply` `accepted` and then the `RfqCreated` push. The server assigns
+  `rfq_id`; `request_id` only correlates. Sending the same `request_id` again returns the same
+  `RfqCreated`; if that RFQ already ended, an `RfqUpdate` `closed` follows. A taker's open RFQs
+  close when its connection drops, so a reply lost with the connection is resolved by resending.
+- When the server's inbound queue for a connection is full (32 messages), a message it cannot queue
+  is answered with an `overloaded` quote rejection or a `Reply` `error` with code
+  `server_overloaded`, and the connection stays open. Cancels wait for room instead of being
+  refused. Only an unparseable message on a full queue closes the socket with `4003`.
 - Indicative pricing uses `request_id` on both `IndicativePricesRequest` (server → maker) and `IndicativePricesResponse` (maker → server).
 - Broadcasts (`RfqBroadcast`, `TradeExecuted`, `StatsUpdate`, etc.) don't carry `request_id`.
 
-### SubscribeAck / UnsubscribeAck
+### Subscribe / Unsubscribe replies
 
 ```json
 {
-  "type": "SubscribeAck",
+  "type": "Reply",
   "data": {
-    "request_id": "uuid",
-    "subscribed": ["rfqs", "trades"]
+    "request_id": "d60a8e4e-17fb-4eaf-ad0c-99084e2689ee",
+    "result": { "type": "subscribed", "channels": ["rfqs", "stats"] }
   }
 }
 ```
 
-```json
-{
-  "type": "UnsubscribeAck",
-  "data": {
-    "request_id": "uuid",
-    "unsubscribed": ["stats"]
-  }
-}
-```
-
-`subscribed` / `unsubscribed` are the channels that were actually added or removed —
+`channels` are the channels that were actually added (`subscribed`) or removed (`unsubscribed`) —
 channels already subscribed (or already absent) are not repeated.
 
 ## Lifecycle terms
@@ -919,10 +921,13 @@ channels already subscribed (or already absent) are not repeated.
 Use the same terms across all external docs:
 
 ### RFQ lifecycle
-- **Terminal RFQ event**: `RfqClosed`. Close RFQ state only on this event.
-- **Fill-details event (maker)**: `QuoteFilled`. Contains fill details for the winning maker.
-- **Order-level confirmation (taker)**: `OrderConfirmed`. Confirms the selected order and carries
-  `position_pda`; the transaction signature came earlier on `OrderSubmitted`.
+- **Terminal RFQ event**: `RfqUpdate` `closed`. Close RFQ state only on this event.
+- **Terminal order events (maker)**: every order ends exactly once, with a `QuoteUpdate` other than
+  `live` / `selected`; a cancel, your own or the server's, is `cancelled`. See
+  [Maker API](maker-api.md).
+- **Fill-details event (maker)**: `QuoteUpdate` `filled`. Contains fill details for the winning maker.
+- **Order-level confirmation (taker)**: `OrderUpdate` `confirmed`. Confirms the selected order and
+  carries `position_pda`; the transaction signature came earlier on `submitted`.
 
 ### Position lifecycle (post-fill)
 Position rows carry a required `state`: `open`, `funded`, `liquidated` or
@@ -945,17 +950,17 @@ Trade lifecycle and payoff: [Protocol flow](protocol-flow.md).
 
 | Channel | Producer(s) | Audience |
 |---|---|---|
-| `rfqs` | `RfqBroadcast`, `IndicativePricesRequest`, quote/order lifecycle | **Makers.** Takers do not subscribe — a taker's own RFQ/quote/order events (`RfqCreated`, `QuoteReceived`, `OrderAccepted`, `SponsoredTxToSign`, `Order*`, `RfqClosed`) are delivered session-addressed regardless of subscription. |
+| `rfqs` | `RfqBroadcast`, `IndicativePricesRequest`, quote/order lifecycle | **Makers.** Takers do not subscribe — a taker's own RFQ/quote/order events (`RfqCreated`, `QuoteReceived`, `SponsoredTxToSign`, `OrderUpdate`, `RfqUpdate`) are delivered session-addressed regardless of subscription. |
 | `taker_buy_rfqs` | `RfqBroadcast` and `IndicativePricesRequest` with `side: "buy"` | **Makers** that write options for buying wallets from Maker PDA custody. |
-| `trades` | `TradeExecuted` | Public trade tape. Participants also receive their own fills session-addressed. |
+| `trades` | `TradeExecuted` | There is no public trade tape: `TradeExecuted` reaches only the trade's maker and taker, session-addressed, with or without this subscription. |
 | `stats` | `StatsUpdate` | Global venue stats. |
-| `chain_events` | `ChainEvent` (position opened / settled / liquidated, market finalized) | Anyone. **This is how a taker tracks position outcomes** (settlement / liquidation). |
+| `chain_events` | `ChainEvent` (position opened / settled / liquidated, market finalized) | Anyone watching chain activity. A taker tracks its own positions through owner-direct `PositionUpdated`, not this channel. |
 | `markets` | `MarketCreated`, `MarketFinalized` | Anyone tracking the tradable market set. |
 | `vaults` | `VaultCatalogChanged`, `VaultProjectionAdvanced` | Maker and taker sessions that list or watch vaults: they receive both, `VaultProjectionAdvanced` for every vault. `/vault` operator sessions are subscribed automatically and receive `VaultProjectionAdvanced` for their own vault only, and no `VaultCatalogChanged`. |
 
 There is no `positions` channel: `PositionUpdated` and `MakerCapsUpdated` are delivered **owner-direct to the maker's session**, with no subscription.
 
-Takers typically subscribe to `chain_events` (position outcomes) plus optionally `trades` / `stats` / `markets`. They do **not** need `rfqs`.
+Takers get their own positions owner-direct (`PositionUpdated`) and may add `stats` / `markets`. They do **not** need `rfqs`.
 
 ### Delivery criticality
 
@@ -966,7 +971,7 @@ When your outbound queue is full, the server handles a pushed message in one of 
 
 | Audience | Critical | Best-effort |
 |---|---|---|
-| `/maker` | `RfqBroadcast`, `QuoteAcknowledged`, `QuoteRefreshRequested`, `MarketCreated`, `MarketFinalized`, `VaultCatalogChanged`, `VaultProjectionAdvanced` | `TradeExecuted`, `ChainEvent`, `StatsUpdate`, `RfqSkipped`, `IndicativePricesRequest` |
+| `/maker` | `RfqBroadcast`, `QuoteUpdate`, `MarketCreated`, `MarketFinalized`, `VaultCatalogChanged`, `VaultProjectionAdvanced` | `TradeExecuted`, `ChainEvent`, `StatsUpdate`, `RfqSkipped`, `IndicativePricesRequest` |
 | `/taker` | everything except `StatsUpdate` | `StatsUpdate` |
 | `/maker/data`, `/vault` | everything | — |
 
@@ -1008,7 +1013,7 @@ hard max:    market.expiry_ts
 ```
 
 `min_quote_validity_seconds` and `settlement_buffer_seconds` come from `Welcome` or `GET /api/v1/venue`. The minimum validity covers the settlement buffer and the refresh lead. To calculate the refresh point, read `quote_refresh_lead_seconds` from `GET /api/v1/venue`; `Welcome` does not carry it. At `valid_until - settlement_buffer_seconds - quote_refresh_lead_seconds` the
-server freezes the quote and sends `QuoteRefreshRequested`. The recommended value keeps that point
+server freezes the quote and sends `QuoteUpdate` `refresh_requested`, which ends that order. The recommended value keeps that point
 at or after `rfq.expires_at`, so the quote stays acceptable for the whole auction.
 
 Values below the hard min are rejected with `quote_expiry_too_short`. Values later than
@@ -1032,7 +1037,7 @@ refresh point:    now + 60s
 - `rfq.expires_at < market.expiry_ts` (recommended client-side validation)
 - `signature_deadline_at = min(accept time + signature_timeout, effective_expiry, rfq.expires_at)`
 
-`signature_deadline_at` appears in `QuoteSelected` (server -> maker; see [maker-api.md](maker-api.md)) and `SponsoredTxToSign` (server -> taker; see [taker-api.md](taker-api.md)).
+`signature_deadline_at` appears in `QuoteUpdate` `selected` (server -> maker; see [maker-api.md](maker-api.md)) and `SponsoredTxToSign` (server -> taker; see [taker-api.md](taker-api.md)).
 
 ## Reconciliation safety
 
@@ -1047,12 +1052,13 @@ Use entity versions where available:
 
 `order_version` is present on order lifecycle pushes, not on `OrderStatus`. Lifecycle precedence uses ranks `accepted = 1`, `submitted = 2`, `failed = 3`, `confirmed = 4`. Confirmation can replace a locally recorded failure; a transition may skip a rank and replay keeps the same rank.
 
-`GetOrderStatus` instead returns `state: pending | confirmed { position_pda } | unknown`. `unknown` and timeouts do not prove nonexecution. Reconnect reads are not an atomic snapshot; keep unresolved obligations separately from transient RFQ/UI caches.
+`GetOrderStatus` instead returns `state: pending | confirmed { position_pda } | expired | unknown`. Only `expired` proves nonexecution; `unknown` and timeouts do not. Reconnect reads are not an atomic snapshot; keep unresolved obligations separately from transient RFQ/UI caches.
 
 On client side:
-- apply update only if `new_version > current_version`
-- ignore stale updates (`new_version < current_version`)
-- treat equal versions as idempotent replay
+- drop an update only if `new_version < current_version`
+- apply equal versions: one change can send several messages at the same version (several
+  `cancelled`, `lost` then `RfqUpdate` `closed`, `RfqUpdate` `closed` then `filled`,
+  `cancelled` `replaced` then the new order's `live`)
 
 ## Paging
 

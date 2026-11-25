@@ -6,7 +6,7 @@ Caps enforce risk limits on quote submission. They apply at three scopes:
 - **Market** — open-interest ceilings per market PDA (underlying, quote, expiry and put/call), shared by all its strikes.
 - **Maker** — per-account position count, notional exposure, deposited premium balance, and spread liability per quote mint.
 
-A breach detected at quote-validation produces `QuoteRejected` with `reason: { "cap_exceeded": <CapError> }`. A breach predictable from the maker's current state pre-filters the RFQ before broadcast and produces `RfqSkipped` instead. `GetTokenCaps` returns platform token, market, quote-mint and quote-liability caps; `GetMyCaps` returns the maker layer. `CheckQuote` runs the quote admission checks without reserving anything.
+A breach detected at quote-validation produces `QuoteUpdate` `rejected` with `reason: { "cap_exceeded": <CapError> }`. A breach predictable from the maker's current state pre-filters the RFQ before broadcast and produces `RfqSkipped` instead. `GetTokenCaps` returns platform token, market, quote-mint and quote-liability caps; `GetMyCaps` returns the maker layer. `CheckQuote` runs the quote admission checks without reserving anything.
 
 ## Platform caps
 
@@ -74,7 +74,7 @@ Send `GetTokenCaps` for platform-level caps. `request_id` and `include_markets` 
 {
   "type": "GetTokenCaps",
   "data": {
-    "request_id": "uuid",
+    "request_id": "f6c6c4db-8ba6-4311-a9c0-157aa29b502f",
     "include_markets": true,
     "limit": 200,
     "cursor": {
@@ -90,7 +90,7 @@ Response `TokenCaps`:
 {
   "type": "TokenCaps",
   "data": {
-    "request_id": "uuid",
+    "request_id": "f6c6c4db-8ba6-4311-a9c0-157aa29b502f",
     "tokens": [
       {
         "underlying_mint": "So11111111111111111111111111111111111111112",
@@ -183,7 +183,7 @@ Send `GetMyCaps` for your maker-specific limits. `request_id` is required.
 {
   "type": "GetMyCaps",
   "data": {
-    "request_id": "uuid",
+    "request_id": "4bca388f-4c47-4cef-a884-210b2dbeb68d",
     "limit": 200,
     "cursor": {
       "type": "start"
@@ -198,7 +198,7 @@ Response `MyCaps`:
 {
   "type": "MyCaps",
   "data": {
-    "request_id": "uuid",
+    "request_id": "4bca388f-4c47-4cef-a884-210b2dbeb68d",
     "positions": {
       "current": 12,
       "limit": 50
@@ -246,7 +246,7 @@ Response `MyCaps`:
 {
   "type": "CheckQuote",
   "data": {
-    "request_id": "uuid",
+    "request_id": "b18921cd-d340-49b9-ae4b-f6110837c3d4",
     "terms": { "type": "covered_call", "strike": "150000000000" },
     "side": "sell",
     "market_pda": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
@@ -259,14 +259,14 @@ Response `MyCaps`:
 `price` is the gross price per underlying unit, 1e9 scale, as on `Quote`. The response `QuoteCheck` carries `verdict`, a tagged union on `type`:
 
 ```json
-{ "type": "QuoteCheck", "data": { "request_id": "uuid", "verdict": { "type": "admissible" } } }
+{ "type": "QuoteCheck", "data": { "request_id": "b18921cd-d340-49b9-ae4b-f6110837c3d4", "verdict": { "type": "admissible" } } }
 ```
 
 ```json
 {
   "type": "QuoteCheck",
   "data": {
-    "request_id": "uuid",
+    "request_id": "b18921cd-d340-49b9-ae4b-f6110837c3d4",
     "verdict": {
       "type": "rejected",
       "cap_detail": { "maker_position_cap_exceeded": { "current": 50, "limit": 50 } }
@@ -275,7 +275,7 @@ Response `MyCaps`:
 }
 ```
 
-`cap_detail` is the `CapError` that a `QuoteRejected` would carry. `"caps_unavailable"` means retry, not a cap.
+`cap_detail` is the `CapError` that a `rejected` quote would carry. `"caps_unavailable"` means retry, not a cap.
 
 ## How quotes consume capacity
 
@@ -307,12 +307,12 @@ quote holds capacity the moment it is accepted by the venue**, not on fill:
 | Maker position cap reached | `RfqSkipped` — RFQ pre-filtered |
 | Maker notional cap reached | `RfqSkipped` — RFQ pre-filtered (quantity known ahead) |
 | Maker balance is zero | `RfqSkipped` — RFQ pre-filtered; `maker_insufficient_balance.required` is `0` because nothing is priced yet |
-| Platform or maker spread liability cap reached | `QuoteRejected` with `reason: cap_exceeded` |
-| Maker balance insufficient for premium | `QuoteRejected` with `reason: cap_exceeded` |
-| Quote notional cap reached | `QuoteRejected` with `reason: cap_exceeded` |
-| Caps authority temporarily unavailable | `RfqSkipped` / `QuoteRejected` with `cap_detail` / `cap_exceeded` set to `caps_unavailable` — retry with backoff |
+| Platform or maker spread liability cap reached | `QuoteUpdate` `rejected` with `reason: cap_exceeded` |
+| Maker balance insufficient for premium | `QuoteUpdate` `rejected` with `reason: cap_exceeded` |
+| Quote notional cap reached | `QuoteUpdate` `rejected` with `reason: cap_exceeded` |
+| Caps authority temporarily unavailable | `RfqSkipped` / `QuoteUpdate` `rejected` with `cap_detail` / `cap_exceeded` set to `caps_unavailable` — retry with backoff |
 
-`QuoteRejected` carries the machine-readable detail inside the reason:
+A `rejected` quote carries the machine-readable detail inside the reason:
 `reason` is `{ "cap_exceeded": <CapError> }`. `RfqSkipped` and `QuoteCheck` carry the
 same `CapError` as `cap_detail`. Parse those, not the prose `message`.
 
@@ -348,7 +348,7 @@ broadcast, so `maker_insufficient_balance.required` is always `0` there:
 
 ## CapError variants
 
-These variants appear in `QuoteRejected`, `RfqSkipped` and `QuoteCheck` when a cap is breached. Amounts are numbers; `current` and `limit` of spread liability variants are in quote atoms.
+These variants appear in `rejected` quotes, `RfqSkipped` and `QuoteCheck` when a cap is breached. Amounts are numbers; `current` and `limit` of spread liability variants are in quote atoms.
 
 | Variant | Fields | Description |
 |---------|--------|-------------|

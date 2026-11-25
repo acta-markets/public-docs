@@ -24,7 +24,7 @@ The first message from the client is `Hello`. All four fields are required.
 
 - `protocol_version` must equal the server's version, `1.0.0`. There is no version range. Any other value gets an `Error` with `Generic` code `unsupported_protocol_version`, then a close with code `4006`.
 - `on_disconnect` sets what happens to this connection's quotes when it ends. With `cancel_quotes`, the engine cancels the session's active and retained non-winning quotes. With `keep_quotes`, resting quotes stay live while the maker is offline. Selected and executing orders survive both.
-- There is no feature negotiation. `QuoteExpired` events are always sent.
+- There is no feature negotiation. Every order ends with exactly one terminal event.
 
 The server responds with `Welcome` (`server_now_at_ms` is for clock sync), then `AuthRequest` with a challenge string. Validate the entire [canonical auth challenge](../reference/ws-common.md#what-to-sign) before invoking your signer. Then sign its original UTF-8 bytes with `quote_signing`, base58-encode the signature, and reply with `AuthChallenge`:
 
@@ -32,9 +32,9 @@ The server responds with `Welcome` (`server_now_at_ms` is for clock sync), then 
 {
   "type": "AuthChallenge",
   "data": {
-    "challenge": "<from AuthRequest>",
-    "signature": "<base58 ed25519 signature>",
-    "pubkey": "<maker_owner pubkey, base58>"
+    "challenge": "Acta RFQ Authentication\n\nSign this message to authenticate your wallet.\n\nNonce: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nIssued At: 2024-03-09T12:00:00Z\n",
+    "signature": "5V994XKESUifbX9zQ5ydLfse5Mkghbnb9E1yPgwmmbq3UNj4rfunARGjRD2Qyxbhjt8CfKD3UesBhJ7PWuMqVovG",
+    "pubkey": "A87ysNWAmmqQHafLSQGbYSLhtcV3BjXctR88EWuSobGP"
   }
 }
 ```
@@ -58,7 +58,7 @@ A resumed maker auth session restores server-side routing and mint scope. After 
 }
 ```
 
-All fields are required. `request_id` is a UUID that the server echoes in `SubscribeAck`.
+All fields are required. `request_id` is a UUID that the server echoes in its `Reply` `subscribed`.
 
 - `products` is a nonempty list. An empty list is rejected with `invalid_products`. RFQ fan-out follows it.
 - `[]` in `underlying_mints` or `quote_mints` means every mint.
@@ -86,7 +86,7 @@ Details: [Products and terms](../reference/maker-api.md#products-and-terms).
 
 ## Quoting
 
-Units: `rfq.quantity` (and `size_rule`, `QuoteFilled.quantity`) is in underlying atoms; strikes and `price` are 1e9-scaled per underlying token, independent of decimals. Decimals are not in `RfqBroadcast`: read `underlying_decimals` and `quote_decimals` from `GetMarketDescriptors` and cache them by `market_descriptor.market_pda`. The gross premium (before protocol fees) in quote atoms is `floor(price * quantity * 10^quote_decimals / (1e9 * 10^underlying_decimals))`, the contract's rounding.
+Units: `rfq.quantity` (and `size_rule`, the `filled` `quantity`) is in underlying atoms; strikes and `price` are 1e9-scaled per underlying token, independent of decimals. Decimals are not in `RfqBroadcast`: read `underlying_decimals` and `quote_decimals` from `GetMarketDescriptors` and cache them by `market_descriptor.market_pda`. The gross premium (before protocol fees) in quote atoms is `floor(price * quantity * 10^quote_decimals / (1e9 * 10^underlying_decimals))`, the contract's rounding.
 
 On `RfqBroadcast`, first verify the [market PDA and terms](../reference/maker-api.md#quote-flow) against your configured Acta program. The program ID is the same on devnet and mainnet; `GET /api/v1/venue` returns it as `program_id`. Then choose the terms to quote:
 
@@ -105,8 +105,8 @@ Compute the premium, set `now + min_quote_validity_seconds <= valid_until <= mar
     "price": "5000000000",
     "valid_until": 1710000120,
     "nonce": "42",
-    "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-    "signature": "<base58 of ed25519(order_id)>"
+    "order_id": "9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "signature": "5ACJRnXT6rB2MKNMHAmf4q2u7hDfZgGw5jTtcznzJpQtgGb6S7FutRovj21ysRN1UXQsPA7eBXxNq7EoLvsXDcLj"
   }
 }
 ```
@@ -123,8 +123,8 @@ A spread quote repeats the RFQ's two strikes:
     "price": "5000000000",
     "valid_until": 1799999900,
     "nonce": "999",
-    "order_id": "0x0101010101010101010101010101010101010101010101010101010101010101",
-    "signature": "<base58 of ed25519(order_id)>"
+    "order_id": "0101010101010101010101010101010101010101010101010101010101010101",
+    "signature": "5ACJRnXT6rB2MKNMHAmf4q2u7hDfZgGw5jTtcznzJpQtgGb6S7FutRovj21ysRN1UXQsPA7eBXxNq7EoLvsXDcLj"
   }
 }
 ```
@@ -133,32 +133,30 @@ Spread and cash-put prices must satisfy `0 < price < width`, where `width` is `u
 
 The protocol fee is `min(premium fee, volume fee)`. Each quote token publishes its fees as `protocol_fees` (`premium_bps`, `volume_bps`) on `GET /api/v1/tokens`. The formulas are under [Cash settlement and fees](../reference/maker-api.md#cash-settlement-and-fees). The authoritative net premium for a fill is `total_premium` on its position row. The maker's cost is the gross premium, and the fee is that cost minus `total_premium`.
 
-When an RFQ permits several strikes, each strike requires a distinct quote. Prefer `BatchQuotes` for several strikes or RFQs: one frame and one `BatchQuotesAck` instead of one message per quote. Each quote requires its own `order_id` and `nonce`. A new quote on the same `(rfq_id, terms)` replaces the prior quote for that pair.
+When an RFQ permits several strikes, each strike requires a distinct quote. Prefer `BatchQuotes` for several strikes or RFQs: one frame instead of one message per quote; each quote still gets its own `QuoteUpdate`. Each quote requires its own `order_id` and `nonce`. A new quote on the same `(rfq_id, terms)` replaces the prior quote for that pair; the prior order ends with `cancelled` `replaced`.
 
 Use `ReplaceQuote` for repricing: the swap is atomic and single-RTT. `CancelQuote` followed by `Quote` introduces a gap in the book during the cancellation window and incurs an additional round-trip.
 
 `is_taker_buy` in the order-id preimage is `0` for side `sell`, where the taker writes, and `1` for side `buy`, where the maker writes. Implementations whose preimage builders default this field to `true` must override it explicitly.
 
-`QuoteRejected` carries `reason` and a `message`. Fix the cause before retrying; the same payload will fail again. Two reasons are not about the payload: `rate_limited` (the connection's `liquidity_provider` bucket is empty; back off and re-sign with a fresh nonce) and `trading_paused` (the venue is paused; wait for it to resume).
+A `rejected` quote carries `reason` and a `message`. Fix the cause before retrying; the same payload will fail again. Two reasons are not about the payload: `rate_limited` (the connection's `liquidity_provider` bucket is empty; back off and re-sign with a fresh nonce) and `trading_paused` (the venue is paused; wait for it to resume).
 
 ## Lifecycle events
 
-Lifecycle events are keyed by `order_id`. `RfqClosed` is the terminal event for an RFQ; `QuoteFilled` is a fill-details event that arrives after `RfqClosed`.
+Every change to one of your quotes is one `QuoteUpdate` keyed by `order_id`.
 
-| Event | Description |
+| `QuoteUpdate` `state` | Description |
 |---|---|
-| `QuoteAcknowledged` | Server accepted the quote. `replaced` is `{ "type": "replaced", "order_id" }` on a replace and `{ "type": "none" }` otherwise. |
-| `QuoteRejected` | Server refused the quote; see `reason`. |
-| `QuoteBestStatus` | Quote is currently the best in the book. |
-| `QuoteOutbid` | Quote has been displaced by a better one. |
-| `QuoteRefreshRequested` | Settlement-buffer cutoff is approaching; resubmit with `valid_until ≥ min_valid_until` before the cutoff. Identified by `(rfq_id, terms)`. `reason` is `expired` or `expiring_soon`. |
-| `QuoteSelected` | Quote locked; awaiting the taker signature. |
-| `QuoteFilled` | Position opened on-chain. Carries `position_pda`, `transaction_signature`, `terms` and `side`. It has no fee or net-premium field. |
-| `QuoteCancelled` | Terminal. `reason` ∈ {`requested`, `risk_check`, `rfq_accepted`, `maker_disconnected`}. |
-| `QuoteExpired` | Always sent when a quote expires. `reason` ∈ {`expired`, `expiring_soon`}. |
-| `RfqLocked` | Another maker's quote was accepted. Yours stays as a backup; do not re-quote until `RfqAvailableAgain`. |
-| `RfqAvailableAgain` | Settlement reverted; the auction has reopened. The maker may re-quote with a fresh `order_id`. |
-| `RfqClosed` | Terminal RFQ event. Drop per-RFQ state. |
+| `live` | Accepted, and again on every rank change (`is_best`, `best_price`). Resending the same signed quote while it is live returns `live` again. |
+| `selected` | Quote locked; awaiting the taker signature. |
+| `filled` | Terminal. Position opened on-chain. Carries `market_pda`, `terms`, `side`, `position_pda` and `transaction_signature`. It has no fee or net-premium field. |
+| `refresh_requested` | Terminal. The settlement-buffer cutoff is near: quote again with a fresh order and `valid_until ≥ min_valid_until` to stay in the RFQ. |
+| `rejected` | This submission was refused; see `reason` (`duplicate_order_id` for an `order_id` the server already knows). Terminal only if you have not seen the order `live` or `selected`. |
+| `expired` | Terminal. Past `valid_until`. |
+| `released` | Terminal. Selected, but the trade did not happen; the RFQ reopens with `RfqUpdate` `available`. |
+| `lost` | Terminal. The RFQ closed without filling this quote. |
+
+Every order ends exactly once, with a terminal `QuoteUpdate`; a cancel, your own (`requested`), a replace (`replaced`) or the server's (`risk_check`, `maker_disconnected`), is `cancelled`. `RfqUpdate` (`locked`, `available`, `closed`) tracks the RFQ itself and never ends an order. A `rejected` for an order you already saw `live` or `selected` is ignored; that order keeps its state. `rfq_version` grows on every change to an RFQ's book; keep the highest one you have seen per RFQ and drop only lower versions. One change can send several messages at the same version, so apply equal ones.
 
 Book money from the position row, not from the fill. `PositionUpdated` carries the full row with `total_premium`, the net premium the taker received, in quote atoms. The maker's cost is the gross premium `floor(price * quantity * 10^quote_decimals / (1e9 * 10^underlying_decimals))`, and the fee is that cost minus `total_premium`. Each row has a `revision`; apply a row only if its revision is newer than the stored one for the same `pda`. Position `state` is `open`, `funded`, `liquidated` or `settled`. A settled row carries `settlement`, either `physical` or `cash`.
 
@@ -180,7 +178,7 @@ When indicative pricing is enabled on the server, a connected `/maker` session s
 {
   "type": "IndicativePricesResponse",
   "data": {
-    "request_id": "<from request>",
+    "request_id": "c4e8f1a2-6b3d-4e5f-8a7b-9c0d1e2f3a4b",
     "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
     "position_type": "covered_call",
     "side": "sell",
@@ -196,14 +194,14 @@ When indicative pricing is enabled on the server, a connected `/maker` session s
 
 With `on_disconnect: "cancel_quotes"`, the engine removes the connection's active and retained non-winning quotes on disconnect; selected/executing obligations survive. With `keep_quotes`, resting quotes can remain fillable while offline. Resume restores server subscriptions; fresh auth requires restoring them. The server does not replay events missed during the disconnect window. Events already in flight can arrive again after recovery, so process lifecycle events idempotently by `order_id`.
 
-A graceful server stop first drains, then closes every RFQ whose order has not reached the keeper with `RfqClosed { reason: "server_shutdown" }`; your quotes on it report `your_quote.status = "cancelled"`. An order already forwarded for execution is not closed and can still land on chain. After a crash nothing is closed: the engine starts empty and no RFQ, resting quote or selection survives. In both cases treat the restart as a disconnect: reconnect, run the recovery below, and let step 5 settle every order you had selected before counting its collateral free.
+A graceful server stop first drains, then closes every RFQ whose order has not reached the keeper with `RfqUpdate` `closed` (`reason: "server_shutdown"`); your orders on it end with `lost`. An order already forwarded for execution is not closed and can still land on chain. After a crash nothing is closed: the engine starts empty and no RFQ, resting quote or selection survives. In both cases treat the restart as a disconnect: reconnect, run the recovery below, and let step 5 settle every order you had selected before counting its collateral free.
 
 Recover in this order after reauthentication. Use `/maker/data` for the data reads and `/maker` for the quote plane.
 
 **1. Quote plane, `/maker`.** This is what the managed Rust SDK does before it reports `Ready`.
 
 - Send `GetSubscriptions`. If the server holds channels you do not want, send `Unsubscribe` for them.
-- Send `Subscribe` with your desired products, channels and both mint lists. Wait for `SubscribeAck`.
+- Send `Subscribe` with your desired products, channels and both mint lists. Wait for its `Reply` `subscribed`.
 - Send `GetActiveRfqs` and `GetMyQuotes` with `scope: { "type": "live" }`.
 
 ```json
@@ -217,6 +215,9 @@ Recover in this order after reauthentication. Use `/maker/data` for the data rea
     }
   }
 }
+```
+
+```json
 {
   "type": "GetActiveRfqs",
   "data": {
@@ -227,6 +228,9 @@ Recover in this order after reauthentication. Use `/maker/data` for the data rea
     }
   }
 }
+```
+
+```json
 {
   "type": "GetMyQuotes",
   "data": {
@@ -261,13 +265,13 @@ Recover in this order after reauthentication. Use `/maker/data` for the data rea
 
 **4. Money.** Book net premium from `total_premium` on the position rows. The maker's cost is the gross premium; the fee is that cost minus `total_premium`.
 
-**5. Unfinished orders.** For each local order that has no terminal outcome and is not in the Live set, send `GetOrderStatus` and wait for the response before the next one. Stop at the first rejection (`RequestError`), fix the cause, and resume from that order.
+**5. Unfinished orders.** For each local order that has no terminal outcome and is not in the Live set, send `GetOrderStatus` and wait for the response before the next one. Stop at the first rejection (`Reply` `error`), fix the cause, and resume from that order.
 
 ```json
-{ "type": "GetOrderStatus", "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000021", "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a" } }
+{ "type": "GetOrderStatus", "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000021", "order_id": "9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a" } }
 ```
 
-`state` is `pending`, `confirmed` with `position_pda`, or `unknown`. An empty Live response, a timeout and `unknown` do not prove that an order did not execute. Keep it as an obligation.
+`state` is `pending`, `confirmed` with `position_pda`, `expired`, or `unknown`. `expired` proves the order never executed and never can; drop it. An empty Live response, a timeout and `unknown` do not prove that an order did not execute. Keep it as an obligation.
 
 **6. Quote again.** Do not replay pre-disconnect quotes. Sign new ones with a fresh `valid_until`, `nonce` and `order_id`.
 
@@ -321,6 +325,9 @@ Fetch static metadata on `/maker/data` at startup and re-read it when the server
     }
   }
 }
+```
+
+```json
 {
   "type": "GetExpiries",
   "data": {
@@ -340,6 +347,9 @@ Fetch static metadata on `/maker/data` at startup and re-read it when the server
     }
   }
 }
+```
+
+```json
 {
   "type": "GetTokens",
   "data": {
@@ -350,6 +360,9 @@ Fetch static metadata on `/maker/data` at startup and re-read it when the server
     }
   }
 }
+```
+
+```json
 {
   "type": "GetMarketsForMaker",
   "data": {
@@ -384,7 +397,7 @@ Discovery returns tradable markets only (non-finalized, non-disabled, before the
 | `valid_until` margin | `rfq.expires_at + min_quote_validity_seconds` plus a little slack, capped at `market.expiry_ts`, with `min_quote_validity_seconds` from `GET /api/v1/venue`. Values below `now + min_quote_validity_seconds` or after market expiry are rejected; going far beyond the auction plus the settlement buffer only widens the maker's exposure window. |
 | Clock skew | Track `offset = server_time − local_time` from `Welcome` and `Pong`. Apply when computing `valid_until`. |
 | Quote concurrency | One active quote per `(rfq_id, terms)`. Repricing via `ReplaceQuote`. |
-| Rate limits | [Rate limits and admission](../reference/ws-common.md#rate-limits-and-admission). A breach of the message rate closes the connection with `4003`; on `/maker` with `on_disconnect: "cancel_quotes"` the disconnect then removes active and retained non-winning quotes. |
+| Rate limits | [Rate limits and admission](../reference/ws-common.md#rate-limits-and-admission). Once authenticated, an exhausted budget rejects the message (`RateLimited` with `retry_after_ms`, or a `rate_limited` quote) and the connection stays open; only the pre-authentication connection budget closes it with `4003`. Cancels have their own budget, so a kill switch is never refused for load. A full inbound queue rejects the message instead of closing the socket. |
 | Message size | `32 KiB` inbound WS message limit. |
 | Batch quotes | Prefer one `BatchQuotes` over many single `Quote` messages. |
 

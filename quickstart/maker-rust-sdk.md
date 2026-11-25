@@ -12,7 +12,7 @@ For JSON-layer integrations, see [`maker-quickstart.md`](maker-quickstart.md). M
 
 ```toml
 [dependencies]
-acta-maker-sdk = { version = "0.12.0", features = ["ws-client"] }
+acta-maker-sdk = { version = "0.13.1", features = ["ws-client"] }
 ```
 
 The SDK speaks WS protocol `1.0.0` (`WS_PROTOCOL_VERSION`). The wire is closed: every field is present, absent facts are tagged unions (`null` only as `next_cursor` on the last page), and decoding rejects unknown message types, error codes, enum values and missing fields. This guide covers ordinary makers; vault operators use the `vault` feature, see the [vault operator guide](vault-operator-guide.md).
@@ -83,7 +83,7 @@ The signer is an `Arc<dyn SignerLike + Send + Sync>`. It signs the auth challeng
 
 Readiness reads depend on the endpoint:
 
-- Quote: `GetSubscriptions`, then `Unsubscribe` for channels the server holds and the client does not want, then `Subscribe` with the desired target and a wait for `SubscribeAck`. After that it reads `GetActiveRfqs` and `GetMyQuotes { scope: Live }`. Both live reads follow continuation pages before the session reports Ready. A page that claims more rows without a cursor row fails recovery.
+- Quote: `GetSubscriptions`, then `Unsubscribe` for channels the server holds and the client does not want, then `Subscribe` with the desired target and a wait for its `Reply` `subscribed`. After that it reads `GetActiveRfqs` and `GetMyQuotes { scope: Live }`. Both live reads follow continuation pages before the session reports Ready. A page that claims more rows without a cursor row fails recovery.
 - Data: `GetMmSummary`.
 
 `initial_subscribe` seeds the desired subscription target; its `request_id` is not sent on the wire, and recovery uses fresh request IDs. Dynamic subscription changes update the desired target after acknowledgement.
@@ -121,7 +121,7 @@ quote_client.quote_in_epoch(quote, recovery_epoch).await?;
 
 With the `http` feature, `.venue(&venue)` replaces `.min_valid_until(...)`: given the `Venue` from `HttpClient::new(DEVNET_API)?.venue().await?`, it sets the floor to `now + min_quote_validity_seconds` at the current clock and refuses a `valid_until` whose `valid_until − settlement_buffer_seconds` is not after now (`QuoteBuildError::ValidUntilWithinSettlementBuffer`). Fetch the venue at startup; the builder reads the clock when `.venue` is called. `DEVNET_API`, `DEVNET_WS`, `MAINNET_API` and `MAINNET_WS` are the public origins.
 
-The builder takes the quote's `terms` and `side` from the RFQ. `QuoteBuilder::sign` selects the 182-byte layout for covered calls and cash-secured puts and the 190-byte layout for spreads and cash puts. `RfqBinding` also supports choosing a permitted strike from `order_options` for covered calls and cash-secured puts; spreads and cash puts quote exactly the RFQ's `terms`. The SDK refuses to send a `buy` `RfqRequest` (`taker_buy_unsupported`); quoting buy RFQs is covered in [Writing taker buys](#writing-taker-buys).
+The builder takes the quote's `terms` and `side` from the RFQ. `QuoteBuilder::sign` selects the 182-byte layout for covered calls and cash-secured puts and the 190-byte layout for spreads and cash puts. `RfqBinding` also supports choosing a permitted strike from `order_options` for covered calls and cash-secured puts; spreads and cash puts quote exactly the RFQ's `terms`. Quoting buy RFQs is covered in [Writing taker buys](#writing-taker-buys). A vault buys as taker with `VaultClient::rfq_request` and `side: buy` when its operator holds `BUY_FROM_MAKERS`; see the [vault operator guide](vault-operator-guide.md).
 
 ### Spreads and cash puts
 
@@ -170,7 +170,7 @@ For covered calls and cash-secured puts, `physical_premium(price, strike, quanti
 
 ### Units
 
-`RfqBroadcast.quantity` and `QuoteFilled.quantity` are underlying atoms; `Price` and `Strike` are 1e9-scaled per underlying token, independent of decimals. Mint decimals come only from `GetMarketDescriptors` on `/maker/data` (`underlying_decimals`, `quote_decimals` per `market_pda`); `MarketDecimals::observe(&message)` caches them and `get(market_pda)` returns them. `total_premium_quote_atoms(price, quantity, underlying_decimals, quote_decimals)` is the fill's gross premium (before protocol fees) in quote atoms with the contract's rounding; `Price::as_decimal()`, `Strike::as_decimal()` and `Quantity::to_units(decimals)` are for display.
+`RfqBroadcast.quantity` and `QuoteFill.quantity` are underlying atoms; `Price` and `Strike` are 1e9-scaled per underlying token, independent of decimals. Mint decimals come only from `GetMarketDescriptors` on `/maker/data` (`underlying_decimals`, `quote_decimals` per `market_pda`); `MarketDecimals::observe(&message)` caches them and `get(market_pda)` returns them. `total_premium_quote_atoms(price, quantity, underlying_decimals, quote_decimals)` is the fill's gross premium (before protocol fees) in quote atoms with the contract's rounding; `Price::as_decimal()`, `Strike::as_decimal()` and `Quantity::to_units(decimals)` are for display.
 
 `QuoteExpiry` stores whole Unix seconds; use `QuoteExpiry::from_unix_seconds(...)` or `QuoteExpiry::after(...)` rather than putting a fractional `SystemTime` into a signed order. See the crate's `managed_quote` example (`cargo run --example managed_quote --features ws-client,http`; API reference on [docs.rs](https://docs.rs/acta-maker-sdk)) for receiving recovery responses, checking epochs and handling stream gaps.
 
@@ -218,19 +218,20 @@ See [`examples/taker_buy_quote.rs`](https://github.com/acta-markets/rust-maker-s
 
 Lifecycle events arrive through the managed message receiver with a connection epoch and sequence. Apply order IDs and RFQ/order versions to the corresponding local state.
 
-| Event | Meaning |
+| `QuoteState` | Meaning |
 |---|---|
-| `QuoteAcknowledged` | Server accepted the quote. `replaced` is `ReplacedQuote::Replaced` on a replace. |
-| `QuoteRejected` | Refused; see `reason`. Bare retries fail identically. |
-| `QuoteBestStatus` / `QuoteOutbid` | Current book position. |
-| `QuoteRefreshRequested` | Settlement-buffer cutoff approaching. Resubmit with `valid_until ≥ min_valid_until`. Identified by `(rfq_id, terms)`. |
-| `QuoteSelected` | Quote locked; awaiting the taker signature. |
-| `QuoteFilled` | Position opened on-chain. Carries `market_pda`, `expiry_ts`, `terms`, `side`, `position_pda` and `transaction_signature`, so it can be attributed without the RFQ. It has no fee or net-premium field. |
-| `QuoteCancelled` | Removes only the listed `order_ids`; an empty list removes nothing. It is not a cancellation-command ACK. Reconcile after disconnect. |
-| `QuoteExpired` | Always sent when a quote expires. `reason` is `Expired` or `ExpiringSoon`. |
-| `RfqLocked` | Another maker's quote was accepted. Yours stays as a backup; do not re-quote until `RfqAvailableAgain`. |
-| `RfqAvailableAgain` | Settlement reverted; re-quote with a fresh `order_id`. |
-| `RfqClosed` | Closes the auction. Keep unresolved execution obligations separately. |
+| `Live` | Accepted, and again on every rank change (`is_best`, `best_price`). Resending the same signed quote while it is live returns `Live` again. |
+| `Selected` | Quote locked; awaiting the taker signature. |
+| `Filled` | Terminal. Position opened on-chain. Carries `market_pda`, `terms`, `side`, `position_pda` and `transaction_signature`. It has no fee or net-premium field. |
+| `RefreshRequested` | Terminal. The settlement-buffer cutoff is near: quote again with a fresh order and `valid_until ≥ min_valid_until` to stay in the RFQ. |
+| `Rejected` | This submission was refused; see `reason` (`QuoteRejectReason::DuplicateOrderId` for an `order_id` the server already knows). Terminal only if you have not seen the order `Live` or `Selected`. |
+| `Expired` | Terminal. Past `valid_until`. |
+| `Released` | Terminal. Selected, but the trade did not happen; the RFQ reopens with `RfqUpdate` `available`. |
+| `Lost` | Terminal. The RFQ closed without filling this quote. |
+
+Every order ends exactly once, with a terminal `QuoteUpdate`; a cancel, your own (`requested`), a replace (`replaced`) or the server's (`risk_check`, `maker_disconnected`), is `cancelled`. `RfqUpdate` (`locked`, `available`, `closed`) tracks the RFQ itself and never ends an order. A `rejected` for an order you already saw `Live` or `Selected` is ignored; that order keeps its state. `rfq_version` grows on every change to an RFQ's book; keep the highest one you have seen per RFQ and drop only lower versions. One change can send several messages at the same version, so apply equal ones.
+
+`QuoteOutcomeTracker` applies this rule: an outcome is terminal only on one of those events.
 
 Use `ReplaceQuote` for repricing. The prior quote is removed only after the replacement validates, so the swap is single-RTT. `CancelQuote` followed by `Quote` creates a gap and adds a round-trip.
 
@@ -239,7 +240,7 @@ Use `ReplaceQuote` for repricing. The prior quote is removed only after the repl
 quote_client.replace_in_epoch(quote.into_replacement(replaced_order_id), recovery_epoch).await?;
 ```
 
-The preimage is constructed identically to a fresh `Quote` with a new `nonce` and `order_id`. The server confirms with `QuoteAcknowledged { replaced: ReplacedQuote::Replaced { order_id: replaced_order_id } }`. Retain `replaced_order_id` until the replacement is acknowledged, since events keyed to the old id may still be in flight.
+The preimage is constructed identically to a fresh `Quote` with a new `nonce` and `order_id`. On success the old order ends with `QuoteState::Cancelled { reason: QuoteCancelReason::Replaced, .. }`, then the new order gets `QuoteState::Live`, both at the same `rfq_version`.
 
 ---
 
@@ -249,7 +250,7 @@ Position rows (`PositionInfo`, in `MakerPositions`, `MmSummary` and `PositionUpd
 
 - `state`: `Open`, `Funded`, `Liquidated`, or `Settled { settlement }`. `settlement` is `Physical { settlement_price, is_otm, holder, writer }` (each side a `ReceivedAtoms { collateral_atoms, settlement_atoms }`), `NotExercised { settlement_price }` or `Cash { settlement_price, holder_payoff, writer_return }`.
 - `terms` and `side`.
-- `total_premium`: the net premium the taker received, in quote atoms after the protocol fee. This is the authoritative figure for the position, not `QuoteFilled`. The maker's cost is the gross premium, and the fee is that cost minus `total_premium`.
+- `total_premium`: the net premium the taker received, in quote atoms after the protocol fee. This is the authoritative figure for the position, not `QuoteFill`. The maker's cost is the gross premium, and the fee is that cost minus `total_premium`.
 - `revision`: `PositionRevision { slot, transaction_index, instruction_index }`. It orders lexicographically. Keep a row only when `incoming.revision > stored.revision` for the same PDA.
 
 `PositionUpdated` carries the full row and an `update_type`, and is coalesced per PDA by revision. The managed data client receives it, with `TradeExecuted` and `MakerCapsUpdated`, through `subscribe_messages()` after summary recovery.
@@ -267,7 +268,7 @@ Spreads and cash puts reach only `Open` and `Settled`. They never produce `Funde
 - `GetSubscriptions` — quote-plane session view
 - `GetTokenCaps`, `GetMyCaps` — risk and per-maker limits
 
-`send_await` also supports `Quote` / `ReplaceQuote` (by `order_id`), batches (by their order IDs), and subscription/cancellation commands (by `request_id`). `CancelQuote` waits for `CancelQuoteAck`; `QuoteCancelled` cannot satisfy it. A correlated protocol error is a response to inspect, not a successful cancellation. Commands with no supported correlation key return `SendAwaitError::NoCorrelationKey`.
+`send_await` also supports `Quote` / `ReplaceQuote` (by `order_id`) and subscription/cancellation commands (by `request_id`). A batch has no single answer, so `send_await` refuses it; follow each quote's `QuoteUpdate`. `CancelQuote` and `CancelAllQuotes` wait for their `Reply` `accepted`; the orders they removed end with `QuoteUpdate` `cancelled`. A correlated protocol error is a response to inspect, not a successful cancellation. Commands with no supported correlation key return `SendAwaitError::NoCorrelationKey`.
 
 `AddMints`, `RemoveMints`, `AddChannels`, and `RemoveChannels` mutate subscriptions incrementally. `AddMints` and `RemoveMints` take both mint lists, and an empty list means no change. Each mutation returns `SubscriptionUpdated` with the current channels and both mint lists.
 
@@ -327,6 +328,7 @@ for order_id in unfinished {
         .await?; // a rejected request returns Err; stop and fix the cause
     match &status.state {
         OrderExecutionState::Confirmed { position_pda } => { /* book from the position row */ }
+        OrderExecutionState::Expired => { /* never executed; drop the obligation */ }
         OrderExecutionState::Pending | OrderExecutionState::Unknown => { /* keep the obligation */ }
     }
 }
@@ -350,7 +352,7 @@ The writer keeps Quote, BatchQuotes, ReplaceQuote, CancelQuote and CancelAllQuot
 
 `write_timeout` bounds one socket write, not total queueing time or how long the server takes to apply a cancel. `OnDisconnect::CancelQuotes` provides a disconnect fallback, not a bounded-time halt; selected/executing obligations survive it. Queue admission or a successful socket write alone does not prove the server applied a command.
 
-An inbound receiver that falls behind reports `ManagedReceiveError::Gap`; the configured gap policy decides whether the session reconnects. Keep the strategy's unresolved orders across this boundary and query `GetOrderStatus` after losing an ACK. `unknown`, timeout and an empty Live result are not proof of nonexecution.
+An inbound receiver that falls behind reports `ManagedReceiveError::Gap`; the configured gap policy decides whether the session reconnects. Keep the strategy's unresolved orders across this boundary and query `GetOrderStatus` after losing an ACK. `unknown`, timeout and an empty Live result are not proof of nonexecution; only `expired` is.
 
 The server does not replay the missed event stream. Handle duplicate lifecycle observations idempotently using order identity and entity versions.
 
@@ -370,11 +372,11 @@ For typed integrations, `MakerQuoteClient` exposes trading operations and `Maker
 
 `WsClientError` covers transport failures; the reconnection loop retries. `ManagedWsError::Closed` indicates the handle's connection task is no longer running; `QueueFull` that the outbound queue or writer lane is full. `SendAwaitError::Timeout` signals the `send_await` deadline elapsed; `Disconnected` indicates the connection went down before the response arrived; `QueueFull` that the request was never queued to the socket. Terminal session states surface through `subscribe_state()` as `Closed { reason }`: `Requested`, `SessionReplaced`, `UnsupportedProtocolVersion`, `AuthenticationRejected`, `ReconnectLimitReached`, `SessionPanicked`.
 
-Protocol-level errors arrive as `ServerMessage::Error` (session-level) or `ServerMessage::RequestError` (per-request, correlated by `request_id`), both carrying one `ServerError`. Error codes are a closed `WsErrorCode` enum: `ServerError::Generic { code, message }` carries the typed code, so match on `code`. A code outside the enum fails decoding. Branch on `error.action()`, an `acta_maker_sdk::ws::types::ErrorAction` (`Retry`, `Reauthenticate`, `Refresh`, `Reconcile`, `FixRequest`, `Stop`), never on `message`; for a `RequestError` use `error.action().for_delivery(delivery)`, which turns any action into `Reconcile` when `delivery` is `Unknown`. Quote outcomes arrive as `QuoteRejected { reason, message }`; besides validation reasons, `RateLimited` means the `liquidity_provider` bucket is exhausted (the session stays up, retry later) and `TradingPaused` means the venue is paused. `QuoteRejectReason`, `CapError` and `PositionUpdateType` are exhaustive, so a `match` without a wildcard arm is checked against the wire. The full list is in [`../reference/maker-api.md`](../reference/maker-api.md). `ServerError::is_quote_race` marks the normal races of quoting against a moving RFQ (`RfqNotFound`, `RfqNotActive`, `RfqAlreadyLocked`, `QuoteLocked`, `QuoteNotFound`, `QuoteExpired`); the managed session logs those at debug and every other `RequestError` at error.
+Protocol-level errors arrive as `ServerMessage::Error` (session-level) or a `ServerMessage::Reply` whose `ReplyResult::Error { error, delivery }` is correlated by `request_id`; both carry one `ServerError`. Error codes are a closed `WsErrorCode` enum: `ServerError::Generic { code, message }` carries the typed code, so match on `code`. A code outside the enum fails decoding. Branch on `error.action()`, an `acta_maker_sdk::ws::types::ErrorAction` (`Retry`, `Reauthenticate`, `Refresh`, `Reconcile`, `FixRequest`, `Stop`), never on `message`; for a `Reply` error use `error.action().for_delivery(delivery)`, which turns any action into `Reconcile` when `delivery` is `Unknown`. Quote refusals arrive as `QuoteState::Rejected { reason, message }`; besides validation reasons, `RateLimited` means the `liquidity_provider` bucket is exhausted (the session stays up, retry later) and `TradingPaused` means the venue is paused. `QuoteRejectReason`, `CapError` and `PositionUpdateType` are exhaustive, so a `match` without a wildcard arm is checked against the wire. The full list is in [`../reference/maker-api.md`](../reference/maker-api.md). `ServerError::is_quote_race` marks the normal races of quoting against a moving RFQ (`RfqNotFound`, `RfqNotActive`, `RfqAlreadyLocked`, `QuoteLocked`, `QuoteNotFound`, `QuoteExpired`); the managed session logs those at debug and every other error `Reply` at error. `ServerError::RateLimited { retry_after_ms }` says when to send again.
 
 To count I/O, install a process-wide observer once: `acta_maker_sdk::io_observer::install(fn)`. It receives HTTP requests, statuses and body bytes per endpoint, WebSocket frames per stream and RPC methods. Nothing is recorded until one is installed.
 
-Server-initiated closes carry a close code: `4000 idle_timeout`, `4001 auth_timeout`, `4002 slow_consumer`, `4003 rate_limited`, `4004 session_replaced`, `4005 hello_timeout`, `4006 unsupported_protocol_version`. The managed client logs the frame and reports it as `ManagedWsEvent::Disconnected { close: Some(ServerClose { code, reason }) }`, including when an `AuthError` / `Error` with the same code precedes the close; `close_code()` decodes it to `Option<CloseCode>`. `WsClient::server_close()` returns it after `next()` ends. The managed client reconnects after all of them except session replacement and an unsupported protocol version, which terminate it. Some server closes carry no code (blacklisted or unregistered maker, expired session, parse-error or auth-attempt limits, server shutdown); then `close` is `None` and the preceding `Error` / `AuthError` usually names the cause. Every opened connection ends with exactly one `Disconnected`, before `Terminated` when the client stops. Codes 4900 (`pong_timeout`) and 4901 (`auth_error`) are the TypeScript client's own drops and never come from the server.
+Server-initiated closes carry a close code: `4000 idle_timeout`, `4001 auth_timeout`, `4002 slow_consumer`, `4003 rate_limited`, `4004 session_replaced`, `4005 hello_timeout`, `4006 unsupported_protocol_version`, `4007 vault_session_invalidated` (Vault sessions: the grant changed; the managed client reconnects and authenticates again). The managed client logs the frame and reports it as `ManagedWsEvent::Disconnected { close: Some(ServerClose { code, reason }) }`, including when an `AuthError` / `Error` with the same code precedes the close; `close_code()` decodes it to `Option<CloseCode>`. `WsClient::server_close()` returns it after `next()` ends. The managed client reconnects after all of them except session replacement and an unsupported protocol version, which terminate it. Some server closes carry no code (blacklisted or unregistered maker, expired session, parse-error or auth-attempt limits, server shutdown); then `close` is `None` and the preceding `Error` / `AuthError` usually names the cause. Every opened connection ends with exactly one `Disconnected`, before `Terminated` when the client stops. Codes 4900 (`pong_timeout`) and 4901 (`auth_error`) are the TypeScript client's own drops and never come from the server.
 
 ---
 

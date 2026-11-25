@@ -16,7 +16,7 @@ API payloads are in [Maker API](maker-api.md), [Taker API](taker-api.md), and [W
 | **Oracle setter and settlement attestor** | Compute the expiry fixing and publish it to the oracle accounts. | Protocol-operated. See [Settlement fixing](#settlement-fixing). |
 | **Liquidator** | Closes ITM physical positions the maker never funded; fronts the settlement to the taker. | Permissionless. Anyone can run it. |
 
-Every RFQ, quote and position carries `side`, the taker's direction. On `sell` the taker writes and the maker buys. On `buy` a wallet buys from a maker, who writes from Maker PDA custody, or from a vault, which writes from its collateral leg; the `is_taker_buy` byte in the order-id preimage is `1`. A vault quotes buys but cannot request one: `RfqRequest` with `side: "buy"` from a vault session fails with `taker_buy_unsupported`.
+Every RFQ, quote and position carries `side`, the taker's direction. On `sell` the taker writes and the maker buys. On `buy` a wallet buys from a maker, who writes from Maker PDA custody, or from a vault, which writes from its collateral leg; the `is_taker_buy` byte in the order-id preimage is `1`. A vault also buys as taker: `RfqRequest` with `side: "buy"` from a vault session needs `BUY_FROM_MAKERS`, and the position opens with instructions 82-85.
 
 On a buy the buyer pays the gross premium, and a physical option needs a deposit strictly before `expiry_ts` to exercise. With no deposit all collateral returns to the writer, also when in the money, and the position reads `not_exercised`. A bought spread or cash put takes no deposit: the maker locks the width times quantity, the buyer can lose at most the premium and receives at most the width.
 
@@ -65,14 +65,14 @@ There is no order book. The taker drives a sealed auction, makers stream signed 
 
 - The taker sends `RfqRequest` (market, `terms`, `side`, quantity, timeout). The backend broadcasts it to eligible makers.
 - Makers reply with signed `Quote`s. Each quote is a `(terms, side, price, valid_until)` against the fixed request. Makers cannot quote partial size or change the terms.
-- The taker selects the winner by sending `AcceptQuote { maker, order_id }`. Whatever `order_id` the taker names wins. The server's "best price" (`QuoteBestStatus` / `QuoteOutbid`) is advisory only and never selects the winner.
+- The taker selects the winner by sending `AcceptQuote { maker, order_id }`. Whatever `order_id` the taker names wins. The server's "best price" (`is_best` / `best_price` on `QuoteUpdate` `live`) is advisory only and never selects the winner.
 - Winner-take-all: one quote is locked for the full RFQ quantity. No partial fills, no multiple winners. Every live quote reserves full capacity against caps (open interest, notional, position count) for its validity window; the reservation is released on cancel, expiry, or rejection, and converts into position exposure on fill. See [caps.md](caps.md#how-quotes-consume-capacity).
-- A maker's live quote is keyed by `(rfq_id, terms)`. A new quote with the same key replaces the previous one, and `QuoteAcknowledged.replaced` names it.
-- The advisory "best" ranking (used only for `QuoteBestStatus` / `best_price`) is: higher premium wins, ties broken by earlier `received_at`, then by smaller `order_id`.
+- A maker's live quote is keyed by `(rfq_id, terms)`. A new quote with the same key replaces the previous one: the old order ends with `QuoteUpdate` `cancelled` `replaced`, then the new order gets `live`.
+- The advisory "best" ranking (used only for `is_best` / `best_price`) is: higher premium wins, ties broken by earlier `received_at`, then by smaller `order_id`.
 
 Indicative pricing: after connecting, makers may receive `IndicativePricesRequest`, one per taker side, and reply with non-binding reference prices per strike. Takers see the median per strike while browsing, before opening an RFQ.
 
-When the taker accepts a quote, the other makers on the RFQ receive `RfqLocked`. Their quotes stay as backups: a failed signature reopens the RFQ with `RfqAvailableAgain`.
+When the taker accepts a quote, the makers on the RFQ receive `RfqUpdate` `locked`. The other quotes stay as backups: a failed signature reopens the RFQ with `RfqUpdate` `available`, and the selected quote ends with `QuoteUpdate` `released`.
 
 ## Trade lifecycle
 
@@ -114,7 +114,7 @@ Defaults below are the server's configuration defaults; all are configurable.
 | --- | --- | --- |
 | RFQ window | taker-chosen | `expires_at = created_at + request.timeout`. The auction deadline. |
 | `settlement_buffer` | 50 s | The trailing window reserved for settlement confirmation. A quote's effective trading cutoff is `valid_until - settlement_buffer`; quotes whose `valid_until` is closer than `settlement_buffer + quote_refresh_lead` are rejected. |
-| `quote_refresh_lead` | 10 s | At `effective_expiry - quote_refresh_lead` the server fires `QuoteRefreshRequested` and freezes the quote (unacceptable until re-quoted). |
+| `quote_refresh_lead` | 10 s | At `effective_expiry - quote_refresh_lead` the server freezes the quote and sends `QuoteUpdate` `refresh_requested`, which ends that order; quote again with a fresh order to stay in the RFQ. |
 | `signature_timeout` | 30 s | Max time the taker has to sign the sponsored tx after `AcceptQuote`. The signature deadline is the minimum of `now + signature_timeout`, the quote's effective expiry, and the RFQ's `expires_at`. |
 | `submitted_watchdog_timeout` | 120 s | After this the server flags a submitted trade that has not resolved. The RFQ stays locked to the selected quote until the trade confirms on-chain or the server knows the transaction was never sent. |
 | `closed_rfq_ttl` | 300 s | How long a closed RFQ is retained before purge. |
@@ -125,7 +125,7 @@ Defaults below are the server's configuration defaults; all are configurable.
 
 `rfq.expires_at` is the auction deadline; `quote.valid_until` is the on-chain order validity. They are distinct clocks. `valid_until` may not exceed the market expiry.
 
-On a signature timeout or tx-build failure, the locked (winning) quote is discarded and only the still-valid losing quotes are restored; the RFQ reverts to active if it has not yet expired.
+On a signature timeout or tx-build failure, the locked (winning) quote is discarded and only the still-valid losing quotes are restored; the RFQ reverts to active if it has not yet expired. The taker gets `OrderUpdate` `failed`, then `RfqUpdate` `available`.
 
 ### Expiries and the trading cutoff
 
@@ -331,8 +331,8 @@ Events worth tracking end to end:
 
 | Event | When |
 | --- | --- |
-| `QuoteFilled` / `OrderConfirmed` | Position opened on chain; both carry `position_pda`, and `QuoteFilled` also `transaction_signature`. `QuoteFilled` has no fee or net-premium fields; read the money from the position row. |
-| `RfqClosed` | Auction closed; on a fill, `winner = { type: "winner", maker, price, transaction }`. |
+| `QuoteUpdate` `filled` / `OrderUpdate` `confirmed` | Position opened on chain; both carry `position_pda`, and `filled` also `transaction_signature`. `filled` has no fee or net-premium fields; read the money from the position row. |
+| `RfqUpdate` `closed` | Auction closed; on a fill, `winner = { type: "winner", maker_owner, price, transaction }`. Each maker quote that did not win ends with `QuoteUpdate` `lost`. |
 | `ChainEvent(position_opened)` | Position opened, via chain events. |
 | `PositionUpdated { position, update_type }` | Full position row; `update_type` is `created`, `funded`, `liquidated` or `settled`. Apply it only if its `revision` is newer than the stored one. |
 | `MarketFinalized` | Market expired, settlement price set. |

@@ -54,7 +54,7 @@ Any `protocol_version` other than `1.0.0` gets an `Error` with `unsupported_prot
 Taker auth is lazy; you may defer it until the first authenticated action. Start the fresh-sign flow with your wallet pubkey:
 
 ```json
-{ "type": "StartAuth", "data": { "pubkey": "TakerWalletPubkeyBase58" } }
+{ "type": "StartAuth", "data": { "pubkey": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84" } }
 ```
 
 The server replies with a challenge. The taker challenge includes a `Wallet:` line (the maker challenge does not):
@@ -63,7 +63,7 @@ The server replies with a challenge. The taker challenge includes a `Wallet:` li
 {
   "type": "AuthRequest",
   "data": {
-    "challenge": "Acta RFQ Authentication\n\nSign this message to authenticate your wallet.\n\nWallet: TakerWalletPubkeyBase58\nNonce: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nIssued At: 2024-03-09T12:00:00Z\n"
+    "challenge": "Acta RFQ Authentication\n\nSign this message to authenticate your wallet.\n\nWallet: 5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84\nNonce: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nIssued At: 2024-03-09T12:00:00Z\n"
   }
 }
 ```
@@ -74,9 +74,9 @@ Validate the complete [canonical challenge](../reference/ws-common.md#what-to-si
 {
   "type": "AuthChallenge",
   "data": {
-    "challenge": "Acta RFQ Authentication\n\nSign this message to authenticate your wallet.\n\nWallet: TakerWalletPubkeyBase58\nNonce: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nIssued At: 2024-03-09T12:00:00Z\n",
-    "signature": "3q7uQqYc3...base58sig",
-    "pubkey": "TakerWalletPubkeyBase58"
+    "challenge": "Acta RFQ Authentication\n\nSign this message to authenticate your wallet.\n\nWallet: 5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84\nNonce: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nIssued At: 2024-03-09T12:00:00Z\n",
+    "signature": "5V994XKESUifbX9zQ5ydLfse5Mkghbnb9E1yPgwmmbq3UNj4rfunARGjRD2Qyxbhjt8CfKD3UesBhJ7PWuMqVovG",
+    "pubkey": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84"
   }
 }
 ```
@@ -108,7 +108,7 @@ Sent automatically after `AuthSuccess`. `markets` lists the active markets in th
   "data": {
     "markets": [
       {
-        "pda": "MarketPdaBase58",
+        "pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
         "underlying_mint": "So11111111111111111111111111111111111111112",
         "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "expiry_ts": 1710600000,
@@ -158,7 +158,7 @@ Full descriptors carry `size_rule`, decimals and oracle PDAs, which you need to 
         "market_descriptor": {
           "chain_id": 0,
           "program_id": "33Ezs5eoa16QyPW8wifnyz2nCyMEcq2crqkVBNjnTE8U",
-          "market_pda": "MarketPdaBase58",
+          "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
           "underlying_mint": "So11111111111111111111111111111111111111112",
           "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
           "expiry_ts": 1710600000,
@@ -166,8 +166,8 @@ Full descriptors carry `size_rule`, decimals and oracle PDAs, which you need to 
           "collateral_mint": "So11111111111111111111111111111111111111112",
           "settlement_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
         },
-        "underlying_oracle_pda": "UnderlyingOraclePdaBase58",
-        "quote_oracle_pda": "QuoteOraclePdaBase58",
+        "underlying_oracle_pda": "7m2mo7rVtdYwu6VnX4UMiu24we992YxKdLof75R5i7ny",
+        "quote_oracle_pda": "BEKw2p8eGFfNSV7KBVCPsxdrcqgT4FrVdtHRbL3PU4z6",
         "underlying_decimals": 9,
         "quote_decimals": 6,
         "size_rule": {
@@ -186,7 +186,7 @@ Full descriptors carry `size_rule`, decimals and oracle PDAs, which you need to 
 
 `program_id` is the same on devnet and mainnet. `GET /api/v1/venue` returns the authoritative `program_id`.
 
-### 6) Subscribe, SubscribeAck
+### 6) Subscribe, Reply
 
 Every field is required. `underlying_mints: []` and `quote_mints: []` mean every mint. `products` is a non-empty list of unique product names; the server does not use it to filter what a taker receives. A taker tracks position outcomes through `PositionUpdated`, which arrives on the session without a subscription. Subscribe to `chain_events` for chain-level settlement events, and optionally to `trades`, `stats` and `markets`. `rfqs` is a maker channel: a taker's own RFQ, quote and order events arrive on the session.
 
@@ -205,12 +205,15 @@ Every field is required. `underlying_mints: []` and `quote_mints: []` mean every
 
 ```json
 {
-  "type": "SubscribeAck",
-  "data": { "request_id": "4e9a2b17-8c6d-4f31-a5e0-7d3b1c9f2a64", "subscribed": ["chain_events", "trades"] }
+  "type": "Reply",
+  "data": {
+    "request_id": "4e9a2b17-8c6d-4f31-a5e0-7d3b1c9f2a64",
+    "result": { "type": "subscribed", "channels": ["chain_events", "trades"] }
+  }
 }
 ```
 
-### 7) RfqRequest, CommandAccepted, RfqCreated
+### 7) RfqRequest, Reply, RfqCreated
 
 `terms` names the product and its strikes. `side` is `sell` here; `buy` buys the same terms. `quantity` is underlying atoms for every product. Here: 5 SOL, covered call, strike 136.0.
 
@@ -219,7 +222,7 @@ Every field is required. `underlying_mints: []` and `quote_mints: []` mean every
   "type": "RfqRequest",
   "data": {
     "request_id": "7a4c4b3e-2f1d-4c55-9a51-4f0d0e2b6a42",
-    "market_pda": "MarketPdaBase58",
+    "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
     "terms": { "type": "covered_call", "strike": "136000000000" },
     "side": "sell",
     "quantity": "5000000000",
@@ -229,7 +232,7 @@ Every field is required. `underlying_mints: []` and `quote_mints: []` mean every
 ```
 
 ```json
-{ "type": "CommandAccepted", "data": { "request_id": "7a4c4b3e-2f1d-4c55-9a51-4f0d0e2b6a42" } }
+{ "type": "Reply", "data": { "request_id": "7a4c4b3e-2f1d-4c55-9a51-4f0d0e2b6a42", "result": { "type": "accepted" } } }
 ```
 
 ```json
@@ -250,7 +253,7 @@ Every field is required. `underlying_mints: []` and `quote_mints: []` mean every
 }
 ```
 
-The receipt and `RfqCreated` can arrive in either order. `order_options` is the list of `terms` makers may quote. For a covered call or cash-secured put it is a strike ladder of the same product; here it holds one strike.
+`Reply` `accepted` comes first, then `RfqCreated`. `rfq_id` is the server's id for the RFQ; `request_id` only correlates. Resending the same `request_id` returns the same `RfqCreated`, followed by `RfqUpdate` `closed` if the RFQ already ended. `order_options` is the list of `terms` makers may quote. For a covered call or cash-secured put it is a strike ladder of the same product; here it holds one strike.
 
 ### 8) QuoteReceived (streamed, 0..N)
 
@@ -263,11 +266,11 @@ Each quote is firm and hash-bound through `order_id`. `net_price` is a display e
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "terms": { "type": "covered_call", "strike": "136000000000" },
     "side": "sell",
-    "maker_owner": "MakerAOwnerPubkeyBase58",
+    "maker_owner": "A87ysNWAmmqQHafLSQGbYSLhtcV3BjXctR88EWuSobGP",
     "price": "50000000",
     "valid_until": 1710000330,
     "nonce": "42",
-    "order_id": "0x1111111111111111111111111111111111111111111111111111111111111111",
+    "order_id": "1111111111111111111111111111111111111111111111111111111111111111",
     "net_price": "49750000"
   }
 }
@@ -280,11 +283,11 @@ Each quote is firm and hash-bound through `order_id`. `net_price` is a display e
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "terms": { "type": "covered_call", "strike": "136000000000" },
     "side": "sell",
-    "maker_owner": "MakerBOwnerPubkeyBase58",
+    "maker_owner": "AoDXzkRcHufMfAApMTghyRq3GPsLpYFVBSCdwKVTXsZf",
     "price": "51000000",
     "valid_until": 1710000335,
     "nonce": "7",
-    "order_id": "0x2222222222222222222222222222222222222222222222222222222222222222",
+    "order_id": "2222222222222222222222222222222222222222222222222222222222222222",
     "net_price": "50745000"
   }
 }
@@ -292,7 +295,7 @@ Each quote is firm and hash-bound through `order_id`. `net_price` is a display e
 
 You pick the winner by `order_id` (here maker B, the higher premium). Show `net_price`; use `price` and `order_id` for the accept.
 
-### 9) AcceptQuote, CommandAccepted, SponsoredTxToSign
+### 9) AcceptQuote, Reply, SponsoredTxToSign
 
 ```json
 {
@@ -300,21 +303,21 @@ You pick the winner by `order_id` (here maker B, the higher premium). Show `net_
   "data": {
     "request_id": "0c9e1d52-6c0b-4f7e-b1a9-7d8f3c2e5a10",
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "maker_owner": "MakerBOwnerPubkeyBase58",
-    "order_id": "0x2222222222222222222222222222222222222222222222222222222222222222"
+    "maker_owner": "AoDXzkRcHufMfAApMTghyRq3GPsLpYFVBSCdwKVTXsZf",
+    "order_id": "2222222222222222222222222222222222222222222222222222222222222222"
   }
 }
 ```
 
 ```json
-{ "type": "CommandAccepted", "data": { "request_id": "0c9e1d52-6c0b-4f7e-b1a9-7d8f3c2e5a10" } }
+{ "type": "Reply", "data": { "request_id": "0c9e1d52-6c0b-4f7e-b1a9-7d8f3c2e5a10", "result": { "type": "accepted" } } }
 ```
 
 ```json
 {
   "type": "SponsoredTxToSign",
   "data": {
-    "order_id": "0x2222222222222222222222222222222222222222222222222222222222222222",
+    "order_id": "2222222222222222222222222222222222222222222222222222222222222222",
     "tx_base64": "AQABAg... (base64 v0 VersionedTransaction) ...",
     "last_valid_block_height": 312456789,
     "signature_deadline_at": 1710000030
@@ -322,77 +325,79 @@ You pick the winner by `order_id` (here maker B, the higher premium). Show `net_
 }
 ```
 
-The receipt and the lifecycle push (`SponsoredTxToSign` here, `OrderAccepted` in step 10) can arrive in either order. Verify the transaction against the accepted quote, sign it and return it before `signature_deadline_at`. The keeper is the fee payer in signature slot 0. The taker fills signature slot 1. See [Sponsored transaction: raw signing](taker-quickstart.md#sponsored-transaction-raw-signing) for the byte-level layout.
+The receipt and the lifecycle push (`SponsoredTxToSign` here, `OrderUpdate` `accepted` in step 10) can arrive in either order. Verify the transaction against the accepted quote, sign it and return it before `signature_deadline_at`. The keeper is the fee payer in signature slot 0. The taker fills signature slot 1. See [Sponsored transaction: raw signing](taker-quickstart.md#sponsored-transaction-raw-signing) for the byte-level layout.
 
-### 10) SubmitSignedSponsoredTx, CommandAccepted, OrderAccepted, OrderSubmitted, OrderConfirmed
+### 10) SubmitSignedSponsoredTx, Reply, OrderUpdate
 
 ```json
 {
   "type": "SubmitSignedSponsoredTx",
   "data": {
     "request_id": "5f2b8a61-3d4e-4b7c-8e9f-1a2b3c4d5e6f",
-    "order_id": "0x2222222222222222222222222222222222222222222222222222222222222222",
+    "order_id": "2222222222222222222222222222222222222222222222222222222222222222",
     "tx_base64": "AQABAg... (same tx, taker slot now filled) ..."
   }
 }
 ```
 
 ```json
-{ "type": "CommandAccepted", "data": { "request_id": "5f2b8a61-3d4e-4b7c-8e9f-1a2b3c4d5e6f" } }
+{ "type": "Reply", "data": { "request_id": "5f2b8a61-3d4e-4b7c-8e9f-1a2b3c4d5e6f", "result": { "type": "accepted" } } }
 ```
 
+Then one `OrderUpdate` per step of the order, ranked by `order_version`:
+
 ```json
-{ "type": "OrderAccepted", "data": { "order_id": "0x2222222222222222222222222222222222222222222222222222222222222222", "order_version": 1 } }
+{ "type": "OrderUpdate", "data": { "order_id": "2222222222222222222222222222222222222222222222222222222222222222", "order_version": 1, "state": { "type": "accepted" } } }
 ```
 
 ```json
 {
-  "type": "OrderSubmitted",
+  "type": "OrderUpdate",
   "data": {
-    "order_id": "0x2222222222222222222222222222222222222222222222222222222222222222",
-    "transaction_signature": "5eyk...base58sig",
-    "order_version": 2
+    "order_id": "2222222222222222222222222222222222222222222222222222222222222222",
+    "order_version": 2,
+    "state": { "type": "submitted", "transaction_signature": "ZzRPR6pWiL3B77tGitQFve4G2s431KhVgF1Z14vdHUMSqVFPuyCT2Bx4iK7ofDAj41hGHJhf9qAaYiR5qD5b25S" }
   }
 }
 ```
 
 ```json
 {
-  "type": "OrderConfirmed",
+  "type": "OrderUpdate",
   "data": {
-    "order_id": "0x2222222222222222222222222222222222222222222222222222222222222222",
-    "position_pda": "PositionPdaBase58",
-    "order_version": 4
+    "order_id": "2222222222222222222222222222222222222222222222222222222222222222",
+    "order_version": 4,
+    "state": { "type": "confirmed", "position_pda": "75NqraLLofiLUpNQg2wUPG6CJpxcaGEZUwuNrnAgvcTP" }
   }
 }
 ```
 
-`transaction_signature` arrives on `OrderSubmitted` and is not repeated on `OrderConfirmed`.
+`transaction_signature` arrives on `submitted` and is not repeated on `confirmed`.
 
-### 11) RfqClosed (server -> client)
+### 11) RfqUpdate closed (server -> client)
 
-Terminal RFQ event; it follows `OrderConfirmed` on a fill. Drop per-RFQ state here. `your_quote` and `winner` are always present and `{ "type": "none" }` when they do not apply.
+Terminal RFQ event; it follows `OrderUpdate` `confirmed` on a fill. Drop per-RFQ state here. `winner` is always present and `{ "type": "none" }` when there is none.
 
 ```json
 {
-  "type": "RfqClosed",
+  "type": "RfqUpdate",
   "data": {
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "rfq_version": 2,
-    "reason": "filled",
-    "your_quote": {
-      "type": "none"
-    },
-    "winner": {
-      "type": "winner",
-      "maker_owner": "MakerBOwnerPubkeyBase58",
-      "price": "51000000",
-      "transaction": {
-        "type": "sent",
-        "signature": "5eyk...base58sig"
-      }
-    },
-    "closed_at": 1710000012
+    "state": {
+      "type": "closed",
+      "reason": "filled",
+      "winner": {
+        "type": "winner",
+        "maker_owner": "AoDXzkRcHufMfAApMTghyRq3GPsLpYFVBSCdwKVTXsZf",
+        "price": "51000000",
+        "transaction": {
+          "type": "sent",
+          "signature": "ZzRPR6pWiL3B77tGitQFve4G2s431KhVgF1Z14vdHUMSqVFPuyCT2Bx4iK7ofDAj41hGHJhf9qAaYiR5qD5b25S"
+        }
+      },
+      "at": 1710000012
+    }
   }
 }
 ```
@@ -411,8 +416,8 @@ After the position is projected, the session receives the full row. No subscript
         "transaction_index": 14,
         "instruction_index": 2
       },
-      "pda": "PositionPdaBase58",
-      "market_pda": "MarketPdaBase58",
+      "pda": "75NqraLLofiLUpNQg2wUPG6CJpxcaGEZUwuNrnAgvcTP",
+      "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
       "underlying_mint": "So11111111111111111111111111111111111111112",
       "underlying_symbol": "SOL",
       "underlying_decimals": 9,
@@ -454,7 +459,7 @@ A put spread on a put market. The market lists `put_spread` in `products`. The s
   "type": "RfqRequest",
   "data": {
     "request_id": "a1b2c3d4-0001-4a5b-8c6d-7e8f90a1b2c3",
-    "market_pda": "PutMarketPdaBase58",
+    "market_pda": "eg6NM4W7K9YrVpaEbSozA3tkLzrXAkcCf5XUjXGn7BJ",
     "terms": { "type": "put_spread", "lower_strike": "130000000000", "upper_strike": "140000000000" },
     "side": "sell",
     "quantity": "5000000000",
@@ -496,11 +501,11 @@ The gross price `G = 1.2` is below the width `10`. At 50 bps premium and 10 bps 
     "rfq_id": "b2c3d4e5-0002-4b6c-9d7e-8f90a1b2c3d4",
     "terms": { "type": "put_spread", "lower_strike": "130000000000", "upper_strike": "140000000000" },
     "side": "sell",
-    "maker_owner": "MakerAOwnerPubkeyBase58",
+    "maker_owner": "A87ysNWAmmqQHafLSQGbYSLhtcV3BjXctR88EWuSobGP",
     "price": "1200000000",
     "valid_until": 1710000330,
     "nonce": "11",
-    "order_id": "0x3333333333333333333333333333333333333333333333333333333333333333",
+    "order_id": "3333333333333333333333333333333333333333333333333333333333333333",
     "net_price": "1194000000"
   }
 }
@@ -522,8 +527,8 @@ At settlement price `133` the intrinsic value is `7`. The maker receives `350000
         "transaction_index": 3,
         "instruction_index": 1
       },
-      "pda": "PositionPdaBase58",
-      "market_pda": "PutMarketPdaBase58",
+      "pda": "75NqraLLofiLUpNQg2wUPG6CJpxcaGEZUwuNrnAgvcTP",
+      "market_pda": "eg6NM4W7K9YrVpaEbSozA3tkLzrXAkcCf5XUjXGn7BJ",
       "underlying_mint": "So11111111111111111111111111111111111111112",
       "underlying_symbol": "SOL",
       "underlying_decimals": 9,
@@ -566,7 +571,7 @@ A cash put carries one strike `K`. It is economically a put spread with lower st
   "type": "RfqRequest",
   "data": {
     "request_id": "c3d4e5f6-0003-4c7d-8e8f-90a1b2c3d4e5",
-    "market_pda": "PutMarketPdaBase58",
+    "market_pda": "eg6NM4W7K9YrVpaEbSozA3tkLzrXAkcCf5XUjXGn7BJ",
     "terms": { "type": "cash_put", "strike": "136000000000" },
     "side": "sell",
     "quantity": "5000000000",
@@ -581,22 +586,25 @@ A spread whose strikes are unordered, or whose lower strike is `0` for a call sp
 
 ```json
 {
-  "type": "RequestError",
+  "type": "Reply",
   "data": {
     "request_id": "a1b2c3d4-0001-4a5b-8c6d-7e8f90a1b2c3",
-    "error": {
-      "type": "Generic",
-      "data": {
-        "code": "spread_invalid_strikes",
-        "message": "spreads require ordered strikes; call lower must be positive"
-      }
-    },
-    "delivery": "not_applicable"
+    "result": {
+      "type": "error",
+      "error": {
+        "type": "Generic",
+        "data": {
+          "code": "spread_invalid_strikes",
+          "message": "spreads require ordered strikes; call lower must be positive"
+        }
+      },
+      "delivery": "not_applicable"
+    }
   }
 }
 ```
 
-Strikes that are not multiples of the underlying's `strike_tick` fail with `spread_tick_violation`. A product that is not enabled for the pair fails with `product_not_allowed`. `"side": "buy"` from a vault session fails with `taker_buy_unsupported`.
+Strikes that are not multiples of the underlying's `strike_tick` fail with `spread_tick_violation`. A product that is not enabled for the pair fails with `product_not_allowed`. A vault session without the side's delegate permission (`OPEN_AS_WRITER` to sell, `BUY_FROM_MAKERS` to buy) fails with `vault_authorization_failed`.
 
 ---
 
@@ -621,19 +629,23 @@ A valid session returns `AuthSuccess` (as in step 3, without `AuthRequest` or si
 ```
 
 ```json
+{ "type": "Reply", "data": { "request_id": "b3d5f7a9-1c2e-4f40-8b6d-9e0a2c4e6f81", "result": { "type": "accepted" } } }
+```
+
+```json
 {
-  "type": "RfqClosed",
+  "type": "RfqUpdate",
   "data": {
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "rfq_version": 2,
-    "reason": "taker_cancelled",
-    "your_quote": {
-      "type": "none"
-    },
-    "winner": {
-      "type": "none"
-    },
-    "closed_at": 1710000020
+    "state": {
+      "type": "closed",
+      "reason": "taker_cancelled",
+      "winner": {
+        "type": "none"
+      },
+      "at": 1710000020
+    }
   }
 }
 ```
@@ -644,11 +656,11 @@ The keeper may retry retryable submission failures within five attempts. Exhaust
 
 ```json
 {
-  "type": "OrderFailed",
+  "type": "OrderUpdate",
   "data": {
-    "order_id": "0x2222222222222222222222222222222222222222222222222222222222222222",
-    "reason": "blockhash_expired_before_send",
-    "order_version": 3
+    "order_id": "2222222222222222222222222222222222222222222222222222222222222222",
+    "order_version": 3,
+    "state": { "type": "failed", "reason": "blockhash_expired_before_send" }
   }
 }
 ```
@@ -657,19 +669,22 @@ Only a locally proven-unforwarded failure may reopen an eligible RFQ with `reaso
 
 ```json
 {
-  "type": "RfqAvailableAgain",
+  "type": "RfqUpdate",
   "data": {
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "rfq_version": 3,
-    "reason": "tx_failed",
-    "available_again_at": 1710000015
+    "state": {
+      "type": "available",
+      "reason": "tx_failed",
+      "at": 1710000015
+    }
   }
 }
 ```
 
-Refresh the reopened RFQ and select a currently available quote. Rollback discards the winning quote; do not replay its old `order_id`. `RfqAvailableAgain.reason` is an enum: `signature_timeout`, `tx_failed`, `tx_build_failed`. `OrderFailed.reason` is a free-form diagnostic string. Show it, do not match on it, and do not re-accept.
+Refresh the reopened RFQ and select a currently available quote. Rollback discards the winning quote; do not replay its old `order_id`. `available.reason` is an enum: `signature_timeout`, `tx_failed`, `tx_build_failed`. The `failed` `reason` is a free-form diagnostic string. Show it, do not match on it, and do not re-accept.
 
-Reconcile by `order_version`: accepted is `1`, submitted `2`, failed or expired `3`, confirmed `4`. A late on-chain confirmation can replace a local failure; a later failure never replaces confirmation.
+Reconcile by `order_version`: accepted is `1`, submitted `2`, failed `3`, confirmed `4`; drop an update only if its version is lower than the one you hold. `confirmed` and `failed` end the order; a transaction that still lands after `failed` shows up as a position (`PositionUpdated`), not as another `OrderUpdate`.
 
 ### Submission failure with delivery
 
@@ -677,11 +692,17 @@ A failed `SubmitSignedSponsoredTx` says whether this request could have been han
 
 ```json
 {
-  "type": "RequestError",
+  "type": "Reply",
   "data": {
     "request_id": "5f2b8a61-3d4e-4b7c-8e9f-1a2b3c4d5e6f",
-    "error": { "type": "Generic", "data": { "code": "rate_limited", "message": "rate limit exceeded" } },
-    "delivery": "not_forwarded"
+    "result": {
+      "type": "error",
+      "error": {
+        "type": "RateLimited",
+        "data": { "retry_after_ms": 250 }
+      },
+      "delivery": "not_forwarded"
+    }
   }
 }
 ```
@@ -692,18 +713,18 @@ Treat the order as not executed only if every submission you made returned `not_
 
 ```json
 {
-  "type": "RfqClosed",
+  "type": "RfqUpdate",
   "data": {
     "rfq_id": "9a4f8f7b-5a6d-4c8d-8a2e-2a3b4c5d6e7f",
     "rfq_version": 1,
-    "reason": "expired",
-    "your_quote": {
-      "type": "none"
-    },
-    "winner": {
-      "type": "none"
-    },
-    "closed_at": 1710000060
+    "state": {
+      "type": "closed",
+      "reason": "expired",
+      "winner": {
+        "type": "none"
+      },
+      "at": 1710000060
+    }
   }
 }
 ```
@@ -731,25 +752,28 @@ Redeem before trading:
 }
 ```
 
-An `RfqRequest` before redemption fails with a typed `InviteRequired` error in a `RequestError` that carries its `request_id`. Devnet is open and needs no invite.
+An `RfqRequest` before redemption fails with a typed `InviteRequired` error in a `Reply` `error` that carries its `request_id`. Devnet is open and needs no invite.
 
-### Size-rule violation (RequestError)
+### Size-rule violation (Reply error)
 
 `quantity` must satisfy `min_size <= quantity <= max_size` and `(quantity - min_size) % step == 0`:
 
 ```json
 {
-  "type": "RequestError",
+  "type": "Reply",
   "data": {
     "request_id": "1e3a5c7e-9b0d-4f26-8a4c-6e8a0c2e4f93",
-    "error": {
-      "type": "Generic",
-      "data": {
-        "code": "invalid_quantity_size_rule",
-        "message": "quantity violates min/max/step"
-      }
-    },
-    "delivery": "not_applicable"
+    "result": {
+      "type": "error",
+      "error": {
+        "type": "Generic",
+        "data": {
+          "code": "invalid_quantity_size_rule",
+          "message": "quantity violates min/max/step"
+        }
+      },
+      "delivery": "not_applicable"
+    }
   }
 }
 ```
@@ -769,13 +793,19 @@ Subscriptions and in-flight state are not replayed. Re-authenticate, resubscribe
     }
   }
 }
+```
+
+```json
 {
   "type": "GetOrderStatus",
   "data": {
     "request_id": "e5a7c9e1-2b4d-4c68-9f1a-3c5e7a9b1d48",
-    "order_id": "0x2222222222222222222222222222222222222222222222222222222222222222"
+    "order_id": "2222222222222222222222222222222222222222222222222222222222222222"
   }
 }
+```
+
+```json
 {
   "type": "GetPositions",
   "data": {
@@ -810,8 +840,8 @@ Subscriptions and in-flight state are not replayed. Re-authenticate, resubscribe
           "transaction_index": 14,
           "instruction_index": 2
         },
-        "pda": "PositionPdaBase58",
-        "market_pda": "MarketPdaBase58",
+        "pda": "75NqraLLofiLUpNQg2wUPG6CJpxcaGEZUwuNrnAgvcTP",
+        "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
         "underlying_mint": "So11111111111111111111111111111111111111112",
         "underlying_symbol": "SOL",
         "underlying_decimals": 9,
@@ -855,4 +885,4 @@ Merge each row into your position store by `pda`, and keep it only if its `revis
 
 After `AuthSuccess`, reconcile `GetMyActiveRfqs`, `GetPositions` and `GetOrderStatus`. Only a successful resume of the same credential transfers ownership of an unfinished signature. For the same pending order whose signature was not sent, repeat the exact `AcceptQuote` to retrieve the signing payload. For a submitted or enqueued order, query status without replaying trading commands.
 
-`OrderStatus` carries `{ request_id, order_id, state }`, with `state` equal to `{ "type": "pending" }`, `{ "type": "confirmed", "position_pda": "..." }` or `{ "type": "unknown" }`. It has no `order_version`; versions apply to lifecycle pushes. `unknown`, missing positions and timeouts leave the outcome unresolved. See [Delivery and recovery](../reference/taker-api.md#delivery-and-recovery).
+`OrderStatus` carries `{ request_id, order_id, state }`, with `state` equal to `{ "type": "pending" }`, `{ "type": "confirmed", "position_pda": "..." }`, `{ "type": "expired" }` (never executed and never can) or `{ "type": "unknown" }`. It has no `order_version`; versions apply to lifecycle pushes. `unknown`, missing positions and timeouts leave the outcome unresolved. See [Delivery and recovery](../reference/taker-api.md#delivery-and-recovery).

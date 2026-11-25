@@ -2,7 +2,7 @@
 
 How to run a headless client (a bot, a strategy loop or an LLM agent) against Acta. The protocol is
 the same one the web app uses; this page covers what changes when nobody watches the session.
-Examples use the TypeScript SDK (`@acta-markets/ts-sdk` 0.5.5 or later).
+Examples use the TypeScript SDK (`@acta-markets/ts-sdk` 0.9.0 or later).
 
 ## Headless keypair
 
@@ -64,6 +64,31 @@ strike (or spread width). An indicative is the median of maker answers, net of t
 gross on a buy; it is not a firm quote. With a real quote, pass `QuoteReceived.price`, which is gross.
 Indicatives exist for covered calls and cash-secured puts only.
 
+## One trade
+
+`ws.tradeRfq` runs one taker trade from RFQ to the order's end: quote choice, accept, verification of
+the served transaction, one submit. It uses `createRfqOnce` and `submitOrderOnce` below, so a lost
+reply never sends a command twice. Arguments are in the
+[web client guide](web-client-ts-sdk.md#11-one-trade-in-one-call).
+
+```typescript
+const outcome = await ws.tradeRfq(args);
+switch (outcome.type) {
+  case "filled":     // outcome.position_pda
+    break;
+  case "not_traded": // outcome.reason.type; nothing executed
+    break;
+  case "unknown": {  // submitted, no final OrderUpdate; never trade it again
+    const resolved = await ws.reconcileTrade(outcome);
+    break;           // filled, still unknown, or not_traded { expired }
+  }
+}
+```
+
+Call `reconcileTrade` again later while it returns `unknown`. It asks `GetOrderStatus`: `confirmed`
+gives `filled`, `expired` gives `not_traded { expired }`, `pending` and `unknown` keep it `unknown`.
+`not_traded { order_failed }` is `OrderUpdate` `failed`: the transaction cannot land.
+
 ## Submit, then reconcile
 
 Two commands can take effect without the agent seeing the reply: `RfqRequest` and
@@ -71,28 +96,29 @@ Two commands can take effect without the agent seeing the reply: `RfqRequest` an
 twice. The SDK owns both:
 
 ```typescript
-const { rfqId, created } = await ws.createRfqOnce({
+const created = await ws.createRfqOnce({
   market_pda: market, terms, side: "sell", quantity, timeout_seconds: 30,
 });
 
 const outcome = await ws.submitOrderOnce({ orderIdHex, txBase64: signedTx });
 switch (outcome.type) {
-  case "accepted":   // queued; follow OrderSubmitted / OrderConfirmed / OrderFailed
+  case "accepted":   // queued; follow its orderUpdate (submitted, confirmed or failed)
     break;
   case "rejected":   // this attempt was not forwarded; act on outcome.action
     break;
   case "reconciled": // the reply was lost, so the SDK looked the order up
-    // outcome.state.type: pending | confirmed | unknown. unknown is not proof of non-execution.
+    // outcome.state.type: pending | confirmed | expired | unknown. unknown is not proof of non-execution.
     break;
 }
 ```
 
-- `createRfqOnce` resends a lost reply with the same id while the RFQ could still be open. A repeat is
-  rejected with `duplicate_rfq_id`, which proves the first attempt created it.
+- `createRfqOnce` resolves with the `RfqCreated` message; use `created.rfq_id`. It resends a lost reply
+  with the same `request_id` while the RFQ could still be open, and the server answers a repeat with the
+  RFQ it already created (followed by its `RfqUpdate` `closed` if it ended), never a second RFQ.
 - `submitOrderOnce` never sends one order twice. A timeout, a disconnect or `delivery: "unknown"` turns
   into a `GetOrderStatus` lookup, and every later call for that order only looks it up.
-- Neither `OrderFailed` nor an `unknown` status authorizes signing the order again. Pick another quote
-  or open a new RFQ instead.
+- Neither an `orderUpdate` `failed` nor an `expired` or `unknown` status authorizes signing the order again.
+  `failed` and `expired` prove it did not execute; pick another quote or open a new RFQ.
 - The SDK keeps this record in memory. After a process restart, read `GetMyActiveRfqs` and
   `GetOrderStatus` before submitting anything.
 

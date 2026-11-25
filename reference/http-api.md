@@ -31,15 +31,17 @@ API routes are under `/api/v1` (`https://devnet-api.acta.markets/api/v1/venue`);
 A query string that cannot be parsed, for example `?active=maybe`, gets a plain-text `400` without this body.
 
 Codes (HTTP status):
-- `invalid_request`, `invalid_cursor`, `invalid_limit`, `invalid_delegate`, `invalid_wallet` (400)
-- `not_found` (404)
+- `invalid_request`, `invalid_cursor`, `invalid_limit`, `invalid_delegate`, `invalid_wallet`, `invalid_mint` (400)
+- `not_found`, `unknown_mint`, `market_not_found` (404); `history_unavailable` (404 for a token without history, 503 when the history cache is unreachable)
+- `projection_behind` (409) — the projection is older than the requested `min_version`; retry shortly
 - `rate_limited` (429) — per-IP rate limit; retry with backoff
 - `db_disabled` (503) — server runs without a database; permanent, do not retry
 - `db_busy` (503) — database pool exhausted or query timed out; retry with backoff
 - `server_busy` (503) — global in-flight limit reached; retry with backoff
 - `unavailable`, `caps_projection_unavailable`, `chain_replay_unavailable`, `position_history_unavailable`, `venue_unavailable` (503) — the backing projection or program id is not available yet; retry with backoff
 - `token_metadata_incomplete`, `missing_size_rule_for_underlying_mint` (503) — `/tokens` while an active market lacks decimals or a size rule
-- `history_projection_incomplete`, `caps_projection_incomplete`, `data_validation_error`, `schema_error`, `db_error`, `encode_failed`, `invalid_stats` (500)
+- `market_metadata_incomplete`, `oracle_not_ready`, `oracle_price_not_ready` (503) — `/tokens/{mint}/markets` before that token's metadata, size rule or oracle price is loaded; retry with backoff
+- `history_projection_incomplete`, `caps_projection_incomplete`, `vault_obligations_unavailable`, `data_validation_error`, `schema_error`, `db_error`, `encode_failed`, `invalid_stats` (500)
 
 WebSocket codes are a separate set; see the [WS error code catalog](ws-common.md#ws-error-codes).
 
@@ -80,8 +82,9 @@ Prometheus metrics endpoint.
 
 `/api/v1/venue`, `/api/v1/tokens` and `/api/v1/markets` are served from one in-memory snapshot that also answers the WS
 discovery requests (`GetTokens`, `GetMarkets`, `GetMarketDescriptors`, `GetExpiries` and
-`Snapshot.markets`), so HTTP and WS never disagree. They need no database and share the light per-IP
-rate limit (30 req/s, burst 60).
+`Snapshot.markets`), so HTTP and WS never disagree. `/api/v1/tokens/{mint}/markets` and
+`/api/v1/earn-summary` return the same data as the WS `GetTokenMarketsInfo` and `GetEarnSummary`.
+These routes need no database and share the light per-IP rate limit (30 req/s, burst 60).
 
 The server rebuilds the snapshot when the market registry changes, when a market reaches its trading
 cutoff or expiry, and at least every 30 s. When the token list or the market list changes, every
@@ -97,6 +100,8 @@ Every response carries a strong `ETag` and `Cache-Control`:
 | `/api/v1/venue` | `public, no-cache` |
 | `/api/v1/tokens` | `public, max-age=60` |
 | `/api/v1/markets` | `public, max-age=5` |
+| `/api/v1/tokens/{mint}/markets` | `public, max-age=5` |
+| `/api/v1/earn-summary` | `public, max-age=5` |
 
 Send the last `ETag` back in `If-None-Match`; an unchanged body returns `304 Not Modified` with no
 body and the same `ETag` and `Cache-Control`. `If-None-Match` accepts a comma-separated list, `*`
@@ -115,7 +120,7 @@ same program id.
 
 ```json
 {
-  "program_id": "ProgramIdBase58",
+  "program_id": "33Ezs5eoa16QyPW8wifnyz2nCyMEcq2crqkVBNjnTE8U",
   "min_quote_validity_seconds": 60,
   "settlement_buffer_seconds": 50,
   "quote_refresh_lead_seconds": 10,
@@ -135,7 +140,7 @@ same program id.
 | `program_id` | The Acta program id |
 | `min_quote_validity_seconds` | Minimum `valid_until - now` accepted on a quote; at least `settlement_buffer_seconds + quote_refresh_lead_seconds`. Use this value, not the sum |
 | `settlement_buffer_seconds` | A quote stops being acceptable at `valid_until - settlement_buffer_seconds` |
-| `quote_refresh_lead_seconds` | How long before that cutoff the server sends `QuoteRefreshRequested` |
+| `quote_refresh_lead_seconds` | How long before that cutoff the server sends `QuoteUpdate` `refresh_requested` |
 | `min_rfq_timeout_seconds` / `max_rfq_timeout_seconds` | Accepted range for `RfqRequest.timeout_seconds` |
 | `signature_timeout_seconds` | Time a taker has to return a signed sponsored transaction |
 | `max_quotes_per_rfq` | `CountLimit`: quotes kept per RFQ |
@@ -322,6 +327,75 @@ There is no single-market route. Filter the list, or use
 `GetMarketDescriptors` on WS for the full descriptor (oracle PDAs, decimals, collateral and
 settlement mints).
 
+### GET `/api/v1/tokens/{mint}/markets`
+
+Uses [common paging](ws-common.md#paging) over `markets`.
+
+The market page for one underlying: the `data` of the WS [`TokenMarketsInfo`](taker-api.md#tokenmarketsinfo)
+reply without `request_id`. Fields, units and freshness rules are the same.
+
+```json
+{
+  "underlying_symbol": "SOL",
+  "underlying_decimals": 9,
+  "quote_symbol": "USDC",
+  "quote_decimals": 6,
+  "size_rule": { "min_size": "100000000", "max_size": "10000000000", "step": "100000000" },
+  "reference_price": "150000000000",
+  "session": { "type": "continuous" },
+  "markets": [
+    {
+      "products": ["covered_call", "call_spread"],
+      "market_pda": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
+      "expiry_ts": 4102444800,
+      "is_put": false,
+      "indicatives": []
+    }
+  ],
+  "next_cursor": null
+}
+```
+
+| Status | `code` | When |
+|---|---|---|
+| 400 | `invalid_mint` | `mint` is not base58 |
+| 404 | `unknown_mint` | No active market uses this token |
+| 404 | `market_not_found` | The token is used, but not as the underlying of an active market (for example the quote token) |
+| 503 | `market_metadata_incomplete`, `missing_size_rule_for_underlying_mint`, `oracle_not_ready`, `oracle_price_not_ready` | This token's metadata, size rule or oracle price is not loaded yet; retry with backoff |
+
+The 503 is per token: while `/tokens` answers 503 for one incomplete token, the other tokens' pages still answer 200.
+
+### GET `/api/v1/earn-summary`
+
+Uses [common paging](ws-common.md#paging) over `assets`.
+
+APR range, capacity use and nearest market per asset and product: the `data` of the WS
+[`EarnSummary`](taker-api.md#earn-summary) reply without `request_id`.
+
+```json
+{
+  "assets": [
+    {
+      "underlying_mint": "So11111111111111111111111111111111111111112",
+      "underlying_symbol": "SOL",
+      "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "quote_symbol": "USDC",
+      "position_type": "covered_call",
+      "apr": { "type": "available", "min": 5.2, "max": 18.7 },
+      "cap_filled_pct": 0.45,
+      "cap_total": "100000000000",
+      "cap_used": "45000000000",
+      "strikes_count": 3,
+      "nearest_market_pda": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
+      "markets_count": 2,
+      "nearest_expiry_ts": 4102444800
+    }
+  ],
+  "computed_at": 1710000000,
+  "next_cursor": null
+}
+```
+
 ---
 
 ## Prices
@@ -385,9 +459,9 @@ Invalid bounds return `invalid_limit`; malformed cursors return `invalid_cursor`
 {
   "makers": [
     {
-      "pda": "MakerPdaBase58",
-      "maker_owner": "MakerOwnerBase58",
-      "quote_signing": "MakerQuoteSigningBase58",
+      "pda": "HYe9CryCnQ3ZviCwoG8X7REFoSBK7HCjrhWWMpNtTah1",
+      "maker_owner": "A87ysNWAmmqQHafLSQGbYSLhtcV3BjXctR88EWuSobGP",
+      "quote_signing": "3f4ec9JoaxAVPw2XE4QE3VA8H99sacFgJW56uNuUS6P4",
       "total_trades": 12,
       "total_volume": "1000000",
       "total_quotes": 55
@@ -413,8 +487,8 @@ decimal strings; times, slots, counts and generations are numbers.
 `/vaults` and `/vaults/{pda}` are served from memory, work without a database and share the light
 per-IP rate limit (30 req/s, burst 60). All other vault and depositor routes query the database
 per request and share the heavy per-IP limit (10 req/s, burst 20). IPv6 clients are grouped by /64.
-Successful `/vaults`, `/vaults/{pda}`, `/vaults/{pda}/cycles`, `/vaults/{pda}/positions`,
-`/vaults/{pda}/deposit-requests` and `/vaults/{pda}/withdraw-requests` carry `Cache-Control: public, max-age=5`; `/vaults/{pda}/exposure` is `no-store`; per-wallet routes carry no cache header.
+Successful `/vaults`, `/vaults/{pda}`, `/vaults/{pda}/cycles`, `/vaults/{pda}/positions`, `/vaults/{pda}/positions/{position}`,
+`/vaults/{pda}/swaps`, `/vaults/{pda}/deposit-requests` and `/vaults/{pda}/withdraw-requests` carry `Cache-Control: public, max-age=5`; `/vaults/{pda}/exposure` and `/vaults/{pda}/obligations` are `no-store`; per-wallet routes carry no cache header.
 
 Every per-vault route returns `404` `not_found` for an unknown vault or a PDA that is not base58.
 `GET /vaults` and `GET /vaults/{pda}` list open vaults only; a closed vault returns `404` there, while
@@ -479,6 +553,7 @@ Optional query: `delegate=<pubkey>` returns only vaults that key can operate as 
         "remaining": "860"
       },
       "capital_fallback_delay_seconds": 43200,
+      "next_capital_step": { "type": "none" },
       "deposit_window": {
         "type": "set",
         "set_at": 1700000000
@@ -637,6 +712,7 @@ Optional query: `delegate=<pubkey>` returns only vaults that key can operate as 
 | `total_shares` | Boundary checkpoint adjusted for contract mint/burn — **not** live SPL supply. Use `balances.live_share_supply` for the observed supply. |
 | `balances` | `{ "type": "observed", "main", "second", "live_share_supply", "manager_stake_shares", "observed_at", "slot" }` from the balance watcher, or `{ "type": "unobserved" }` before the first observation lands. |
 | `capital_fallback_delay_seconds` | Delay (default `43200`, max `259200`) after which anyone, not only the operator, may process a queued request. In `idle` it counts from the request's `created_at`; in `processing_capital` it counts from `active_expiry_ts`. In `idle`, deposits also need priced equity, which a non-operator can only compute with an aged withdraw request; otherwise cancel the deposit. |
+| `next_capital_step` | The capital instruction the vault's state requires next: `none`, `await_unstage` (a staged swap must unstage before equity or finalization), `compute_equity`, `process_deposits { count }`, `process_withdrawals { count }`, `finalize_cycle`, `finalize_shutdown { opens_at }` (Closing to WithdrawOnly: governance any time, anyone from `opens_at`), `unlock_manager_stake`, `close_vault`. When to open or close the deposit window is the operator's policy and reads as `none`. The contract can still refuse `compute_equity` when main does not cover the queued withdrawals plus `min_main_liquidity_bps`: rebalance to main first. |
 | `staging` | `{ "type": "none" }` unless half of a [two-transaction swap](../quickstart/vault-operator-guide.md#two-transaction-swaps) is open: `{ "type": "staged", "mint", "from_leg": "main" \| "second", "amount", "staged_at", "generation" }`. `amount` (atoms of `mint`, decimal string) has left `from_leg` for the vault's account of `mint` and is not counted in `equity`. `staged_at` (Unix seconds) is the first stage. Capital processing waits until it is back. |
 | `deposit_window` | `{ "type": "set", "set_at" }`: chain time of the last `SetAcceptingDeposits`; `{ "type": "unset" }` if the window was never set. |
 | `projection` | Position of this row in the venue's on-chain event history. Compare `slot` / `transaction_index` / `event_index` to detect staleness. |
@@ -662,7 +738,7 @@ Query:
 | Parameter | Type | Default | Meaning |
 |---|---|---|---|
 | `settled` | bool | unset | Filters on `settled_at`: `true` returns only rows that have one, `false` only rows that do not; unset returns both |
-| `limit` | integer | 50 | 1 through 200 |
+| `limit` | integer | 100 | 1 through 200 |
 | `cursor` | string | unset | Opaque `next_cursor` value, URL-encoded; absent means the first page |
 
 ```json
@@ -750,6 +826,12 @@ Query:
 | `next_cursor` | `slot:transaction_index:event_index:position`. Opaque — pass it back verbatim. `null` on the last page. |
 
 A malformed `cursor` returns `400` with code `invalid_cursor`.
+
+### GET `/api/v1/vaults/{pda}/positions/{position}`
+
+The vault's side of one position, in the shape of a `/positions` row. `404` `not_found` when the
+vault is unknown, the position is not base58, or the vault is not a party to the position. A
+position between two vaults has one row per vault.
 
 ### GET `/api/v1/vaults/{pda}/exposure`
 
@@ -886,6 +968,65 @@ Open and funded positions with an indicative spot. Positions are reloaded after 
 | `decimals` | `{ "type": "known", "underlying", "quote" }`, or `{ "type": "unknown" }` when market metadata is missing |
 | `totals` | Per quote mint: `notional_at_strike` and `outstanding_intrinsic` (signed), each `{ "type": "available", "atoms" }` or `{ "type": "unavailable" }` when any of its positions lacks the value |
 
+### GET `/api/v1/vaults/{pda}/obligations`
+
+What the vault's curator owes now, from one projection read: queued capital requests, physical
+options the vault holds unfunded, and timelocked updates not yet applied. `no-store`.
+
+Query: optional `limit` (default and maximum 200), the queued requests returned per queue; page the
+rest through `deposit-requests` / `withdraw-requests`. Optional `min_version`: answer only from a
+projection at least this new (the `version` of [`VaultProjectionAdvanced`](ws-common.md#vaultprojectionadvanced));
+an older one returns `409` `projection_behind`, retry shortly.
+
+```json
+{
+  "vault_pda": "BrzbURisaiBieZvzBQYGyjwVSFZdsMU7TscaqcAjqKue",
+  "projection_version": 42,
+  "deposit_requests": {
+    "total": 1,
+    "requests": [
+      {
+        "wallet": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
+        "amount": "1000000",
+        "created_at": 1710000000,
+        "transaction": { "type": "known", "signature": "ZzRPR6pWiL3B77tGitQFve4G2s431KhVgF1Z14vdHUMSqVFPuyCT2Bx4iK7ofDAj41hGHJhf9qAaYiR5qD5b25S" }
+      }
+    ],
+    "next_cursor": null
+  },
+  "withdraw_requests": { "total": 0, "requests": [], "next_cursor": null },
+  "unfunded_holdings": [
+    {
+      "position_pda": "75NqraLLofiLUpNQg2wUPG6CJpxcaGEZUwuNrnAgvcTP",
+      "order_id": "1111111111111111111111111111111111111111111111111111111111111111",
+      "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+      "position_type": "covered_call",
+      "strike": "150000000000",
+      "quantity": "1000000000",
+      "expiry_ts": 1710086400,
+      "funding": { "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "amount": "150000000" }
+    }
+  ],
+  "pending_updates": [{ "kind": "fees", "activates_at": 1710050000 }]
+}
+```
+
+`total` counts the whole queue; `requests` is its first page, shaped as in
+[deposit and withdraw requests](#get-apiv1vaultspdadeposit-requests-and-withdraw-requests).
+`unfunded_holdings` are covered calls and cash-secured puts the vault bought and has not funded;
+`funding` is what `FundPositionForVaultHolder` transfers to exercise one (the strike notional in
+the quote mint for a call, `quantity` of the underlying for a put). Unfunded at expiry, it settles as
+not exercised. `pending_updates[].kind` is `cap_limit`, `fees`, `hwm_reset`, `capabilities`,
+`policy`, `governance_authority` or `second_leg`.
+
+| Status | Code | When |
+|---|---|---|
+| `400` | `invalid_limit` | `limit` is 0 or above 200 |
+| `404` | `not_found` | the vault is unknown |
+| `409` | `projection_behind` | the projection is older than `min_version` |
+| `500` | `vault_obligations_unavailable` | a holding cannot be projected |
+| `503` | `db_busy`, `server_busy`, `db_disabled` | as for the other database routes |
+
 ### GET `/api/v1/vaults/{pda}/cycles`
 
 Uses [common paging](ws-common.md#paging).
@@ -1007,6 +1148,40 @@ once equity is computed at the boundary, then `{ "type": "finished", "finished_a
 were tracked.
 `return_pct` is a display value; compute exact returns from the share prices with BigInt.
 
+### GET `/api/v1/vaults/{pda}/swaps`
+
+The vault's executed swaps, newest first. Query: optional `limit` (default 50, maximum 100) and
+`cursor` (the previous page's `next_cursor`, a swap id).
+
+```json
+{
+  "swaps": [
+    {
+      "id": "812",
+      "kind": { "type": "rebalance", "direction": "main_to_second" },
+      "second_mint": "So11111111111111111111111111111111111111112",
+      "actor": "5DPHTZom4qijA8Uo9dmkSpbtjCUE1HnBmEFeAyDiY58B",
+      "amount_in": "1000000",
+      "amount_out": "6500000",
+      "created_at": 1710000000,
+      "transaction": { "type": "known", "signature": "ZzRPR6pWiL3B77tGitQFve4G2s431KhVgF1Z14vdHUMSqVFPuyCT2Bx4iK7ofDAj41hGHJhf9qAaYiR5qD5b25S" }
+    }
+  ],
+  "next_cursor": "811"
+}
+```
+
+`kind.type` is `rebalance`, `recovery`, `emergency_convert` or `closing_convert`, each with
+`direction` (`main_to_second` or `second_to_main`), or `stage` / `unstage` with `leg` (`main` or
+`second`), the staging `mint` and its `generation`. `next_cursor` is `null` on the last page.
+
+| Status | Code | When |
+|---|---|---|
+| `400` | `invalid_limit` | `limit` is 0 or above 100 |
+| `400` | `invalid_cursor` | `cursor` is not a swap id |
+| `404` | `not_found` | the vault is unknown |
+| `503` | `db_busy`, `server_busy`, `db_disabled` | as for the other database routes |
+
 ### GET `/api/v1/vaults/{pda}/deposit-requests` and `/withdraw-requests`
 
 Uses [common paging](ws-common.md#paging).
@@ -1020,10 +1195,10 @@ Requests are ordered by wallet; `next_cursor` is `null` on the last page. Withdr
 {
   "requests": [
     {
-      "wallet": "WalletBase58",
+      "wallet": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
       "amount": "1000000",
       "created_at": 1710000000,
-      "transaction": { "type": "known", "signature": "TxSignatureBase58" }
+      "transaction": { "type": "known", "signature": "ZzRPR6pWiL3B77tGitQFve4G2s431KhVgF1Z14vdHUMSqVFPuyCT2Bx4iK7ofDAj41hGHJhf9qAaYiR5qD5b25S" }
     }
   ],
   "next_cursor": null
@@ -1048,13 +1223,13 @@ appear per event as `second_amount` in the history.
 
 ```json
 {
-  "vault_pda": "VaultPdaBase58",
-  "wallet": "WalletBase58",
+  "vault_pda": "BrzbURisaiBieZvzBQYGyjwVSFZdsMU7TscaqcAjqKue",
+  "wallet": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
   "deposit_request": {
     "type": "pending",
     "amount": "1000000",
     "created_at": 1710000000,
-    "transaction": { "type": "known", "signature": "TxSignatureBase58" }
+    "transaction": { "type": "known", "signature": "ZzRPR6pWiL3B77tGitQFve4G2s431KhVgF1Z14vdHUMSqVFPuyCT2Bx4iK7ofDAj41hGHJhf9qAaYiR5qD5b25S" }
   },
   "withdraw_request": { "type": "none" },
   "totals": {
@@ -1078,14 +1253,14 @@ Query: optional `limit` (default 50, maximum 200) and `cursor`; see [common pagi
 {
   "events": [
     {
-      "vault_pda": "VaultPdaBase58",
+      "vault_pda": "BrzbURisaiBieZvzBQYGyjwVSFZdsMU7TscaqcAjqKue",
       "action": "deposit_processed",
       "amount": "1000000",
       "second_amount": "0",
       "shares": "1000000000",
       "boundary_price": { "type": "set", "share_price": "1000000000" },
       "occurred_at": 1710000000,
-      "transaction_signature": "TxSignatureBase58"
+      "transaction_signature": "ZzRPR6pWiL3B77tGitQFve4G2s431KhVgF1Z14vdHUMSqVFPuyCT2Bx4iK7ofDAj41hGHJhf9qAaYiR5qD5b25S"
     }
   ],
   "next_cursor": null
@@ -1110,11 +1285,11 @@ the same shape as `/vaults/{pda}/depositors/{wallet}`.
 
 ```json
 {
-  "wallet": "WalletBase58",
+  "wallet": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
   "vaults": [
     {
-      "vault_pda": "VaultPdaBase58",
-      "wallet": "WalletBase58",
+      "vault_pda": "BrzbURisaiBieZvzBQYGyjwVSFZdsMU7TscaqcAjqKue",
+      "wallet": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
       "deposit_request": { "type": "none" },
       "withdraw_request": { "type": "none" },
       "totals": { "type": "none" }
@@ -1264,7 +1439,7 @@ The wallet's awards, newest first. Paged with `limit` (default 50, max 200) and 
     { "league_id": 7, "currency": "trading", "source": "rule", "key": "first_blood",
       "reference": "trade:o1", "points": 10.0, "awarded_at": 1794297600 }
   ],
-  "next_cursor": "7b22..."
+  "next_cursor": "7b226964223a3831327d"
 }
 ```
 

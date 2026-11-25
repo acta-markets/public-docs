@@ -39,7 +39,8 @@ Delegate permission bits:
 | `8` | `REBALANCE` | Rebalance swaps |
 | `16` | `PROCESS_CAPITAL` | Price equity, process requests, finalize the cycle before the fallback opens |
 | `32` | `SET_DEPOSIT_WINDOW` | Open or close the Idle deposit window |
-| `64` | `SIGN_WRITER_QUOTES` | Quote buy RFQs as writer (a wallet buys what the vault writes), including spreads. The quote signature alone commits vault collateral. |
+| `64` | `SIGN_WRITER_QUOTES` | Quote buy RFQs as writer (a wallet or another vault buys what the vault writes), including spreads. The quote signature alone commits vault collateral. |
+| `128` | `BUY_FROM_MAKERS` | Buy as taker (the vault sends a `buy` RFQ and holds what a maker or another vault writes), including spreads |
 
 Governance rotates the delegate only in Idle, and not in Closing, EmergencyUnwind or WithdrawOnly. Governance can disable the delegate at any time. A governance key quotes only if it also holds an active primary-delegate grant with the matching quote bit.
 
@@ -64,7 +65,7 @@ Receiving premium into second needs no bit. Because funding is checked at open, 
 
 1. **Deposit window (Idle).** `SetAcceptingDeposits(true)` needs `SET_DEPOSIT_WINDOW` and the manager stake floor; it is allowed only in Idle with safety `normal`. Close the window before the first open: a vault opens from Idle only when the window is closed and no priced batch is waiting. Idle requests can be priced and processed after the window closes (`ProcessVaultEquity`, then `ProcessDeposits` / `ProcessWithdrawals`).
 2. **Active.** The first open fixes the cycle expiry; an open with another expiry fails with `VaultExpiryMismatch`. Opens also check `policy.max_open_positions`, the manager stake floor, capabilities and safety `normal`. Deposit and withdrawal requests are accepted until expiry.
-3. **Settlement.** After the market is finalized, each position settles in its own transaction; settlement is permissionless. An unfunded ITM physical position is liquidated instead. Spreads and cash puts only settle. The last close moves the vault to `processing_capital`.
+3. **Settlement.** After the market is finalized, each position settles in its own transaction; settlement is permissionless. An unfunded ITM physical position is liquidated instead, unless the vault bought it from a maker or vault (82-85): such a position is never liquidated and settles as not exercised. Spreads and cash puts only settle. The last close moves the vault to `processing_capital`.
 4. **ProcessingCapital.** In order:
    - optional second-to-main rebalance, so main covers withdrawals and the `min_main_liquidity_bps` floor;
    - `ProcessVaultEquity`: values both legs at their [price routes](#prices), assesses fees and fixes the boundary price;
@@ -73,7 +74,7 @@ Receiving premium into second needs no bit. Because funding is checked at open, 
 
 Each capital step needs governance or `PROCESS_CAPITAL` until `active_expiry + capital_fallback_delay_seconds`; after that anyone may send it. The delay defaults to 43,200 s (12 h), may range 0–259,200 s, and only Acta cold changes it, through the protocol timelock. In Idle the same delay runs from each request's `created_at`. In Idle, a non-operator can price equity only with a withdrawal request older than the delay; a depositor can cancel instead. The fallback lets others run these steps. It does not swap: rebalance needs `REBALANCE`, recovery needs governance.
 
-The SDKs include a reference crank: Rust `chain::vault::next_step` with the crate's `vault_capital` example (`cargo run --example vault_capital --features chain-rpc,vault`), TS `flows.nextCapitalStep` / `flows.planWithdrawals`.
+The SDKs include a reference crank: Rust `chain::vault::next_step` with the crate's `vault_capital` example (`cargo run --example vault_capital --features chain-rpc,vault`), TS `flows.nextCapitalStep` / `flows.planWithdrawals`. Without reading the chain, `GET /api/v1/vaults/{pda}` returns `next_capital_step`: the instruction the vault's state requires next (`compute_equity`, `process_deposits`, `process_withdrawals`, `finalize_cycle`, `await_unstage`, `finalize_shutdown`, `unlock_manager_stake`, `close_vault`, or `none` when the deposit window is your call).
 
 ### Closing
 
@@ -83,17 +84,18 @@ Governance calls `StartVaultShutdown` from safety `normal`. Closing is irreversi
 
 Acta cold or the guardian can freeze a vault. Frozen blocks deposits, new positions and rebalances. Settlement, funding of open physical holder positions, cancels, withdrawals, governance recovery and capital processing continue. Pending deposits can only be refunded. Only cold can unfreeze.
 
-Only cold can start `EmergencyUnwind`, which is irreversible. It allows deposit refunds, settlement and liquidation, second-to-main conversion and final accounting, then ends in `withdraw_only`. LP payouts stay locked until then, and **funding is blocked**, so unfunded ITM holder positions are lost to liquidation.
+Only cold can start `EmergencyUnwind`, which is irreversible. It allows deposit refunds, settlement and liquidation, second-to-main conversion and final accounting, then ends in `withdraw_only`. LP payouts stay locked until then, and **funding is blocked**, so unfunded ITM holder positions are lost to liquidation, or settle as not exercised if opened by 82-85.
 
 ## Trading through the SDK
 
-One WebSocket connection on `/vault` (same host as `/maker` and `/taker`) serves one vault. Auth is `StartVaultAuth { operator, vault_pda }`, a challenge signed by the operator key, then `VaultAuthSuccess { vault_pda, operator, operator_kind, permissions }`, where `operator_kind` is `governance` or `delegate` and `permissions` is a u32 bitmask of the delegate permission bits (TS `VaultDelegatePermission` / `hasVaultPermission`). The TS `ActaWsClient` emits `vaultAuthenticated` for it, not `authenticated`. Every reconnect re-authenticates; there is no `ResumeAuth`. The only subscribable channel is `vaults`, on by default; `VaultProjectionAdvanced` on it means this vault's row changed: reload `/api/v1/vaults/{pda}`, and reload it after every reconnect too, since missed notifications are not replayed. To follow the set of vaults, use a maker or taker session subscribed to `vaults`: it receives `VaultCatalogChanged { vault_pda }` when a vault is created, re-delegated or closed (not when a delegate is disabled). It is a hint that can be lost with a dropped connection, so re-list `GET /api/v1/vaults` on it and after every connect or reconnect.
+One WebSocket connection on `/vault` (same host as `/maker` and `/taker`) serves one vault. One operator key may hold sessions for any number of vaults at once, one socket per vault; a second session for the same vault ends the first with `vault_session_invalidated`. A change to the Vault's delegate or grant does the same: `Error vault_session_invalidated`, then close `4007`, and the session's quotes are cancelled; authenticate again, and the new grant applies. The Rust SDK's `VaultFleet` finds those vaults: it keeps one `/taker` socket subscribed to `vaults`, re-lists `GET /api/v1/vaults?delegate=<operator>` on every catalog change, and publishes the vaults the key may run. Open a `/vault` session for each listed vault and close it when the vault leaves the list. Auth is `StartVaultAuth { operator, vault_pda }`, a challenge signed by the operator key, then `VaultAuthSuccess { vault_pda, operator, operator_kind, permissions }`, where `operator_kind` is `governance` or `delegate` and `permissions` is a u32 bitmask of the delegate permission bits (TS `VaultDelegatePermission` / `hasVaultPermission`). The TS `ActaWsClient` emits `vaultAuthenticated` for it, not `authenticated`. Every reconnect re-authenticates; there is no `ResumeAuth`. The only subscribable channel is `vaults`, on by default; `VaultProjectionAdvanced` on it means this vault's row changed: reload `/api/v1/vaults/{pda}`, and reload it after every reconnect too, since missed notifications are not replayed. To follow the set of vaults, use a maker or taker session subscribed to `vaults`: it receives `VaultCatalogChanged { vault_pda }` when a vault is created, re-delegated or closed (not when a delegate is disabled). It is a hint that can be lost with a dropped connection, so re-list `GET /api/v1/vaults` on it and after every connect or reconnect.
 
 - **Selling** (vault is writer, `OPEN_AS_WRITER`): send `RfqRequest` with `terms` and `side: "sell"`, then `AcceptQuote`, as a taker. The server returns `SponsoredTxToSign`. The keeper (the deployment's `GlobalConfig.hot_authority`) pays and signs slot 0; the operator signs slot 1. The vault pays the collateral from the matching leg and receives the net premium in its quote leg.
 - **Buying** (vault is holder, `SIGN_HOLDER_QUOTES`): answer a `sell` `RfqBroadcast` with a quote whose `maker_owner` is the vault PDA, signed by the operator key. The quote carries the RFQ's `terms` and `side`. The external taker signs the transaction; the vault pays the gross premium (net premium plus protocol fee) from its quote-mint leg.
 - **Writing a wallet's buy** (vault is writer, `SIGN_WRITER_QUOTES`): answer a `buy` `RfqBroadcast` the same way, with an ask. The buyer's wallet signs `OpenPositionForVaultWriter` or `OpenSpreadForVaultWriter` with holder byte `1`; the operator signs only the order id and never the transaction. The vault posts the collateral from its collateral leg and receives the net premium in its quote leg. The wallet holds the option: it may deposit the exercise amount before expiry, and an unfunded buy returns the collateral to the vault at settlement. Acta sets no price floor or band on vault asks.
-- **Which RFQs reach the vault:** both sides arrive on the `vaults` channel, a side only if the delegate holds its quote bit. In Idle the vault receives any expiry; in Active only its cycle expiry, because every open must match the cycle. A buy whose collateral the vault's last observed leg balance cannot cover is not sent; on a sell the premium is checked when the vault quotes. A vault cannot request a buy as taker: `RfqRequest` with `side: "buy"` fails with `taker_buy_unsupported`.
-- **Vault to vault:** a vault can sell to another vault's quote. Writer and holder must be two distinct vaults; the contract rejects a trade of a vault with itself. Each vault is checked for its own permission, capability and `max_open_positions`. Both vaults count the position in their cycle, so both must be in a cycle with that expiry.
+- **Buying as taker** (vault is holder, `BUY_FROM_MAKERS`, capability `CAN_BUY_OPTIONS`): send `RfqRequest` with `side: "buy"`, then `AcceptQuote` on the ask you want. A Maker answers from its custody, or another vault answers with `SIGN_WRITER_QUOTES`. The server returns `SponsoredTxToSign`; the keeper signs slot 0 and the operator slot 1. The transaction is `OpenPositionForVaultTakerBuy` / `OpenSpreadForVaultTakerBuy` against a Maker, or `OpenPositionBetweenVaultsTakerBuy` / `OpenSpreadBetweenVaultsTakerBuy` against a vault. The vault pays the gross premium from its quote leg; the writer posts the collateral. At `AcceptQuote` the server checks that the vault can pay that premium and hold the position. The position is never liquidated. To exercise an in-the-money physical option, fund it before expiry (`FundPositionForVaultHolder`, `FUND_HOLDER`); an unfunded one settles as not exercised and the collateral returns to the writer. A spread or cash put pays its payoff to the vault's quote leg at settlement. Without the bit, `RfqRequest` fails with `vault_authorization_failed`.
+- **Which RFQs reach the vault:** both sides arrive on the `vaults` channel, a side only if the delegate holds its quote bit. In Idle the vault receives any expiry; in Active only its cycle expiry, because every open must match the cycle. A buy whose collateral the vault's last observed leg balance cannot cover is not sent; on a sell the premium is checked when the vault quotes.
+- **Vault to vault:** a vault can sell to another vault's quote, or buy another vault's ask. Writer and holder must be two distinct vaults; the contract rejects a trade of a vault with itself. Each vault is checked for its own permission, capability and `max_open_positions`. Both vaults count the position in their cycle, so both must be in a cycle with that expiry.
 - **Swaps** (`REBALANCE`; `recovery` and `closing` need governance and accept only `direction: "second_to_main"`): `SwapQuote` returns a server-built transaction. The swap runs as 1–4 hops, each a CPI into a program that Acta cold registered as a swap venue: Jupiter v6, plus Exponent's Generic SY and CLMM programs for PT purchases, on mainnet; a mock router on devnet. Rebalance works in `active` before expiry in either direction while the vault has at least one open position, and in `processing_capital` before equity only second-to-main.
 
 A swap quote is exact-in: `amount` is the input in raw atoms of the source leg, as a decimal string. `slippage_bps` is optional (default 50). `vault_pda` must be the authenticated vault.
@@ -103,7 +105,7 @@ A swap quote is exact-in: `amount` is the input in raw atoms of the source leg, 
   "type": "SwapQuote",
   "data": {
     "request_id": "3b0f6a0e-8c41-4d2a-9f57-2e6c1d9a7b13",
-    "vault_pda": "VaultPdaBase58",
+    "vault_pda": "BrzbURisaiBieZvzBQYGyjwVSFZdsMU7TscaqcAjqKue",
     "mode": "rebalance",
     "direction": "main_to_second",
     "amount": "250000000",
@@ -114,23 +116,27 @@ A swap quote is exact-in: `amount` is the input in raw atoms of the source leg, 
 
 ```json
 {
-  "type": "SwapQuoteResult",
+  "type": "Reply",
   "data": {
     "request_id": "3b0f6a0e-8c41-4d2a-9f57-2e6c1d9a7b13",
-    "execution_id": "<64 hex>",
-    "mode": "rebalance",
-    "tx_base64": "<base64 v0 VersionedTransaction>",
-    "last_valid_block_height": 312456789,
-    "in_amount": "250000000",
-    "quoted_out_amount": "1503221",
-    "minimum_out_amount": "1495705",
-    "valid_until": 1710000060,
-    "staging": "none"
+    "result": {
+      "type": "swap_quote",
+      "request_id": "3b0f6a0e-8c41-4d2a-9f57-2e6c1d9a7b13",
+      "execution_id": "cb35a0d8cc3025b534c2cf23fed85feaa15d982dec67bedbd58c90167b1d7c43",
+      "mode": "rebalance",
+      "tx_base64": "<base64 v0 VersionedTransaction>",
+      "last_valid_block_height": 312456789,
+      "in_amount": "250000000",
+      "quoted_out_amount": "1503221",
+      "minimum_out_amount": "1495705",
+      "valid_until": 1710000060,
+      "staging": "none"
+    }
   }
 }
 ```
 
-Amounts are decimal strings; `valid_until` (Unix seconds) and `last_valid_block_height` are numbers, the latter the block height the transaction's blockhash is valid through. The transaction carries the vault's [price section](#prices). `execution_id` names this swap in every later message. A failed quote returns a `RequestError` with a `Generic` code from the [WS error code catalog](../reference/ws-common.md#ws-error-codes) (usually a `vault_*` or `vault_swap_*` row, also general codes such as `invalid_amount`; `vault_swap_oracle_stale` is retryable within seconds, `vault_swap_route_unavailable` and `vault_swap_service_unavailable` later).
+The quote repeats `request_id` so a signer can check offline which request it answers. Amounts are decimal strings; `valid_until` (Unix seconds) and `last_valid_block_height` are numbers, the latter the block height the transaction's blockhash is valid through. The transaction carries the vault's [price section](#prices). `execution_id` names this swap in every later message. A failed quote returns a `Reply` `error` with a `Generic` code from the [WS error code catalog](../reference/ws-common.md#ws-error-codes) (usually a `vault_*` or `vault_swap_*` row, also general codes such as `invalid_amount`; `vault_swap_oracle_stale` is retryable within seconds, `vault_swap_route_unavailable` and `vault_swap_service_unavailable` later).
 
 Sign it and send `SwapSubmit`:
 
@@ -139,20 +145,20 @@ Sign it and send `SwapSubmit`:
   "type": "SwapSubmit",
   "data": {
     "request_id": "9d4e2c71-5a3b-4f80-b6e2-0c7a1f9d3e58",
-    "execution_id": "<64 hex>",
+    "execution_id": "cb35a0d8cc3025b534c2cf23fed85feaa15d982dec67bedbd58c90167b1d7c43",
     "signed_tx_base64": "<signed, base64>"
   }
 }
 ```
 
 ```json
-{ "type": "SwapSubmitResult", "data": { "request_id": "9d4e2c71-5a3b-4f80-b6e2-0c7a1f9d3e58", "execution_id": "<64 hex>" } }
+{ "type": "Reply", "data": { "request_id": "9d4e2c71-5a3b-4f80-b6e2-0c7a1f9d3e58", "result": { "type": "swap_submitted", "execution_id": "cb35a0d8cc3025b534c2cf23fed85feaa15d982dec67bedbd58c90167b1d7c43" } } }
 ```
 
-`SwapSubmitResult` confirms durable queueing, not execution. A failed `SwapSubmit` carries `delivery` for that request: `not_forwarded` means this request was rejected before it was queued, `unknown` means it may have been queued. It says nothing about your earlier submissions of the same transaction: treat a swap as not executed only if every `SwapSubmit` you sent for it returned `not_forwarded`. Resolve `unknown`, a lost `SwapSubmitResult` or a restart with `GetSwapStatus` (TS `vault.getVaultSwapStatus({ execution_id })`, Rust `client.swap_status(execution_id)`):
+`swap_submitted` confirms durable queueing, not execution. A failed `SwapSubmit` carries `delivery` for that request: `not_forwarded` means this request was rejected before it was queued, `unknown` means it may have been queued. It says nothing about your earlier submissions of the same transaction: treat a swap as not executed only if every `SwapSubmit` you sent for it returned `not_forwarded`. Resolve `unknown`, a lost `swap_submitted` reply or a restart with `GetSwapStatus` (TS `vault.getVaultSwapStatus({ execution_id })`, Rust `client.swap_status(execution_id)`):
 
 ```json
-{ "type": "GetSwapStatus", "data": { "request_id": "c1a7f3e9-2b64-4d58-8e0f-6a9b3c2d1e47", "execution_id": "<64 hex>" } }
+{ "type": "GetSwapStatus", "data": { "request_id": "c1a7f3e9-2b64-4d58-8e0f-6a9b3c2d1e47", "execution_id": "cb35a0d8cc3025b534c2cf23fed85feaa15d982dec67bedbd58c90167b1d7c43" } }
 ```
 
 ```json
@@ -160,21 +166,26 @@ Sign it and send `SwapSubmit`:
   "type": "SwapStatus",
   "data": {
     "request_id": "c1a7f3e9-2b64-4d58-8e0f-6a9b3c2d1e47",
-    "execution_id": "<64 hex>",
-    "state": { "type": "finalized", "signature": "5eyk...base58sig", "slot": 312456801 }
+    "execution_id": "cb35a0d8cc3025b534c2cf23fed85feaa15d982dec67bedbd58c90167b1d7c43",
+    "state": {
+      "type": "finalized",
+      "signature": "ZzRPR6pWiL3B77tGitQFve4G2s431KhVgF1Z14vdHUMSqVFPuyCT2Bx4iK7ofDAj41hGHJhf9qAaYiR5qD5b25S",
+      "slot": 312456801,
+      "amounts": { "type": "projected", "amount_in": "1000000000", "amount_out": "142500000" }
+    }
   }
 }
 ```
 
-`state.type` is `pending`, `finalized` (with `signature` and `slot`, a number), `failed`, `expired` or `unknown`. `unknown` means the server has no resolved handoff of this swap for this vault: none exists, or a failed handoff may still be retried or already be executing. It is not proof that nothing executed. Every session of the vault also gets `SwapSettled` when the swap becomes terminal:
+`state.type` is `pending`, `finalized` (with `signature`, `slot`, a number, and `amounts`: `projected { amount_in, amount_out }` or `not_projected`), `failed` (with `reason` and `transaction`: `sent { signature }` or `not_sent`), `expired` or `unknown`. `unknown` means the server has no resolved handoff of this swap for this vault: none exists, or a failed handoff may still be retried or already be executing. It is not proof that nothing executed. Every session of the vault also gets `SwapSettled` when the swap becomes terminal:
 
 ```json
 {
   "type": "SwapSettled",
   "data": {
-    "vault_pda": "VaultPdaBase58",
-    "execution_id": "<64 hex>",
-    "state": { "type": "failed" }
+    "vault_pda": "BrzbURisaiBieZvzBQYGyjwVSFZdsMU7TscaqcAjqKue",
+    "execution_id": "cb35a0d8cc3025b534c2cf23fed85feaa15d982dec67bedbd58c90167b1d7c43",
+    "state": { "type": "failed", "reason": "slippage exceeded", "transaction": { "type": "not_sent" } }
   }
 }
 ```
@@ -212,15 +223,15 @@ A swap whose `minimum_out_amount` is below your `min_output_floor` is rejected e
 | Verify only | `chain::vault::verify_vault_open` / `verify_vault_swap` | `flows.verifyVaultOpen` / `flows.verifyVaultSwap` from `/chain` |
 | Price routes | `PriceRoute::from_account` at `VaultAddresses::{main,second}_price_route` | `fetchVaultPriceRoutes` / `decodePriceRouteAccount` + `findPriceRoutePda` from `/chain` |
 
-Open intents: `Sale` / `"sale"` (vault writes for an external maker), `BetweenVaults` / `"betweenVaults"` (vault writes against another vault's quote), `Fill` / `"fill"` (an external taker writes against the vault's quote), `Buy` / `"buy"` (a wallet buys what the vault writes; the buyer checks this one, the vault never signs it). Every intent carries `keeper`: the deployment's `GlobalConfig.hot_authority`, read from chain (Rust `ChainClient::hot_authority()`, TS the `hotAuthority` field of the decoded GlobalConfig). Do not take it from the venue: it pays and signs slot 0. `terms` are the RFQ and quote terms: Rust `VaultSaleTerms::Physical(VaultTradeTerms)` or `VaultSaleTerms::Spread(VaultSpreadTerms)`, TS `VaultTradeTerms` with `kind: "physical"` or `kind: "spread"`. Both carry `side`: `buy` for the `Buy` intent, `sell` otherwise. `maker_quote_signer` is the maker's `quote_signing` key (`GET /api/v1/makers` or its on-chain Maker account).
+Open intents: `Sale` / `"sale"` (vault writes for an external maker), `BetweenVaults` / `"betweenVaults"` (vault writes against another vault's quote), `Fill` / `"fill"` (an external taker writes against the vault's quote), `Buy` / `"buy"` (a wallet buys what the vault writes; the buyer checks this one, the vault never signs it), `Purchase` / `"purchase"` (the vault buys what a Maker writes; carries `maker_owner` and `maker_quote_signer`), `PurchaseFromVault` / `"purchaseFromVault"` (the vault, `holder`, buys what another vault, `writer`, writes; the writer's delegate signed the quote). Every intent carries `keeper`: the deployment's `GlobalConfig.hot_authority`, read from chain (Rust `ChainClient::hot_authority()`, TS the `hotAuthority` field of the decoded GlobalConfig). Do not take it from the venue: it pays and signs slot 0. `terms` are the RFQ and quote terms: Rust `VaultSaleTerms::Physical(VaultTradeTerms)` or `VaultSaleTerms::Spread(VaultSpreadTerms)`, TS `VaultTradeTerms` with `kind: "physical"` or `kind: "spread"`. Both carry `side`: `buy` for `Buy`, `Purchase` and `PurchaseFromVault`, `sell` otherwise. `maker_quote_signer` is the maker's `quote_signing` key (`GET /api/v1/makers` or its on-chain Maker account).
 
 | Product | Rust terms | Instruction rebuilt |
 |---|---|---|
-| Covered call, cash-secured put | `VaultSaleTerms::Physical` | `OpenPositionForVaultWriter` (41) / `OpenPositionForVaultHolder` (42) / `OpenPositionBetweenVaults` (61) |
-| Call spread, put spread | `VaultSaleTerms::Spread` with `kind: SpreadType::CallSpread` / `PutSpread` | `OpenSpreadForVaultWriter` (78) / `OpenSpreadForVaultHolder` (79) / `OpenSpreadBetweenVaults` (80) |
+| Covered call, cash-secured put | `VaultSaleTerms::Physical` | `OpenPositionForVaultWriter` (41) / `OpenPositionForVaultHolder` (42) / `OpenPositionBetweenVaults` (61) / `OpenPositionForVaultTakerBuy` (82) / `OpenPositionBetweenVaultsTakerBuy` (84) |
+| Call spread, put spread | `VaultSaleTerms::Spread` with `kind: SpreadType::CallSpread` / `PutSpread` | `OpenSpreadForVaultWriter` (78) / `OpenSpreadForVaultHolder` (79) / `OpenSpreadBetweenVaults` (80) / `OpenSpreadForVaultTakerBuy` (83) / `OpenSpreadBetweenVaultsTakerBuy` (85) |
 | Cash put | `VaultSaleTerms::Spread`, `PutSpread`, `lower_strike: 0`, `upper_strike: K` | same as put spread |
 
-`VaultManager::open_spread_as_writer` (vault sells to a maker, holder byte `0`), `open_spread_for_wallet_holder` (a wallet buys from the vault, holder byte `1`), `open_spread_as_holder` (vault buys) and `open_spread_with_vault_holder` (vault sells to another vault) build the instructions; the physical builders follow the same names. `VaultSpreadTerms` is validated before building: ordered strikes, a positive lower strike for a call spread, `0 < price < width`, and `valid_until` no later than the market expiry.
+`VaultManager::open_spread_as_writer` (vault sells to a maker, holder byte `0`), `open_spread_for_wallet_holder` (a wallet buys from the vault, holder byte `1`), `open_spread_as_holder` (vault quotes a taker's sell and holds), `open_spread_with_vault_holder` (vault sells to another vault), `open_spread_from_maker` (vault buys from a maker, 83) and `open_spread_from_vault` (vault buys from another vault, 85) build the instructions; the physical builders follow the same names (`open_position_from_maker` 82, `open_position_from_vault` 84). In TS: `planner.trading.openPositionFromMaker` / `openPositionFromVault` and `planner.spreads.openSpreadFromMaker` / `openSpreadFromVault`. `VaultSpreadTerms` is validated before building: ordered strikes, a positive lower strike for a call spread, `0 < price < width`, and `valid_until` no later than the market expiry.
 
 Rust, selling:
 
@@ -250,7 +261,7 @@ client.submit_signed_sponsored_tx(signed).await?;
 
 For a call spread, put spread or cash put, build `VaultSaleTerms::Spread(VaultSpreadTerms { underlying_mint, quote_mint, expiry_ts, kind, side: TakerSide::Sell, lower_strike, upper_strike, quantity, price, valid_until, nonce })` and pass it in the same intent.
 
-`client.sell_rfq(&chain, &sale, connection_epoch, &gate, &mut desk)` runs the whole sale: it sends `RfqRequest`, offers each `QuoteReceived` with matching `terms` to your `SaleDesk::take`, sends `AcceptQuote` for the first taken quote, rebuilds the signed terms from that quote, verifies and signs the served transaction against the counterparty, and submits it. `VaultSale { market_pda, market, terms: OptionTerms, quantity, rfq_timeout, window, bounds }` accepts any `OptionTerms`; it rejects a market whose side does not match the product and checks spread strikes before the request. `SaleOutcome::Submitted` means the participant-signed transaction reached the keeper; `SaleError::in_flight()` returns the signed sale when a failed submit may still execute.
+`client.trade_rfq(&chain, &trade, connection_epoch, &gate, &mut desk)` runs the whole trade as taker: it checks the operator holds the side's bit (`OPEN_AS_WRITER` to sell, `BUY_FROM_MAKERS` to buy), sends `RfqRequest`, offers each `QuoteReceived` with matching `terms` and `side` to your `TradeDesk::take`, sends `AcceptQuote` for the first taken quote, rebuilds the signed terms from that quote, verifies and signs the served transaction against the counterparty loaded from chain (`Sale` / `BetweenVaults` on a sell, `Purchase` / `PurchaseFromVault` on a buy; `TradeDesk::vault` returns the vault to sign as), and submits it. `VaultTrade { side, market_pda, market, terms: OptionTerms, quantity, rfq_timeout, window, bounds }` accepts any `OptionTerms`; it rejects a market whose side does not match the product and checks spread strikes before the request. `TradeOutcome::Submitted` means the participant-signed transaction reached the keeper; `TradeError::in_flight()` returns the signed trade when a failed submit may still execute.
 
 For swaps, `client.swap_quote(request)` returns the quote. Pass it with `VaultSwapIntent { vault, request, quote, price_routes: PairPriceRoutes { main, second, staging, shards }, min_output_floor, account }` to `verify_and_sign_swap`, then send it with `swap_submit_in_epoch(payload, epoch, gate)`. `epoch` is the connection epoch `wait_until_ready()` returned; the swap is sent only on that connection, and only if `gate` admits it (`Ungated` admits every send). `account` is the `VaultAccount` read before the request; the second leg and the staging slot are checked against it. `main` and `second` are the vault's decoded `PriceRoute`s. `staging` lists the routes of the mints you accept as a staging mint; pass `&[]` to refuse two-transaction swaps. `shards` lists the Pyth push-oracle shards you accept. The crate's `vault_operator` example (`cargo run --example vault_operator --features vault,http`) shows verified fill and swap signing.
 
@@ -274,7 +285,9 @@ vault.on("sponsoredTxToSign", async (orderIdHex, txBase64) => {
   await vault.submitSignedSponsoredTx({ orderIdHex, txBase64: signed });
 });
 
-vault.on("swapQuoteResult", async (quote) => {
+vault.on("reply", async ({ result }) => {
+  if (result.type !== "swap_quote") return;
+  const { type: _, ...quote } = result;
   const submit = await verifyAndSignSwap({
     intent: { vault: planner, request, quote, priceRoutes, minOutputFloor, staging: vaultAccount },
     tables: await fetchAddressesForLookupTables(flows.servedLookupTableKeys(quote.tx_base64), rpc),
@@ -301,9 +314,9 @@ The accounts are `venue PDA, program, source, destination`, followed by the hop'
 
 This section applies to covered calls and cash-secured puts only. A vault that holds a call spread, put spread or cash put has nothing to fund: the position is collateralized in full by the writer and the vault receives its payoff at settlement. `FundPositionForVaultHolder` on such a position fails.
 
-When the vault holds a physical option, the option is not funded at open. To exercise an ITM option, the vault must fund it (`FUND_HOLDER`): it pays strike × quantity in quote for a call, or the quantity in underlying for a put, from the matching leg, and receives the collateral at settlement. **Fund before expiry.** After the market is finalized, anyone can liquidate an unfunded ITM position. The liquidator pays the writer and takes the collateral, and the vault keeps nothing: it loses the intrinsic value. The contract sets no funding deadline. Funding is accepted after finalization until a settlement or liquidation lands, but then you are racing liquidators. Keep enough of the funding mint for every physical holder position you may need to exercise.
+When the vault holds a physical option, the option is not funded at open. To exercise an ITM option, the vault must fund it (`FUND_HOLDER`): it pays strike × quantity in quote for a call, or the quantity in underlying for a put, from the matching leg, and receives the collateral at settlement. **Fund before expiry.** After the market is finalized, anyone can liquidate an unfunded ITM position. The liquidator pays the writer and takes the collateral, and the vault keeps nothing: it loses the intrinsic value. A position the vault bought from a maker or vault (82-85) is never liquidated: unfunded, it settles as not exercised and the collateral returns to the writer. The contract sets no funding deadline. Funding is accepted after finalization until a settlement or liquidation lands, but then you are racing liquidators. Keep enough of the funding mint for every physical holder position you may need to exercise.
 
-`ChainClient::unfunded_positions(vault)` returns every `open` position whose maker is the vault. That list includes spreads and cash puts, which stay `open` until settlement and cannot be funded. Skip entries whose `terms` is a spread or cash put before building a fund instruction.
+`ChainClient::unfunded_positions(vault)` returns every `open` position whose holder is the vault: the positions the vault holds, including physical ones bought from a maker or another vault (82/84). It filters on `Position.holder`, not on the maker. That list includes spreads and cash puts, which stay `open` until settlement and cannot be funded. Skip entries whose `terms` is a spread or cash put before building a fund instruction.
 
 Builders: TS `planner.trading.fundHolderPosition(position)`; Rust `VaultManager::fund_holder_position` in `acta-maker-sdk` (feature `vault`). The builder picks the funding mint from the market side and the vault ATA by that mint. The actor signs (`FUND_HOLDER` or governance) and pays; `FundPositionForVaultHolder` takes no arguments and moves the amount the position needs.
 
@@ -347,7 +360,7 @@ If only the delegate is lost, governance can do everything the delegate did, dis
 If both governance and delegate stop acting:
 
 - No new positions or rebalances happen.
-- Positions settle permissionlessly after finalization. ITM physical positions the vault holds and never funded are liquidated; the vault loses their intrinsic value. Spreads and cash puts settle in cash with no action from the vault.
+- Positions settle permissionlessly after finalization. ITM physical positions the vault holds and never funded are liquidated and the vault loses their intrinsic value; ones it bought from a maker or vault (82-85) settle as not exercised instead. Spreads and cash puts settle in cash with no action from the vault.
 - After `expiry + capital_fallback_delay_seconds`, anyone can price equity, process requests and finalize the cycle. Pricing still needs main to cover withdrawals and the liquidity floor. A large second balance can only be converted by `REBALANCE` or governance, so it blocks pricing until someone with those rights acts.
 - In Idle, withdrawal requests older than the delay can be priced and processed by anyone; depositors can cancel pending deposits.
 - Closing cannot start without governance. Acta cold can freeze the vault or start an emergency unwind.

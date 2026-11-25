@@ -100,10 +100,12 @@ Protocol constraints:
 
 | Value | Effect |
 |-------|--------|
-| `cancel_quotes` | On an actual disconnect (socket close or liveness timeout), the server removes active and retained non-winning quotes still owned by that physical session, including retained quotes in locked RFQs. Ownership takeover preserves quotes; late cleanup of the replaced connection cannot cancel the new owner's book. Quotes a taker has already accepted (`QuoteSelected`) stay locked and settle or expire on their own timers. Session resume does not restore cancelled quotes; re-quote after reconnecting. |
+| `cancel_quotes` | On an actual disconnect (socket close or liveness timeout), the server removes active and retained non-winning quotes still owned by that physical session, including retained quotes in locked RFQs. Ownership takeover preserves quotes; late cleanup of the replaced connection cannot cancel the new owner's book. Quotes a taker has already accepted (`QuoteUpdate` `selected`) stay locked and settle or expire on their own timers. Session resume does not restore cancelled quotes; re-quote after reconnecting. |
 | `keep_quotes` | Resting quotes survive a disconnect and can be filled while the maker is offline. |
 
-`QuoteExpired` is always sent. There is no feature negotiation.
+Every order ends with exactly one terminal event (see [Quote lifecycle](#quote-lifecycle-quoteupdate-server---maker)). There is no feature negotiation.
+
+**One trading session per maker.** A new authentication of the same maker retires the old connection with `SessionReplaced` and moves its quotes to the new session. A dashboard or a second process must not authenticate as the trading maker; use `/maker/data` for reads. On a server restart the socket closes. After any reconnect, re-read `GetMyQuotes` (live and history) and `GetOrderStatus` for unresolved orders, and apply the `rfq_version` rule.
 
 A different `protocol_version` gets an `Error` frame and a WebSocket close with code `4006`:
 
@@ -162,13 +164,13 @@ A different `protocol_version` gets an `Error` frame and a WebSocket close with 
 }
 ```
 
-All fields are required. The server answers with `SubscribeAck` echoing `request_id` and the channels that were newly added.
+All fields are required. The server answers with a `Reply` `subscribed { channels }` listing the channels that were newly added.
 
 - `products` is a nonempty list of unique product names: `covered_call`, `cash_secured_put`, `call_spread`, `put_spread`, `cash_put`. An empty list is rejected with `invalid_products`. RFQ fan-out follows this selection. Position, history and recovery reads include every product regardless of it.
 - `underlying_mints` and `quote_mints` filter market broadcasts. `[]` means every mint.
 - Each `Subscribe` replaces the product selection and both mint lists. Channels are additive.
 
-The two mint lists may contain at most 1024 entries in total after each list is deduplicated. A mint present in both lists counts twice. An oversized `Subscribe` or `AddMints` returns a correlated `RequestError` with code `subscription_scope_too_large`; the existing scope and channels stay unchanged.
+The two mint lists may contain at most 1024 entries in total after each list is deduplicated. A mint present in both lists counts twice. An oversized `Subscribe` or `AddMints` returns a correlated `Reply` `error` with code `subscription_scope_too_large`; the existing scope and channels stay unchanged.
 
 ### Connection policy defaults
 
@@ -228,13 +230,10 @@ The two mint lists may contain at most 1024 entries in total after each list is 
 - `AuthRequest`, `AuthSuccess`, `AuthError`
 - `Snapshot`, `ReferenceChanged`
 - `RfqBroadcast`, `RfqSkipped`
-- `QuoteRefreshRequested`, `QuoteAcknowledged`, `QuoteBestStatus`, `QuoteOutbid`, `QuoteSelected`
-- `QuoteRejected`, `QuoteFilled`, `QuoteCancelled`, `QuoteExpired`, `RfqLocked`, `RfqAvailableAgain`, `RfqClosed`
-- `CancelQuoteAck`, `CancelAllQuotesAck`, `BatchQuotesAck`
+- `QuoteUpdate`, `RfqUpdate`
 - `IndicativePricesRequest`
 - `SubscriptionUpdated`
-- `Error`, `RequestError`, `Pong`
-- `SubscribeAck`, `UnsubscribeAck`
+- `Reply`, `Error`, `Pong`
 
 ### Server -> Maker (responses / query results)
 
@@ -272,11 +271,10 @@ the session that sent the quote, or the maker owner's `/maker` and ready
 | `RfqBroadcast` | `rfqs` channel, within the product and mint scope | no | sessions with `sign_maker_quotes`, no subscription |
 | `RfqSkipped` | `rfqs` channel, makers the caps prefilter skipped | no | sessions with `sign_maker_quotes` the prefilter skipped |
 | `IndicativePricesRequest` | `side: "sell"` on the `rfqs` channel, `side: "buy"` on `taker_buy_rfqs` | no | no |
-| `RfqLocked` | every session that quoted the RFQ except the accepted one | no | every session that quoted the RFQ except the accepted one |
-| `QuoteAcknowledged`, `QuoteRejected`, `QuoteBestStatus`, `QuoteOutbid`, `QuoteSelected`, `QuoteRefreshRequested`, `QuoteExpired`, `QuoteCancelled` | the session that sent the quote | no | the session that sent the quote |
-| `QuoteFilled` | the session that sent the winning quote | no | the session that sent the winning quote |
-| `RfqClosed`, `RfqAvailableAgain` | every session that quoted the RFQ | no | every session that quoted the RFQ, and the taker session |
-| `OrderAccepted`, `SponsoredTxToSign`, `OrderSubmitted`, `OrderConfirmed`, `OrderFailed` | never: these go to the taker | no | only as the taker of its own RFQ |
+| `QuoteUpdate` | the session that owns the order | no | the session that owns the order |
+| `RfqUpdate` `locked` | every session that quoted the RFQ except the accepted one | no | every session that quoted the RFQ except the accepted one |
+| `RfqUpdate` `available`, `closed` | every session that quoted the RFQ | no | every session that quoted the RFQ, and the taker session |
+| `OrderUpdate`, `SponsoredTxToSign` | never: these go to the taker | no | only as the taker of its own RFQ |
 | `TradeExecuted` | owner's session, no subscription | owner's ready sessions, no subscription | no |
 | `PositionUpdated`, `MakerCapsUpdated` | owner's session, no subscription | owner's ready sessions, no subscription | no |
 | `ReferenceChanged` | every session | every ready session | every session |
@@ -285,8 +283,8 @@ the session that sent the quote, or the maker owner's `/maker` and ready
 | `VaultCatalogChanged` | `vaults` channel | no | no |
 | `VaultProjectionAdvanced` | `vaults` channel | no | `vaults` channel, own vault only |
 
-A maker learns of its fill from `QuoteFilled` (and `TradeExecuted`), never from
-`OrderConfirmed`. `PositionUpdated` and `MakerCapsUpdated` reach the owner's
+A maker learns of its fill from `QuoteUpdate` `filled` (and `TradeExecuted`), never from
+`OrderUpdate`. `PositionUpdated` and `MakerCapsUpdated` reach the owner's
 `/maker` session and its ready `/maker/data` sessions; a client with neither
 recovers them with `GetMakerPositions`, `GetMyCaps` or `GetMmSummary`.
 
@@ -308,7 +306,13 @@ Every RFQ, quote, position and trade carries two required fields: `terms` and `s
 
 ```json
 { "type": "covered_call", "strike": "160000000000" }
+```
+
+```json
 { "type": "call_spread", "lower_strike": "100000000000", "upper_strike": "120000000000" }
+```
+
+```json
 { "type": "cash_put", "strike": "150000000000" }
 ```
 
@@ -444,8 +448,8 @@ The filter runs before broadcast and knows no premium, so `maker_insufficient_ba
     "price": "5000000000",
     "valid_until": 1710000120,
     "nonce": "42",
-    "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-    "signature": "<base58 ed25519 signature of order_id>"
+    "order_id": "9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "signature": "5ACJRnXT6rB2MKNMHAmf4q2u7hDfZgGw5jTtcznzJpQtgGb6S7FutRovj21ysRN1UXQsPA7eBXxNq7EoLvsXDcLj"
   }
 }
 ```
@@ -462,8 +466,8 @@ A spread or cash-put quote uses the same fields with the matching `terms`:
     "price": "5000000000",
     "valid_until": 1799999900,
     "nonce": "999",
-    "order_id": "0x0101010101010101010101010101010101010101010101010101010101010101",
-    "signature": "<base58 ed25519 signature of order_id>"
+    "order_id": "0101010101010101010101010101010101010101010101010101010101010101",
+    "signature": "5ACJRnXT6rB2MKNMHAmf4q2u7hDfZgGw5jTtcznzJpQtgGb6S7FutRovj21ysRN1UXQsPA7eBXxNq7EoLvsXDcLj"
   }
 }
 ```
@@ -552,29 +556,29 @@ Atomic cancel-and-resubmit for a specific quote. Cancels the quote identified by
 {
   "type": "ReplaceQuote",
   "data": {
-    "replaced_order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "replaced_order_id": "9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
     "terms": { "type": "covered_call", "strike": "160000000000" },
     "side": "sell",
     "price": "5500000000",
     "valid_until": 1710000120,
     "nonce": "43",
-    "order_id": "0xb2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3",
-    "signature": "<base58 ed25519 signature of order_id>"
+    "order_id": "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3",
+    "signature": "5ACJRnXT6rB2MKNMHAmf4q2u7hDfZgGw5jTtcznzJpQtgGb6S7FutRovj21ysRN1UXQsPA7eBXxNq7EoLvsXDcLj"
   }
 }
 ```
 
-`replaced_order_id` identifies the specific quote being replaced. Server responds with `QuoteAcknowledged` (with `replaced`) on success, or `QuoteRejected` / `Error` on failure.
+`replaced_order_id` identifies the specific quote being replaced. On success the old order gets `QuoteUpdate` `cancelled` with reason `replaced`, then the new order gets `live`, both at the same `rfq_version`. On failure the new order gets `rejected`.
 
 **Errors:**
-- `QuoteRejected` with standard reasons (`invalid_strike`, `cap_exceeded`, etc.) — new quote failed validation; old quote remains active
-- `Error { type: "QuoteLocked", data: { reason } }` — the old quote cannot be replaced: `reason` is `rfq_locked` while the taker's signature is pending and `order_submitted` once the signed transaction is queued
-- `Error { type: "QuoteNotFound" }` — `replaced_order_id` not found (race: already cancelled/expired)
+- `rejected` with a standard reason (`invalid_strike`, `cap_exceeded`, …): the new quote failed validation; the old quote remains active.
+- `rejected` with `{ "quote_locked": "rfq_locked" }` while the taker's signature is pending, or `{ "quote_locked": "order_submitted" }` once the signed transaction is queued: the old quote cannot be replaced.
+- `rejected` with reason `replaced_order_not_found`: the old quote already ended (cancelled, expired, frozen).
 
 ### BatchQuotes (maker -> server)
 
-Submit multiple quotes in one message. A batch must contain at most `max_batch_quotes` quotes (`GET /api/v1/venue`, 50 by default). The server charges one quote-rate-limit token per quote element; an empty batch costs one token. Within an accepted batch, each quote is validated like a standalone `Quote`. The server responds with one `BatchQuotesAck` containing `results[]` — one entry (`acknowledged` or `rejected`) per quote that reached quote-level validation. **Correlate results by `order_id`, not by position:** a quote rejected at initial validation (bad signature, expired, unregistered maker) is reported as an inline error and may be omitted from `results[]`. Partial success is allowed. For an implicit same-terms replacement, the aggregated `QuoteAcknowledged` has `replaced: { "type": "none" }`; the replaced order id is delivered on the asynchronous per-quote `QuoteAcknowledged` event.
+Submit multiple quotes in one message. A batch must contain at most `max_batch_quotes` quotes (`GET /api/v1/venue`, 50 by default). The server charges one quote-rate-limit token per quote element; an empty batch costs one token. A larger batch is refused as a whole with one `Error` `batch_quotes_too_large` and no quote is processed. Within an accepted batch, each quote is validated like a standalone `Quote` and answered by its own `QuoteUpdate`, `live` or `rejected`; there is no batch-level answer. Partial success is allowed.
 
 ```json
 {
@@ -588,8 +592,8 @@ Submit multiple quotes in one message. A batch must contain at most `max_batch_q
         "price": "4500000000",
         "valid_until": 1710000120,
         "nonce": "44",
-        "order_id": "0xaaaa2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-        "signature": "<base58 ed25519 signature of order_id>"
+        "order_id": "aaaa2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+        "signature": "5ACJRnXT6rB2MKNMHAmf4q2u7hDfZgGw5jTtcznzJpQtgGb6S7FutRovj21ysRN1UXQsPA7eBXxNq7EoLvsXDcLj"
       },
       {
         "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
@@ -598,82 +602,78 @@ Submit multiple quotes in one message. A batch must contain at most `max_batch_q
         "price": "5000000000",
         "valid_until": 1710000120,
         "nonce": "45",
-        "order_id": "0xbbbb2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-        "signature": "<base58 ed25519 signature of order_id>"
+        "order_id": "bbbb2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+        "signature": "5ACJRnXT6rB2MKNMHAmf4q2u7hDfZgGw5jTtcznzJpQtgGb6S7FutRovj21ysRN1UXQsPA7eBXxNq7EoLvsXDcLj"
       }
     ]
   }
 }
 ```
 
-Each entry in `quotes` has the same schema as a standalone `Quote` message. Quotes are processed sequentially — a rejection of one quote does not block subsequent quotes.
+Each entry in `quotes` has the same schema as a standalone `Quote` message. Quotes are processed sequentially — a rejection of one quote does not block subsequent quotes. The batch has no answer of its own: each quote gets its own `QuoteUpdate`, `live` or `rejected`, exactly as if it were sent alone, correlated by `order_id`.
 
-Each `results` entry is `{ "status": "acknowledged", "data": <QuoteAcknowledged> }` or `{ "status": "rejected", "data": <QuoteRejected> }`:
+### Quote lifecycle: QuoteUpdate (server -> maker)
 
-```json
-{
-  "type": "BatchQuotesAck",
-  "data": {
-    "results": [
-      {
-        "status": "acknowledged",
-        "data": {
-          "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-          "order_id": "0xaaaa2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-          "replaced": {
-            "type": "none"
-          }
-        }
-      },
-      {
-        "status": "rejected",
-        "data": {
-          "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-          "order_id": "0xbbbb2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-          "reason": "invalid_strike",
-          "message": "strike is not offered by the RFQ"
-        }
-      }
-    ]
-  }
-}
-```
-
-### QuoteRejected (server -> maker)
-
-`QuoteRejected` is sent for quote-specific validation failures and carries a typed `reason` for programmatic handling. `message` is a required string with detail for logs.
+Every change to one of your quotes arrives as one `QuoteUpdate`, keyed by `order_id`:
 
 ```json
 {
-  "type": "QuoteRejected",
+  "type": "QuoteUpdate",
   "data": {
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-    "reason": "invalid_strike",
-    "message": "strike is not offered by the RFQ"
+    "order_id": "9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "state": {
+      "type": "live",
+      "rfq_version": 3,
+      "is_best": true,
+      "best_price": { "type": "quoted", "price": "5000000000" }
+    }
   }
 }
 ```
 
-A cap rejection carries the failing
-dimension inside the reason instead of a bare string, so it cannot arrive
-without its detail:
+| `state.type` | Fields | Meaning |
+|---|---|---|
+| `live` | `rfq_version`, `is_best`, `best_price` | Accepted, and again on every rank change; a repeat is a new rank, not a new quote. Resending the same signed quote returns `live` again |
+| `refresh_requested` | `rfq_version`, `terms`, `side`, `min_valid_until`, `reason` | **Ends the order.** Quote again with a fresh order and `valid_until >= min_valid_until` to stay in the RFQ |
+| `selected` | `rfq_version`, `taker_owner`, `price`, `quantity`, `terms`, `side`, `signature_deadline_at` | The taker picked this quote and is signing |
+| `filled` | `rfq_version`, `market_pda`, `terms`, `side`, `taker_owner`, `price`, `quantity`, `position_pda`, `transaction_signature`, `filled_at` | The position opened on chain |
+| `rejected` | `reason`, `message` | This submission was refused; see `reason`. Ends the order only if you have not seen it `live` or `selected` |
+| `expired` | `rfq_version`, `reason` | Past its `valid_until` |
+| `released` | `rfq_version`, `reason` | Selected, but the trade did not happen (`signature_timeout`, `tx_failed`, `tx_build_failed`); the quote left the book |
+| `lost` | `rfq_version`, `reason` | The RFQ closed without filling this quote; `reason` is the RFQ close reason |
+| `cancelled` | `rfq_version`, `reason` | Withdrawn: `requested` by your own `CancelQuote` / `CancelAllQuotes`, `replaced` by your newer quote on the same `(rfq, terms)`, `risk_check` or `maker_disconnected` by the server |
+
+A quote that replaces your earlier quote on the same `(rfq, terms)` first ends the old order with `cancelled` `replaced`, at the same `rfq_version` as the new order's `live`. If the old order already ended (`refresh_requested`), nothing more is sent for it. `best_price` is the best price on the RFQ, which may be another maker's, or `{ "type": "none" }`.
+
+**Every order ends exactly once**, with a `QuoteUpdate` other than `live` / `selected`. A `rejected` for an order you already hold as live, selected or ended is not its end: ignore it. Free the order's capacity and state on that event and on nothing else; an `RfqUpdate` alone never ends an order.
+
+**Ordering.** `rfq_version` grows on every change to the RFQ's book. Book states, `RfqUpdate` and `GetMyQuotes` rows carry it. A `GetMyQuotes` snapshot and a push can arrive in either order: per RFQ keep the highest version you have seen and drop only lower versions. One change can send several states at the same version (several `cancelled`, `lost` then `RfqUpdate` `closed`, `RfqUpdate` `closed` then `filled`, `cancelled` `replaced` then `live`), so apply equal versions.
+
+**Known order ids.** `rejected` refuses one submission, not an order. A `Quote`, `ReplaceQuote` or batch item naming an order the server already knows (live in another RFQ, selected, retained by a locked RFQ, ended, refreshed, or the same id with a different payload) gets `rejected` with reason `duplicate_order_id`. An identical resend of an order still live in the open book answers `live` again. Every other refusal (rate limit, overload, trading paused, caps) is also `rejected` for that submission; if you already hold the order as live or selected, it keeps its state.
+
+**Refresh.** The refresh timer fires at `valid_until - settlement_buffer_seconds - quote_refresh_lead_seconds`. `min_valid_until` is the authoritative lower bound for the replacement and already includes the settlement buffer and the admission minimum. A frozen order is gone from `GetMyQuotes` live.
+
+**Fills.** `filled` is the fill fact for the winning maker. `market_pda`, `terms` and `side` identify the market and product without the RFQ, so a fill can be attributed after a restart; the expiry and mint decimals come from `GetMarketDescriptors`. It is sent before any chain event reaches the server, so it has no fee, net premium or collateral fields. The authoritative net premium is `total_premium` on the `PositionUpdated` row, applied by `revision`; `MakerPositions` and `MmSummary` return the same row. To have the amounts at once, compute them locally with the quote token's rates (`protocol_fees` in `GET /api/v1/tokens`): the Rust SDK's `physical_premium` for covered calls and cash-secured puts, and `SpreadTerms::premium` for spreads and cash puts. `quantity` is in underlying atoms and `price` is 1e9-scaled per underlying token, so the gross premium in quote atoms is `floor(price * quantity * 10^quote_decimals / (1e9 * 10^underlying_decimals))` (the Rust SDK's `total_premium_quote_atoms` and the TS SDK's `totalPremiumQuoteAtoms`).
+
+A cap rejection carries the failing dimension inside the reason, so it cannot arrive without its detail:
 
 ```json
 {
-  "type": "QuoteRejected",
+  "type": "QuoteUpdate",
   "data": {
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-    "reason": { "cap_exceeded": { "maker_position_cap_exceeded": { "current": 3, "limit": 3 } } },
-    "message": "Maker position cap exceeded (3/3)"
+    "order_id": "9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "state": {
+      "type": "rejected",
+      "reason": { "cap_exceeded": { "maker_position_cap_exceeded": { "current": 3, "limit": 3 } } },
+      "message": "Maker position cap exceeded (3/3)"
+    }
   }
 }
 ```
 
-The value under `cap_exceeded` is a `CapError`: a bare string for
-`caps_unavailable`, otherwise an object keyed by the cap code (see
-[caps.md](caps.md) for the codes and amounts).
+The value under `cap_exceeded` is a `CapError`: a bare string for `caps_unavailable`, otherwise an object keyed by the cap code (see [caps.md](caps.md)). The server reserves capacity for every live quote, so a quote that would overlap your other live quotes beyond your balance or limits is rejected here, not at fill.
 
 ### QuoteRejectReason
 
@@ -688,261 +688,56 @@ The value under `cap_exceeded` is a `CapError`: a bare string for
 | `quote_identity_mismatch` | Product, `side` or spread `terms` differ from the RFQ |
 | `market_expired` | `valid_until` is after the market's expiry, or the market has expired |
 | `quote_expiry_too_short` | `valid_until` below `now + min_quote_validity_seconds` |
+| `invalid_valid_until` | `valid_until` is not representable |
 | `invalid_signature` | Maker signature verification failed |
 | `maker_not_registered` | Maker not found in on-chain registry |
 | `order_id_mismatch` | `order_id` does not match `sha256(preimage)` |
 | `{ "cap_exceeded": CapError }` | Platform or maker cap limit exceeded; the failing dimension with `current`/`limit` is the payload |
 | `rfq_not_found` | RFQ does not exist |
 | `rfq_not_active` | RFQ is no longer accepting quotes |
-| `duplicate_order_id` | `order_id` already submitted |
+| `rfq_locked` | The RFQ is locked on a selected quote; quote again if it becomes available |
+| `{ "quote_locked": "rfq_locked" \| "order_submitted" }` | The quote you are replacing is in a trade |
+| `replaced_order_not_found` | The quote named in `replaced_order_id` already ended |
+| `duplicate_order_id` | The `order_id` already belongs to a known order (selected, retained by a locked RFQ, ended, in another RFQ, or a different payload); that order keeps its state |
 | `rate_limited` | The `liquidity_provider` bucket is empty; back off and retry. See [Rate limits](ws-common.md#rate-limits-and-admission) |
+| `overloaded` | A transient server or market-data condition; retry later |
 | `trading_paused` | Trading is paused venue-wide; retry after it resumes |
 | `internal_error` | Server-side failure; the quote was not accepted, retry is safe |
 
-### QuoteRefreshRequested (server -> maker)
+### RfqUpdate (server -> maker)
+
+Every change to an RFQ you take part in:
 
 ```json
 {
-  "type": "QuoteRefreshRequested",
+  "type": "RfqUpdate",
   "data": {
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "terms": { "type": "covered_call", "strike": "160000000000" },
-    "side": "sell",
-    "min_valid_until": 1710000121,
-    "reason": "expiring_soon"
-  }
-}
-```
-
-The refresh timer fires at `valid_until - settlement_buffer_seconds - quote_refresh_lead_seconds`. The quote then stays in the book but cannot be accepted until you send a fresh one. `min_valid_until` is the authoritative lower bound for the replacement. Use the value in the frame; it also accounts for the configured admission minimum.
-
-Identified by `(rfq_id, terms)`, not `order_id`. If quoting several terms per RFQ, keep a local `(rfq_id, terms) -> order_id` mapping to know which quote to refresh.
-
-`reason` is `expired` or `expiring_soon`. `min_valid_until` includes the settlement buffer; the refreshed quote must have `valid_until >= min_valid_until`.
-
-### QuoteSelected (server -> maker)
-
-```json
-{
-  "type": "QuoteSelected",
-  "data": {
-    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-    "taker_owner": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
-    "price": "5000000000",
-    "quantity": "1000000000",
-    "terms": { "type": "covered_call", "strike": "160000000000" },
-    "side": "sell",
-    "signature_deadline_at": 1710000040
-  }
-}
-```
-
-### QuoteFilled (server -> maker)
-
-```json
-{
-  "type": "QuoteFilled",
-  "data": {
-    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-    "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
-    "expiry_ts": 1710600000,
-    "terms": { "type": "covered_call", "strike": "160000000000" },
-    "side": "sell",
-    "taker_owner": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
-    "price": "5000000000",
-    "quantity": "1000000000",
-    "position_pda": "75NqraLLofiLUpNQg2wUPG6CJpxcaGEZUwuNrnAgvcTP",
-    "transaction_signature": "<base58 transaction signature>",
-    "filled_at": 1710000042
-  }
-}
-```
-
-`QuoteFilled` is the fill-details event for the winning maker. `market_pda`,
-`expiry_ts` (market expiry, Unix seconds), `terms` and `side` identify the
-market and product without the RFQ, so a fill can be attributed after a restart. Mint
-decimals for the market come from `GetMarketDescriptors`.
-
-`QuoteFilled` is the fill fact. It carries `price` and `quantity`, and it is sent before any chain event reaches the server, so it has no fee, net premium or collateral fields.
-
-The authoritative net premium is `total_premium` on the `PositionUpdated` row, applied by `revision`. `MakerPositions` and `MmSummary` return the same row.
-
-To have the amounts at once, compute them locally with the quote token's rates (`protocol_fees` in `GET /api/v1/tokens`): the Rust SDK's `physical_premium` for covered calls and cash-secured puts, and `SpreadTerms::premium` for spreads and cash puts. The result is an estimate if the rates changed.
-
-`quantity` is in underlying atoms and `price` is 1e9-scaled per underlying token, so the gross
-premium (before protocol fees) in quote atoms is `floor(price * quantity * 10^quote_decimals / (1e9 * 10^underlying_decimals))`
-(the contract's rounding; the Rust SDK's `total_premium_quote_atoms` and the TS
-SDK's `totalPremiumQuoteAtoms` compute it).
-
-`RfqClosed` is the terminal RFQ event.
-
-Current runtime behavior for successful fills:
-- winner maker receives `RfqClosed` and then `QuoteFilled`; accept fill details after the RFQ has closed
-- taker receives `OrderConfirmed` and then `RfqClosed`
-- close RFQ state only on `RfqClosed`; process `QuoteFilled` as fill-details information
-
-### QuoteAcknowledged (server -> maker)
-
-```json
-{
-  "type": "QuoteAcknowledged",
-  "data": {
-    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-    "replaced": {
-      "type": "none"
+    "rfq_version": 6,
+    "state": {
+      "type": "closed",
+      "reason": "filled",
+      "winner": {
+        "type": "winner",
+        "maker_owner": "A87ysNWAmmqQHafLSQGbYSLhtcV3BjXctR88EWuSobGP",
+        "price": "5500000000",
+        "transaction": { "type": "sent", "signature": "ZzRPR6pWiL3B77tGitQFve4G2s431KhVgF1Z14vdHUMSqVFPuyCT2Bx4iK7ofDAj41hGHJhf9qAaYiR5qD5b25S" }
+      },
+      "at": 1710000042
     }
   }
 }
 ```
 
-`replaced` is `{ "type": "replaced", "order_id" }` with the displaced order when the new quote replaced a prior quote from the same maker on the same `(rfq, terms)`, and `{ "type": "none" }` otherwise.
+| `state.type` | Fields | Meaning |
+|---|---|---|
+| `locked` | `at` | The taker accepted another quote and is signing. Your quotes stay as backups; the RFQ takes no new quotes until it becomes available or closes |
+| `available` | `reason`, `at` | The selected quote failed (`signature_timeout`, `tx_failed`, `tx_build_failed`); the RFQ takes quotes again. The failed order itself ends with `released` |
+| `closed` | `reason`, `winner`, `at` | Terminal for the RFQ. Every participant gets the same message; each of your orders still ends with its own `QuoteUpdate` |
 
-### QuoteBestStatus (server -> maker)
+`reason` on `closed` is one of `expired`, `taker_cancelled`, `filled`, `market_expired`, `no_eligible_makers`, `server_shutdown` (see [RfqCloseReason](#rfqclosereason)). `winner` is `{ "type": "winner", "maker_owner", "price", "transaction" }` on `filled` and `{ "type": "none" }` otherwise; `transaction` is `{ "type": "sent", "signature" }` once the transaction is sent, otherwise `{ "type": "pending" }`.
 
-```json
-{
-  "type": "QuoteBestStatus",
-  "data": {
-    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-    "is_best": true,
-    "current_best_price": {
-      "type": "quoted",
-      "price": "5000000000"
-    }
-  }
-}
-```
-
-`is_best`: whether the maker's quote is currently the highest premium.
-`current_best_price`: the best price on the RFQ (may be another maker's price), as `{ "type": "quoted", "price" }`, or `{ "type": "none" }` when there is none.
-
-### QuoteOutbid (server -> maker)
-
-```json
-{
-  "type": "QuoteOutbid",
-  "data": {
-    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-    "your_price": "5000000000",
-    "current_best_price": {
-      "type": "quoted",
-      "price": "5500000000"
-    }
-  }
-}
-```
-
-`your_price`: the maker's current quote price.
-`current_best_price`: the new best price that outbid the maker, as `{ "type": "quoted", "price" }`, or `{ "type": "none" }` when there is none.
-
-### QuoteExpired (server -> maker)
-
-Always sent when a quote expires.
-
-```json
-{
-  "type": "QuoteExpired",
-  "data": {
-    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-    "reason": "expired"
-  }
-}
-```
-
-`reason` is `expired` or `expiring_soon`.
-
-### QuoteCancelled (server -> maker)
-
-```json
-{
-  "type": "QuoteCancelled",
-  "data": {
-    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "order_ids": ["0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"],
-    "reason": "requested",
-    "cancelled_at": 1710000025
-  }
-}
-```
-
-`reason` values: `requested` (maker requested), `risk_check` (server-side risk), `rfq_accepted` (RFQ accepted another quote), `maker_disconnected` (the session said `on_disconnect: "cancel_quotes"` and disconnected; sent to the session that is gone, so a reconnecting maker sees the cancellation through `GetMyQuotes`).
-
-### RfqClosed (server -> maker)
-
-```json
-{
-  "type": "RfqClosed",
-  "data": {
-    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "rfq_version": 3,
-    "reason": "filled",
-    "your_quote": {
-      "type": "quoted",
-      "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
-      "status": "outbid",
-      "price": "5000000000"
-    },
-    "winner": {
-      "type": "winner",
-      "maker_owner": "A87ysNWAmmqQHafLSQGbYSLhtcV3BjXctR88EWuSobGP",
-      "price": "5500000000",
-      "transaction": {
-        "type": "sent",
-        "signature": "<base58 transaction signature>"
-      }
-    },
-    "closed_at": 1710000042
-  }
-}
-```
-
-`reason` values: `expired`, `taker_cancelled`, `filled`, `market_expired`, `server_shutdown` (see [RfqCloseReason](#rfqclosereason)).
-
-`your_quote` is `{ "type": "quoted", "order_id", "status", "price" }` with this session's quote on the RFQ, or `{ "type": "none" }` when it has none. `your_quote.status` values: `expired`, `outbid`, `cancelled`, `filled`. A session with several quotes gets one of them; a session that won gets the winning quote.
-
-`winner` is `{ "type": "winner", "maker_owner", "price", "transaction" }` on `filled` and `{ "type": "none" }` otherwise. `transaction` is `{ "type": "sent", "signature" }` once the transaction is sent, otherwise `{ "type": "pending" }`.
-
-- On `filled`, every recipient gets `winner`, including `winner.transaction`. The winning session gets `your_quote.status` `filled`, a session with another live quote gets `outbid`, and a session whose quotes are already gone gets `{ "type": "none" }`.
-- On any other reason, a session with a live quote gets it with status `expired` (reason `expired`) or `cancelled`. A session whose quotes are already gone gets `{ "type": "none" }`.
-
-### RfqLocked (server -> maker)
-
-```json
-{
-  "type": "RfqLocked",
-  "data": {
-    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "rfq_version": 2,
-    "locked_at": 1710000030
-  }
-}
-```
-
-Sent to every other maker on the RFQ when the taker accepts a quote; the accepted maker gets `QuoteSelected` instead. Your quote stays live as a backup and the RFQ takes no new quotes until `RfqAvailableAgain` or `RfqClosed`.
-
-### RfqAvailableAgain (server -> maker)
-
-```json
-{
-  "type": "RfqAvailableAgain",
-  "data": {
-    "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "rfq_version": 2,
-    "reason": "signature_timeout",
-    "available_again_at": 1710000045
-  }
-}
-```
-
-Sent when a previously locked RFQ becomes available for new quotes (e.g. taker failed to sign in time).
-
-`reason` values: `signature_timeout`, `tx_failed`, `tx_build_failed`.
+On a fill the winning maker gets `RfqUpdate` `closed` and then `QuoteUpdate` `filled`; the taker gets `OrderUpdate` `confirmed` and then `RfqUpdate` `closed`. Your other orders on that RFQ end with `lost`.
 
 ---
 
@@ -960,22 +755,20 @@ Sent when a previously locked RFQ becomes available for new quotes (e.g. taker f
 }
 ```
 
-Cancels **all** of this connection's active quotes on the given RFQ (across all terms). There is no per-order_id cancel — use `CancelQuote` per rfq_id. The server responds once the cancellation is applied with `CancelQuoteAck { request_id, rfq_id, cancelled_order_ids }`, or a correlated `RequestError` (for example `RfqNotFound`, `RfqNotActive`, `QuoteLocked`). `QuoteCancelled` is a lifecycle notification, not the command receipt.
-
-### CancelQuoteAck (server -> maker)
+Cancels **all** of this connection's active quotes on the given RFQ (across all terms). There is no per-order_id cancel — use `CancelQuote` per rfq_id. The answer is a `Reply` `accepted`, and every order it removed ends with its own `QuoteUpdate`:
 
 ```json
 {
-  "type": "CancelQuoteAck",
+  "type": "QuoteUpdate",
   "data": {
-    "request_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
     "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-    "cancelled_order_ids": ["0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"]
+    "order_id": "9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "state": { "type": "cancelled", "rfq_version": 5, "reason": "requested" }
   }
 }
 ```
 
-On an Active RFQ an empty list is an idempotent no-op: the connection has no quote to remove there. While the taker's signature is pending or the signed transaction is queued, single-RFQ cancellation is rejected as a whole with `QuoteLocked`, even for a non-winning maker.
+An `accepted` with no `cancelled` updates is a valid, idempotent answer: nothing of yours was left to end. While the taker's signature is pending or the signed transaction is queued, single-RFQ cancellation is rejected as a whole with a `Reply` `error` `QuoteLocked`, even for a non-winning maker. `RfqNotFound` and `RfqNotActive` also come as `Reply` `error`.
 
 ### CancelAllQuotes (maker -> server)
 
@@ -989,28 +782,15 @@ On an Active RFQ an empty list is an idempotent no-op: the connection has no quo
 }
 ```
 
-`market_pda` is a `QueryFilter`. `{ "type": "all" }` considers all markets; `only` restricts cancellation to that market. CancelAll removes this connection's active and retained non-winning quotes, including those inside locked RFQs. Removed retained quotes cannot return on rollback. Selected/awaiting-signature and executing orders are preserved. Cancel-on-disconnect (`on_disconnect: "cancel_quotes"`) applies the same cleanup once the server processes the disconnect. Neither operation is an account-wide persistent halt.
+`market_pda` is a `QueryFilter`. `{ "type": "all" }` considers all markets; `only` restricts cancellation to that market. CancelAll removes this connection's active and retained non-winning quotes, including those inside locked RFQs, with no limit on how many. Removed retained quotes cannot return on rollback. Selected/awaiting-signature and executing orders are preserved. Cancel-on-disconnect (`on_disconnect: "cancel_quotes"`) applies the same cleanup once the server processes the disconnect. Neither operation is an account-wide persistent halt.
 
-The server responds with `CancelAllQuotesAck` once the cancellation is applied. An invalid `market_pda` returns `RequestError` with `InvalidMarket`; it does not broaden cancellation to all markets.
+The answer is a `Reply` `accepted`; every order this command ended gets a `QuoteUpdate` `cancelled` with `reason` `requested`. No such updates means this command removed no quotes; it does not establish that no selected or executing obligations remain. An invalid `market_pda` returns a `Reply` `error` `InvalidMarket`; it does not broaden cancellation to all markets.
 
-### CancelAllQuotesAck (server -> maker)
-
-```json
-{
-  "type": "CancelAllQuotesAck",
-  "data": {
-    "request_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    "cancelled_count": 0,
-    "cancelled_order_ids": []
-  }
-}
-```
-
-`cancelled_count` equals `cancelled_order_ids.length`; both report the orders actually removed. An empty list means this command removed no quotes; it does not establish that no selected or executing obligations remain. Lifecycle `QuoteCancelled` messages are separate from the receipt and must not complete another request's await.
+Cancels have their own rate budget (10/s, burst 20) that no other traffic spends, and they wait for room when the connection's inbound queue is full, so a kill switch is never refused for load.
 
 Quote, batch, replacement and cancellation commands from one connection retain FIFO order from the SDK writer through the server's processing. Commands before a cancellation may execute first; commands sent afterward may create new quotes. Cancellation is not a persistent account halt.
 
-If the connection drops before the ACK, retain an unknown outcome and reconcile instead of automatically replaying the command.
+If the connection drops before the `Reply`, retain an unknown outcome and reconcile instead of automatically replaying the command.
 
 ### Dynamic subscription management
 
@@ -1018,8 +798,17 @@ Modify subscriptions incrementally. Every field is required.
 
 ```json
 { "type": "AddMints", "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000101", "underlying_mints": ["So11111111111111111111111111111111111111112"], "quote_mints": [] } }
+```
+
+```json
 { "type": "RemoveMints", "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000102", "underlying_mints": ["So11111111111111111111111111111111111111112"], "quote_mints": [] } }
+```
+
+```json
 { "type": "AddChannels", "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000103", "channels": ["trades"] } }
+```
+
+```json
 { "type": "RemoveChannels", "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000104", "channels": ["stats"] } }
 ```
 
@@ -1051,7 +840,7 @@ In responses, an empty mint list means that dimension is unfiltered.
 }
 ```
 
-Server responds with `UnsubscribeAck` echoing `request_id` and the channels that were removed. Use `GetSubscriptions` to verify the subscription state.
+Server responds with a `Reply` `unsubscribed { channels }` listing the channels that were removed. Use `GetSubscriptions` to verify the subscription state.
 
 ### Ping (maker -> server)
 
@@ -1083,13 +872,19 @@ All discovery requests require `request_id` (UUID). The server echoes `request_i
     }
   }
 }
+```
+
+```json
 {
   "type": "GetOrderStatus",
   "data": {
     "request_id": "a1b2c3d4-0000-4000-8000-000000000002",
-    "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"
+    "order_id": "9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"
   }
 }
+```
+
+```json
 {
   "type": "GetMmSummary",
   "data": {
@@ -1100,6 +895,9 @@ All discovery requests require `request_id` (UUID). The server echoes `request_i
     }
   }
 }
+```
+
+```json
 {
   "type": "GetSubscriptions",
   "data": {
@@ -1110,6 +908,9 @@ All discovery requests require `request_id` (UUID). The server echoes `request_i
     }
   }
 }
+```
+
+```json
 {
   "type": "GetActiveRfqs",
   "data": {
@@ -1120,6 +921,9 @@ All discovery requests require `request_id` (UUID). The server echoes `request_i
     }
   }
 }
+```
+
+```json
 {
   "type": "GetTokenCaps",
   "data": {
@@ -1131,6 +935,9 @@ All discovery requests require `request_id` (UUID). The server echoes `request_i
     }
   }
 }
+```
+
+```json
 {
   "type": "GetMyCaps",
   "data": {
@@ -1141,6 +948,9 @@ All discovery requests require `request_id` (UUID). The server echoes `request_i
     }
   }
 }
+```
+
+```json
 {
   "type": "GetMarkets",
   "data": {
@@ -1151,6 +961,9 @@ All discovery requests require `request_id` (UUID). The server echoes `request_i
     }
   }
 }
+```
+
+```json
 {
   "type": "GetMarketDescriptors",
   "data": {
@@ -1161,6 +974,9 @@ All discovery requests require `request_id` (UUID). The server echoes `request_i
     }
   }
 }
+```
+
+```json
 {
   "type": "GetTokens",
   "data": {
@@ -1171,6 +987,9 @@ All discovery requests require `request_id` (UUID). The server echoes `request_i
     }
   }
 }
+```
+
+```json
 {
   "type": "GetExpiries",
   "data": {
@@ -1328,7 +1147,7 @@ Uses [common paging](ws-common.md#paging).
         "symbol": "SOL",
         "decimals": 9,
         "oracle_feed_ids": [
-          "<oracle feed id>"
+          "ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"
         ],
         "role": {
           "type": "underlying",
@@ -1341,18 +1160,24 @@ Uses [common paging](ws-common.md#paging).
           "quote_mints": [
             "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
           ]
-        }
+        },
+        "schedule": { "type": "continuous" },
+        "session": { "type": "continuous" },
+        "protocol_fees": { "type": "not_quote_token" }
       },
       {
         "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "symbol": "USDC",
         "decimals": 6,
         "oracle_feed_ids": [
-          "<oracle feed id>"
+          "eaa020c61cc479712813461ce153894a96a6c00b21ed0cfc2798d1f9a9e9c94a"
         ],
         "role": {
           "type": "quote"
-        }
+        },
+        "schedule": { "type": "continuous" },
+        "session": { "type": "continuous" },
+        "protocol_fees": { "type": "quote", "premium_bps": 1250, "volume_bps": 50 }
       }
     ],
     "next_cursor": null
@@ -1367,7 +1192,7 @@ Each mint once; see [`TokenInfo`](ws-common.md#tokeninfo). `role` is `quote` or 
 Uses [common paging](ws-common.md#paging).
 
 Token decimals live here and nowhere in `RfqBroadcast`: `RfqBroadcast.quantity`,
-`QuoteFilled.quantity` and `size_rule` are underlying atoms. Cache
+`QuoteUpdate` `filled` `quantity` and `size_rule` are underlying atoms. Cache
 `underlying_decimals` / `quote_decimals` by `market_descriptor.market_pda` (the Rust SDK's
 `MarketDecimals` does this from `MarketDescriptors`).
 
@@ -1520,7 +1345,7 @@ Uses [common paging](ws-common.md#paging).
     "quotes": [
       {
         "rfq_id": "8f3e7e6a-4f5c-4b7c-9f1d-1f2a3b4c5d6e",
-        "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+        "order_id": "9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
         "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
         "underlying_mint": "So11111111111111111111111111111111111111112",
         "underlying_symbol": "SOL",
@@ -1580,13 +1405,16 @@ A History row uses the same identity/amount fields with, for example, `"state": 
 ### GetOrderStatus / OrderStatus
 
 ```json
-{ "type": "GetOrderStatus", "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000002", "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a" } }
-{ "type": "OrderStatus", "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000002", "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "state": { "type": "pending" } } }
+{ "type": "GetOrderStatus", "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000002", "order_id": "9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a" } }
 ```
 
-Available to the authenticated owner on `/maker`, `/maker/data`, `/taker`, and to the operator on `/vault`. Makers should use `/maker/data` to keep execution lookups off the quote connection. `state` is `pending`, `confirmed` (with `position_pda`), or `unknown`, encoded as a tagged object. See the shared [execution lookup contract](taker-api.md#orderstatus-server---taker).
+```json
+{ "type": "OrderStatus", "data": { "request_id": "a1b2c3d4-0000-4000-8000-000000000002", "order_id": "9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a", "state": { "type": "pending" } } }
+```
 
-A lost ACK leaves the command outcome unknown. Keep unresolved orders in strategy state across reconnect; neither an empty Live response, a missing position, a timeout nor `unknown` proves nonexecution. Execution lookup failures return `RequestError` with the request ID.
+Available to the authenticated owner on `/maker`, `/maker/data`, `/taker`, and to the operator on `/vault`. Makers should use `/maker/data` to keep execution lookups off the quote connection. `state` is `pending`, `confirmed` (with `position_pda`), `expired` (never executed and never can), or `unknown`, encoded as a tagged object. See the shared [execution lookup contract](taker-api.md#orderstatus-server---taker).
+
+A lost ACK leaves the command outcome unknown. Keep unresolved orders in strategy state across reconnect; neither an empty Live response, a missing position, a timeout nor `unknown` proves nonexecution; only `expired` does. Execution lookup failures return a `Reply` `error` with the request ID.
 
 ### MakerMarkets payload
 
@@ -1684,7 +1512,7 @@ heavy read.
 
 Field semantics:
 - `maker_pda`: on-chain maker account PDA (base58)
-- `caps`: same shape as the [`MyCaps`](#mycaps-payload) response (echoes `request_id` from `GetMmSummary`)
+- `caps`: the [`MyCaps`](#mycaps-payload) fields `positions`, `notional`, `balances`, `quote_liabilities`; no `request_id` or `next_cursor` (the summary's own `request_id` is top-level)
 - `positions`: `PositionInfo[]` — see [MakerPositions payload](#makerpositions-payload). Positions are ordered newest first; follow `next_cursor` to continue the compound reply.
 - `active_quotes`: `MakerQuoteInfo[]` — see [MyQuotes payload](#myquotes-payload)
 - `markets`: `MakerMarketInfo[]` — see [MakerMarkets payload](#makermarkets-payload)
@@ -1794,7 +1622,7 @@ Uses [common paging](ws-common.md#paging).
         "taker_owner": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
         "quantity": "1000000000",
         "price": "5000000000",
-        "transaction_signature": "<base58 transaction signature>",
+        "transaction_signature": "ZzRPR6pWiL3B77tGitQFve4G2s431KhVgF1Z14vdHUMSqVFPuyCT2Bx4iK7ofDAj41hGHJhf9qAaYiR5qD5b25S",
         "position": {
           "type": "confirmed",
           "position_pda": "75NqraLLofiLUpNQg2wUPG6CJpxcaGEZUwuNrnAgvcTP"
@@ -1854,7 +1682,7 @@ Dry run of the cap checks a `Quote` of `quantity` at `price` on `market_pda` (th
 }
 ```
 
-`verdict` is `{ "type": "admissible" }` or `{ "type": "rejected", "cap_detail": CapError }`. `quantity` is in underlying base units; `price` is the gross price per underlying unit scaled by 1e9, as on `Quote`. `cap_detail` is the [CapError](caps.md#caperror-variants) a `QuoteRejected` would carry. `"cap_detail": "caps_unavailable"` means retry, not a cap. An unknown `market_pda` returns an uncorrelated `Error` with `Generic` code `market_not_found`.
+`verdict` is `{ "type": "admissible" }` or `{ "type": "rejected", "cap_detail": CapError }`. `quantity` is in underlying base units; `price` is the gross price per underlying unit scaled by 1e9, as on `Quote`. `cap_detail` is the [CapError](caps.md#caperror-variants) a `rejected` quote would carry. `"cap_detail": "caps_unavailable"` means retry, not a cap. An unknown `market_pda` returns an uncorrelated `Error` with `Generic` code `market_not_found`.
 
 ### Subscriptions payload
 
@@ -1884,7 +1712,9 @@ An empty mint list means that dimension is unfiltered; filtered lists contain ba
 
 Received when subscribed to the corresponding channel.
 
-### TradeExecuted (channel: `trades`)
+### TradeExecuted (owner-direct)
+
+Sent only to the trade's maker and taker, session-addressed, with or without a `trades` subscription; there is no public trade tape.
 
 ```json
 {
@@ -1899,7 +1729,7 @@ Received when subscribed to the corresponding channel.
       "price": "5000000000",
       "taker_owner": "5DNHbugre3SXXogpZroA5SEsENdAd69AfNK5Z7ZCWr84",
       "maker_pda": "HYe9CryCnQ3ZviCwoG8X7REFoSBK7HCjrhWWMpNtTah1",
-      "transaction_signature": "<base58 transaction signature>",
+      "transaction_signature": "ZzRPR6pWiL3B77tGitQFve4G2s431KhVgF1Z14vdHUMSqVFPuyCT2Bx4iK7ofDAj41hGHJhf9qAaYiR5qD5b25S",
       "executed_at": 1710000042
     }
   }
@@ -2019,7 +1849,7 @@ Sent to the owner's sessions when the maker's capacity changes without a positio
 }
 ```
 
-`reason` is `lifecycle` or `policy`. `caps_snapshot` has the shape of the `caps` portion of [`MmSummary`](#mmsummary-payload), without `request_id`. Use it to keep local caps in sync without calling `GetMyCaps`.
+`reason` is `lifecycle` or `policy`. `caps_snapshot` has the shape of `caps` in [`MmSummary`](#mmsummary-payload). Use it to keep local caps in sync without calling `GetMyCaps`.
 
 ### MarketCreated (channel: `markets`)
 
@@ -2065,7 +1895,7 @@ Sent to the owner's sessions when the maker's capacity changes without a positio
   "type": "ChainEvent",
   "data": {
     "event_type": "PositionOpened",
-    "signature": "<base58 transaction signature>",
+    "signature": "ZzRPR6pWiL3B77tGitQFve4G2s431KhVgF1Z14vdHUMSqVFPuyCT2Bx4iK7ofDAj41hGHJhf9qAaYiR5qD5b25S",
     "instruction_index": 0,
     "slot": 250000000,
     "market_pda": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
@@ -2075,7 +1905,7 @@ Sent to the owner's sessions when the maker's capacity changes without a positio
     "side": "sell",
     "quantity": "1000000000",
     "price": "5000000000",
-    "order_id": "0x9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"
+    "order_id": "9d1c2a6a0c2f5e7d9b4d8d8f2a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"
   }
 }
 ```
@@ -2097,7 +1927,7 @@ All variants require `signature` (tx signature, base58), `instruction_index` (in
 
 ## Delivery and recovery
 
-When your outbound queue is full, a *critical* message is dropped and the server **closes the connection** (`4002 slow_consumer`), so its loss always surfaces as a disconnect. Best-effort broadcasts are dropped silently. For `/maker` the critical set is `RfqBroadcast`, the quote lifecycle, `QuoteRefreshRequested`, `MarketCreated`, `MarketFinalized`, `VaultCatalogChanged`, `VaultProjectionAdvanced`, and every message addressed to your session alone (responses, `PositionUpdated`, `MakerCapsUpdated`). `ChainEvent`, `StatsUpdate`, `RfqSkipped` and `IndicativePricesRequest` broadcasts are best-effort. Owner-direct `TradeExecuted` uses addressed delivery and closes the affected session on queue overflow. The full table is in [WebSocket common](ws-common.md#delivery-criticality).
+When your outbound queue is full, a *critical* message is dropped and the server **closes the connection** (`4002 slow_consumer`), so its loss always surfaces as a disconnect. Best-effort broadcasts are dropped silently. For `/maker` the critical set is `RfqBroadcast`, the quote lifecycle (`QuoteUpdate`), `MarketCreated`, `MarketFinalized`, `VaultCatalogChanged`, `VaultProjectionAdvanced`, and every message addressed to your session alone (responses, `PositionUpdated`, `MakerCapsUpdated`). `ChainEvent`, `StatsUpdate`, `RfqSkipped` and `IndicativePricesRequest` broadcasts are best-effort. Owner-direct `TradeExecuted` uses addressed delivery and closes the affected session on queue overflow. The full table is in [WebSocket common](ws-common.md#delivery-criticality).
 
 The wire has no replay cursor or stream sequence number. The server does not replay events missed during a disconnect. Do not infer execution from absent events. SDK receiver sequence gaps are local delivery gaps, distinct from the wire.
 
@@ -2108,8 +1938,8 @@ After every reconnect, authenticate (`ResumeAuth` or the full challenge) and run
 Quote plane, `/maker`. The managed Rust SDK does this before it reports `Ready`:
 
 1. Send `GetSubscriptions`.
-2. If the server holds channels the client does not want, send `Unsubscribe` for them. Wait for `UnsubscribeAck`.
-3. Send `Subscribe` with the desired products, channels and both mint lists (empty lists included). Wait for `SubscribeAck`. This replaces any mint scope that a resumed session restored.
+2. If the server holds channels the client does not want, send `Unsubscribe` for them. Wait for its `Reply` `unsubscribed`.
+3. Send `Subscribe` with the desired products, channels and both mint lists (empty lists included). Wait for its `Reply` `subscribed`. This replaces any mint scope that a resumed session restored.
 4. Send `GetActiveRfqs` and `GetMyQuotes { scope: live }`. `ActiveRfqs` supplies each RFQ's taker and market PDA for the quote preimage. The SDK follows every live quote page before reporting readiness.
 
 Data plane, `/maker/data`:
@@ -2119,8 +1949,8 @@ Data plane, `/maker/data`:
 These reads span live server state and the database. They are not an atomic snapshot. Then, in the strategy:
 
 6. Rebuild the live position book. Apply revisions from `MmSummary`. If it has a continuation, read all `GetMakerPositions` pages with `status: ["open", "funded"]`. Historical positions remain an explicit read. Preserve newer push revisions received during paging.
-7. Book money from position rows. `total_premium` is the net premium the taker received. The maker's cost is the gross premium, [`scaled_quote_amount(price, quantity)`](protocol-flow.md#units), and the fee is that cost minus `total_premium`. `QuoteFilled` has no fee or net field.
-8. Reconcile unfinished orders. For each local order with no terminal outcome that is not in the Live set, send `GetOrderStatus` and wait for its response before sending the next. Stop at the first `RequestError`. Fix the cause and restart the loop from that order. `pending` and `unknown` keep the order as an open obligation. `confirmed` gives the `position_pda`; book it from the position row.
+7. Book money from position rows. `total_premium` is the net premium the taker received. The maker's cost is the gross premium, [`scaled_quote_amount(price, quantity)`](protocol-flow.md#units), and the fee is that cost minus `total_premium`. `QuoteUpdate` `filled` has no fee or net field.
+8. Reconcile unfinished orders. For each local order with no terminal outcome that is not in the Live set, send `GetOrderStatus` and wait for its response before sending the next. Stop at the first `Reply` `error`. Fix the cause and restart the loop from that order. `pending` and `unknown` keep the order as an open obligation. `confirmed` gives the `position_pda`; book it from the position row.
 9. Drop signed quotes from before the disconnect. Sign new ones with a fresh `valid_until`, `nonce` and `order_id`.
 
 An empty Live set, a timeout and `unknown` do not prove that an order did not execute.
@@ -2188,12 +2018,12 @@ Indicative pricing covers covered calls and cash-secured puts only. Each request
 
 ## Errors
 
-Two error message types: `Error` (connection-level) and `RequestError` (request-correlated).
+Errors come as `Error` (connection-level) or as a `Reply` `error` (request-correlated).
 See [WS common conventions](ws-common.md) "Error format" for the envelope.
 
 Parsing rule for maker integrations:
 
-1. Handle `RequestError` where you pass `request_id` (e.g. query requests, `Subscribe`).
+1. Handle `Reply` `error` where you pass `request_id` (e.g. query requests, `Subscribe`).
 2. Handle `Error` for connection-level failures (auth, WS errors, unknown request).
 3. For both, switch on `ServerError.type`.
 4. If `type == "Generic"`, switch on `data.code`.
@@ -2201,7 +2031,7 @@ Parsing rule for maker integrations:
 
 Every typed `ServerError` variant and its `data` is in the [ServerError catalog](ws-common.md#servererror-catalog).
 
-Quote-specific validation failures are sent as `QuoteRejected` with a typed `reason`. See the `QuoteRejected` section above for its variants.
+Quote-specific validation failures are sent as `QuoteUpdate` `rejected` with a typed `reason`; see [QuoteRejectReason](#quoterejectreason).
 
 `Generic` codes are listed, with their frames, in the [WS error code catalog](ws-common.md#ws-error-codes); match on `code`. The codes introduced by products and queries are:
 
@@ -2211,7 +2041,6 @@ Quote-specific validation failures are sent as `QuoteRejected` with a typed `rea
 | `invalid_products` | `Subscribe.products` is empty |
 | `invalid_limit` | A page `limit` is outside the range of its request |
 | `product_not_allowed` | The pair's policy does not allow the RFQ's product |
-| `taker_buy_unsupported` | `RfqRequest` with `side: "buy"` on `/vault` |
 | `spread_invalid_strikes` | Invalid spread strikes |
 | `spread_tick_violation` | A strike is off the underlying mint's strike tick |
 | `spread_premium_invalid` | Price or gross premium outside `0 < price < width`, `0 < gross < C` |
@@ -2219,7 +2048,7 @@ Quote-specific validation failures are sent as `QuoteRejected` with a typed `rea
 | `missing_tick_for_underlying_mint` | The underlying mint has no strike tick |
 
 Operational handling recommendations:
-- for `rate_limited`: the error carries no retry time. Wait at least `1 / per_second` of `Welcome.rate_limits.liquidity_provider`, then retry with exponential backoff and jitter. An authenticated maker connection stays open; before authentication the `connection` bucket closes it with `4003`. See [Rate limits and admission](ws-common.md#rate-limits-and-admission).
+- for `RateLimited`: send again after `retry_after_ms`. A quote rejected with reason `rate_limited` carries the delay only in its `message` text: wait at least `1 / per_second` of `Welcome.rate_limits.liquidity_provider`, then retry with exponential backoff and jitter. An authenticated maker connection stays open; before authentication the `connection` bucket closes it with `4003`. See [Rate limits and admission](ws-common.md#rate-limits-and-admission).
 - for `session_replaced`: another connection replaced this session — stop; do not auto-reconnect in a loop.
 - for `parse_error`: treat as payload bug and stop retries until fixed.
 - for `too_many_parse_errors`: reconnect only after fixing payload/codec mismatch.
@@ -2238,34 +2067,25 @@ Operational handling recommendations:
 | `filled` | RFQ was filled on-chain |
 | `market_expired` | The underlying market expired |
 | `no_eligible_makers` | No maker could receive the RFQ; sent to the taker only |
-| `server_shutdown` | A graceful server stop closed the RFQ before its order reached the keeper; your quote reports `cancelled` |
+| `server_shutdown` | A graceful server stop closed the RFQ before its order reached the keeper; your orders end with `lost` |
 
-### QuoteFinalStatus (in `RfqClosed.your_quote.status`)
-
-| Value | Meaning |
-|-------|---------|
-| `expired` | Quote expired before selection |
-| `outbid` | Another maker won |
-| `cancelled` | Quote was cancelled |
-| `filled` | This quote was selected and filled |
-
-### QuoteCancelReason (in `QuoteCancelled.reason`)
+### QuoteCancelReason (in the `cancelled` state)
 
 | Value | Meaning |
 |-------|---------|
-| `requested` | Maker requested cancellation |
-| `risk_check` | Server-side risk check triggered |
-| `rfq_accepted` | RFQ accepted another quote |
+| `requested` | Your own `CancelQuote` / `CancelAllQuotes` removed it |
+| `replaced` | Your newer quote on the same `(rfq, terms)` took its place |
+| `risk_check` | The server cancelled for risk, for example a vault delegate rotation that revoked the signing operator |
 | `maker_disconnected` | Session had `on_disconnect: "cancel_quotes"` and disconnected |
 
-### QuoteExpiryReason (in `QuoteRefreshRequested.reason` and `QuoteExpired.reason`)
+### QuoteExpiryReason (in `refresh_requested` and `expired` states)
 
 | Value | Meaning |
 |-------|---------|
-| `expired` | The quote's validity ended |
-| `expiring_soon` | The quote reached its refresh point before the settlement-buffer cutoff |
+| `expired` | The quote's validity ended (`expired` state) |
+| `expiring_soon` | The quote reached its refresh point before the settlement-buffer cutoff (`refresh_requested` state) |
 
-### RfqAvailableAgainReason
+### RfqAvailableAgainReason (in `RfqUpdate` `available` and `QuoteUpdate` `released`)
 
 | Value | Meaning |
 |-------|---------|
@@ -2273,7 +2093,7 @@ Operational handling recommendations:
 | `tx_failed` | On-chain transaction failed |
 | `tx_build_failed` | Transaction could not be built |
 
-When `reason = "tx_build_failed"`, a corresponding `Error` or `RequestError` is also sent to
+When `reason = "tx_build_failed"`, a corresponding `Error` or `Reply` `error` is also sent to
 the taker with `generic.code = "tx_build_failed"` and a `message` field
 describing what went wrong.
 
@@ -2338,7 +2158,7 @@ See [Protocol Flow](protocol-flow.md) for the physical scenarios.
 
 ### CapError
 
-Used in the typed `cap` error, `QuoteRejected.reason`, `RfqSkipped.cap_detail` and `QuoteCheck.verdict`.
+Used in the typed `cap` error, the `rejected` quote reason, `RfqSkipped.cap_detail` and `QuoteCheck.verdict`.
 
 Full variant catalog (`token_oi_cap_exceeded`, `market_oi_cap_exceeded`, `maker_position_cap_exceeded`, `maker_notional_cap_exceeded`, `maker_insufficient_balance`, `quote_notional_cap_exceeded`, `maker_quote_notional_cap_exceeded`, `quote_liability_cap_exceeded`, `maker_quote_liability_cap_exceeded`, `caps_unavailable`) with fields and rejection semantics: [caps.md](caps.md#caperror-variants).
 
@@ -2350,7 +2170,7 @@ Details that are easy to miss in the schemas.
 
 ### Multiple quotes per RFQ
 
-When `RfqBroadcast.order_options` lists several strikes of a covered call or cash-secured put, you can quote each strike independently — each quote needs a distinct `order_id` and `nonce`. Submitting a new quote on the same `(rfq_id, terms)` pair replaces your prior quote on that pair; `QuoteAcknowledged.replaced` (`replaced { order_id }`) tells you which one was displaced. Across all makers, `max_quotes_per_rfq` from `GET /api/v1/venue` bounds the quotes per RFQ.
+When `RfqBroadcast.order_options` lists several strikes of a covered call or cash-secured put, you can quote each strike independently — each quote needs a distinct `order_id` and `nonce`. Submitting a new quote on the same `(rfq_id, terms)` pair replaces your prior quote on that pair; `live.replaced` (`replaced { order_id }`) tells you which one was displaced. Across all makers, `max_quotes_per_rfq` from `GET /api/v1/venue` bounds the quotes per RFQ.
 
 ### `order_options` validation
 

@@ -182,7 +182,7 @@ Other products:
 
 Spread and cash put strikes must be multiples of the underlying's `strike_tick` (`1e9`-scaled; read it from `TokenInfo.role`). A spread needs `lower_strike < upper_strike`, and a call spread needs `lower_strike > 0`. The market's `is_put` must match the product's side.
 
-`createRfq` takes the `RfqRequest` message and resolves with its `request_id` on the server's `CommandAccepted` and rejects with `ActaWsRequestError` on the matching `RequestError`, a timeout or a disconnect. `RfqCreated` echoes `request_id` and may arrive before or after that receipt. Repeating a `createRfq` with the same `request_id` while the RFQ is open is rejected with `duplicate_rfq_id`, which means the first attempt created it; after the RFQ closes the same id opens a new one. `createRfqOnce` handles this: it owns the id and resends a lost reply only while the RFQ could still be open. The RFQ TTL is your `timeout_seconds`, which must be within the venue range `min_rfq_timeout_seconds` .. `max_rfq_timeout_seconds` from `GET /api/v1/venue`.
+`createRfq` takes the `RfqRequest` message and resolves with the `RfqCreated` message; `rfq_id` on it is the server's id for the RFQ, and `request_id` only correlates. It rejects with `ActaWsRequestError` on a `Reply` `error`, a timeout or a disconnect. Repeating the same `request_id` creates nothing new: the server returns the same `RfqCreated`, followed by `RfqUpdate` `closed` if the RFQ already ended. `createRfqOnce` owns the id and resends a lost reply while the RFQ could still be open. The RFQ TTL is your `timeout_seconds`, which must be within the venue range `min_rfq_timeout_seconds` .. `max_rfq_timeout_seconds` from `GET /api/v1/venue`.
 
 For spreads and cash puts, `order_options` holds exactly your `terms`.
 
@@ -194,7 +194,7 @@ Spreads and cash puts are cash-settled in the quote mint. The writer posts colla
 import { ActaHttpClient } from "@acta-markets/ts-sdk/http";
 import { SpreadType, spreadPremium, spreadSettlement } from "@acta-markets/ts-sdk/chain";
 
-const venue = await new ActaHttpClient({ baseUrl: "https://devnet-api.acta.markets" })
+const venue = await new ActaHttpClient({ baseUrl: "https://devnet-api.acta.markets", client: { name: "my-app", version: "1.0.0" } })
   .venue(AbortSignal.timeout(5_000));
 
 const terms = {
@@ -265,8 +265,8 @@ Without a deposit all collateral returns to the writer at expiry, also in the mo
 ### 7. Cancel RFQ
 
 ```typescript
-ws.cancelRfq(rfqId);
-// Listen for rfqClosed with reason="taker_cancelled"
+await ws.cancelRfq(rfqId); // resolves on Reply accepted, rejects on Reply error
+// Listen for rfqUpdate with state.type "closed" and reason "taker_cancelled"
 ```
 
 ### 8. Accept quote and sign
@@ -368,8 +368,10 @@ ws.on("sponsoredTxToSign", async (id, txBase64, signatureDeadline, lastValidBloc
   const outcome = await ws.submitOrderOnce({ orderIdHex: id, txBase64: signedTxBase64 });
   if (outcome.type === "rejected") {
     // Not forwarded: act on outcome.action (fix_request, refresh, ...), or choose another quote.
+  } else if (outcome.type === "reconciled" && outcome.state.type === "expired") {
+    // Never executed and never can; choose another quote.
   } else if (outcome.type === "reconciled" && outcome.state.type !== "confirmed") {
-    // pending or unknown: wait for OrderConfirmed / OrderFailed; never sign this order again.
+    // pending or unknown: wait for its orderUpdate confirmed / failed; never sign this order again.
   }
 });
 
@@ -380,7 +382,7 @@ try {
 }
 ```
 
-`acceptQuote` resolves on `CommandAccepted` and rejects with `ActaWsRequestError` on its `RequestError`, a timeout or a disconnect; `SponsoredTxToSign` may arrive before or after the receipt. `submitOrderOnce` above applies the following rules for you. A rejected `submitSignedSponsoredTx` carries `err.delivery`. `not_forwarded` means this attempt was not sent; if every attempt for the order returned it, retrying or choosing another quote is safe. `unknown`, or no `delivery` (timeout, disconnect), means it may have been sent: query `GetOrderStatus` before signing or submitting anything for that RFQ. `lastValidBlockHeight` is the block height the served transaction's blockhash is valid through.
+`acceptQuote` resolves on `Reply` `accepted` and rejects with `ActaWsRequestError` on a `Reply` `error`, a timeout or a disconnect; `SponsoredTxToSign` may arrive before or after the receipt. `submitOrderOnce` above applies the following rules for you. A rejected `submitSignedSponsoredTx` carries `err.delivery`. `not_forwarded` means this attempt was not sent; if every attempt for the order returned it, retrying or choosing another quote is safe. `unknown`, or a timeout or disconnect (`delivery` `not_applicable`, `err.kind` `timeout` or `disconnected`), means it may have been sent: query `GetOrderStatus` before signing or submitting anything for that RFQ. `lastValidBlockHeight` is the block height the served transaction's blockhash is valid through.
 
 `verifyAndSignTakerFill` fills signature slot 1, the taker's slot. The keeper pays fees and signs slot 0, for ordinary and vault makers alike.
 
@@ -391,15 +393,24 @@ try {
 ### 9. Track order status
 
 ```typescript
-ws.on("orderAccepted", (orderIdHex, orderVersion) => {});
-ws.on("orderSubmitted", (orderIdHex, txSignature, orderVersion) => {});
-ws.on("orderConfirmed", (orderIdHex, positionPda, orderVersion) => {});
-ws.on("orderFailed", (orderIdHex, reason, orderVersion) => {});
+// Older order_version values are dropped before the event; confirmed and failed end the order.
+ws.on("orderUpdate", ({ order_id, order_version, state }) => {
+  switch (state.type) {
+    case "accepted":
+    case "submitted": // state.transaction_signature
+      break;
+    case "confirmed": // state.position_pda
+    case "failed": // state.reason, a free-form diagnostic
+      break;
+  }
+});
 
-ws.on("rfqClosed", (data) => {
-  // Terminal: clean up RFQ state.
-  // data.reason: "expired" | "taker_cancelled" | "filled" | "market_expired" | "no_eligible_makers" | "server_shutdown"
-  // data.your_quote and data.winner are { type: "none" } when they do not apply.
+ws.on("rfqUpdate", ({ rfq_id, rfq_version, state }) => {
+  // Keep the highest rfq_version per RFQ; drop older updates.
+  // state.type "available": the selected order did not trade; refresh quotes.
+  // state.type "closed": terminal, clean up RFQ state.
+  //   state.reason: "expired" | "taker_cancelled" | "filled" | "market_expired" | "no_eligible_makers" | "server_shutdown"
+  //   state.winner is { type: "none" } when there is none.
 });
 ```
 
@@ -418,6 +429,9 @@ ws.on("orderStatus", ({ order_id, state }) => {
     case "pending":
       console.log(order_id, "execution pending");
       break;
+    case "expired":
+      console.log(order_id, "never executed and never can");
+      break;
     case "unknown":
       console.log(order_id, "outcome unresolved");
       break;
@@ -425,7 +439,62 @@ ws.on("orderStatus", ({ order_id, state }) => {
 });
 ```
 
-`OrderFailed`, a timeout and `unknown` do not prove nonexecution. Do not automatically replay a trading command after losing its response. When `RfqAvailableAgain` reopens an auction, refresh the available quotes. The discarded winning quote is not an automatic retry target.
+An `orderUpdate` `failed` ends the order: it was not forwarded, or its transaction cannot land. An uncertain keeper outcome sends no `failed`, so an order that stays `accepted` or `submitted` is resolved with `GetOrderStatus`. Only `expired` and `failed` prove nonexecution; a timeout and `unknown` do not. No `failed` authorizes signing the same order again. Do not automatically replay a trading command after losing its response. When `RfqUpdate` `available` reopens an auction, refresh the available quotes. The discarded winning quote is not an automatic retry target.
+
+### 11. One trade in one call
+
+`ws.tradeRfq` runs steps 6 to 9 for one trade: it creates the RFQ, picks a quote, accepts it, verifies
+and signs the served transaction with `verifyAndSignTakerFill`, submits it once with
+`submitOrderOnce`, and waits for the order's end. Every argument is required.
+
+```typescript
+import { fetchMakerVault } from "@acta-markets/ts-sdk/chain";
+import { TRADE_RFQ_TIMEOUTS } from "@acta-markets/ts-sdk/ws";
+
+const outcome = await ws.tradeRfq({
+  market, // MarketDescriptorInfo from getMarketDescriptors
+  terms: { type: "cash_secured_put", strike: "136000000000" },
+  side: "sell",
+  quantity: "20000000",
+  timeoutSeconds: 30,
+  selection: { type: "best", settleMs: 1_500, acceptable: (q) => q.valid_until > Date.now() / 1000 + 10 },
+  fill: { keeper, taker, bounds, signer, makerVault: (maker) => fetchMakerVault(rpc, maker), lookupTables },
+  timeouts: TRADE_RFQ_TIMEOUTS, // { quoteMs: 10_000, servedMs: 35_000, confirmMs: 75_000 }
+  signal: AbortSignal.timeout(120_000),
+});
+```
+
+`selection` is `best` (after the first acceptable quote, wait `settleMs`, then take the best price) or
+`pick` (your callback gets the live quotes on every change and returns `take`, `wait` or `decline`).
+`lookupTables(txBase64)` resolves the lookup tables the served transaction names
+(`servedLookupTableKeys`).
+
+The outcome has three kinds:
+
+| `type` | Meaning |
+|---|---|
+| `filled` | `OrderUpdate` `confirmed`: `rfq_id`, `order_id`, `position_pda`, `transaction` |
+| `not_traded` | Nothing executed; `reason.type` says why (`no_acceptable_quote`, `selection_failed`, `rfq_closed`, `released`, `order_failed`, `refused`, `verification_failed`, `not_signed`, `not_served`, `no_response`, `aborted`, `expired`). `order_failed` is `OrderUpdate` `failed` |
+| `unknown` | The signed transaction was submitted and neither `confirmed` nor `failed` arrived (timeout, disconnect, abort) |
+
+`transaction` is `{ type: "reported", signature }` once `OrderUpdate` `submitted` carried the
+signature, otherwise `{ type: "unreported" }`. When the trade gives up before submit it sends
+`CancelRfq`; after a disconnect the cancel cannot reach the server and the RFQ expires after
+`timeoutSeconds`. A throwing `acceptable` or `pick` callback ends in `selection_failed`. `tradeRfq`
+throws only when the RFQ request itself is invalid or the session is not authenticated.
+
+Never trade an `unknown` result again. Resolve it with `reconcileTrade`, which asks `GetOrderStatus`:
+
+```typescript
+if (outcome.type === "unknown") {
+  const resolved = await ws.reconcileTrade(outcome);
+  // confirmed -> filled; expired -> not_traded { reason: { type: "expired" } };
+  // pending or unknown -> the same unknown trade; ask again later.
+}
+```
+
+`tradeRfq` keeps its state in memory and does not survive a page reload; persist the order as in
+step 10 if you need that.
 
 ---
 
@@ -451,11 +520,11 @@ const ws = new ActaWsClient({
 });
 
 ws.on("disconnected", (code, reason) => {});
-// code: a server close code (4000–4006; see ws-common.md) or one of the client's own drops:
+// code: a server close code (4000–4007; see ws-common.md) or one of the client's own drops:
 // 4900 "pong_timeout", 4901 "auth_error".
 ```
 
-Close code `4006` (`unsupported_protocol_version`) means the server did not accept the `protocolVersion` the client sent. The default is `1.0.0`; leave it unset.
+Close code `4006` (`unsupported_protocol_version`) means the server did not accept the `protocolVersion` the client sent. The default is `1.0.0`; leave it unset. Close code `4007` (`vault_session_invalidated`, `ServerCloseCode.VaultSessionInvalidated`) ends a Vault session whose grant changed; authenticate it again.
 
 **Recovery on reconnect.** The SDK reconnects and resumes authentication after network drops. A skipped unknown or invalid frame triggers the same reads, at most once every 5 seconds, with `autoReconcile` on. After `authenticated`, it restores the desired subscriptions and, with the default `autoReconcile`, requests `GetMyActiveRfqs` and `GetPositions` (all positions). Authentication alone does not mean these reads have completed.
 
@@ -473,14 +542,16 @@ ws.on("error", (e) => {
   else console.error(e.type);
 });
 
-ws.on("requestError", (envelope) => {
-  // { request_id, error: ServerError, delivery: "not_applicable" | "not_forwarded" | "unknown" }
+ws.on("reply", ({ request_id, result }) => {
+  // result: { type: "accepted" } | { type: "subscribed" | "unsubscribed", channels }
+  //       | { type: "swap_quote", ... } | { type: "swap_submitted", execution_id }
+  //       | { type: "error", error: ServerError, delivery: "not_applicable" | "not_forwarded" | "unknown" }
 });
 ```
 
 Every query has two forms. `getMarkets()`, `getPositions(args)`, `getOrderStatus(id)` and the rest return a `request_id`; match it against `msg.request_id` on the response event. The `Async` form (`getMarketsAsync()`, `getPositionsAsync(args)`, `getMyCapsAsync()`, …) returns a promise of the whole response, all pages included, and rejects with `ActaWsRequestError`.
 
-Error codes and `OrderFailed` reasons: [taker-api.md](../reference/taker-api.md#errors). Common cases: [faq.md](../reference/faq.md).
+Error codes and `failed` order reasons: [taker-api.md](../reference/taker-api.md#errors). Common cases: [faq.md](../reference/faq.md).
 
 ---
 
