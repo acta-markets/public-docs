@@ -202,7 +202,8 @@ redelivered. Re-list vaults after every connect and reconnect as well as on this
 Sent on the `vaults` channel after the server's projection of a vault advances by a committed
 on-chain vault event. `/maker` quote sessions and taker sessions subscribed to `vaults` receive it for every vault; a
 `/vault` operator session receives it only for its own vault. It is a change notification, not the
-new state: reload `GET /api/v1/vaults/{pda}`. `version` increases with each projected vault event; if
+new state: reload `GET /api/v1/vaults/{pda}`. `version` increases with each projected vault event;
+events committed together are announced once, with the newest version, so versions can skip. If
 you see a gap, or after a reconnect, reload the vault rather than repairing local state. Delivery
 follows the same drop-and-disconnect rule as `VaultCatalogChanged`.
 
